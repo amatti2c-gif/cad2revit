@@ -135,8 +135,9 @@ def construir_modelo(cfg: Configuracion) -> dict:
     plantas = sorted(cfg.proyecto.get("plantas") or [], key=lambda p: orden.index(p["nivel"]))
     todos_muros: list[tuple[str, Muro]] = []
     tipos_losa_usados: set[str] = set()
-    losa_def = cfg.materialidades.get("tipo_losa_por_defecto")
-    cub_def = cfg.materialidades.get("tipo_cubierta_por_defecto")
+    legos = cfg.proyecto.get("legos") or {}
+    losa_def = legos.get("losa") or cfg.materialidades.get("tipo_losa_por_defecto")
+    cub_def = legos.get("cubierta") or cfg.materialidades.get("tipo_cubierta_por_defecto")
 
     for idx, planta in enumerate(plantas):
         nivel = planta["nivel"]

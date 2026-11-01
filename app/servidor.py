@@ -265,6 +265,93 @@ def guardar_entrada(pid: str, archivo: str, datos: TextoEntrada):
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
+# ---------------------------------------------------------------- legos (catálogo y selección)
+def _leer_yaml_seguro(ruta: Path) -> dict:
+    try:
+        return yaml.safe_load(ruta.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+@app.get("/api/catalogo")
+def catalogo():
+    """Piezas prearmadas disponibles (salen de los lineamientos comunes de la app)."""
+    lin = _lineamientos()
+    mat = _leer_yaml_seguro(lin / "materialidades.yaml")
+    est = _leer_yaml_seguro(lin / "estructuracion.yaml")
+    colores = {m["nombre"]: m.get("color") for m in mat.get("materiales", [])}
+    clases = {m["nombre"]: m.get("clase") for m in mat.get("materiales", [])}
+
+    def tarjeta(t: dict) -> dict:
+        capas = [dict(c, color=colores.get(c.get("material"))) for c in t.get("capas") or []]
+        return {"nombre": t["nombre"], "estructural": bool(t.get("estructural")),
+                "espesor_total": round(sum(c.get("espesor", 0) for c in capas), 4),
+                "capas": capas, "entramado": t.get("entramado"),
+                "clase_entramado": clases.get((t.get("entramado") or {}).get("material"))}
+
+    return {
+        "muros": [tarjeta(t) for t in mat.get("tipos_muro", [])],
+        "losas": [tarjeta(t) for t in mat.get("tipos_losa", [])],
+        "cubiertas": [tarjeta(t) for t in mat.get("tipos_cubierta", [])],
+        "por_defecto": {"losa": mat.get("tipo_losa_por_defecto"), "cubierta": mat.get("tipo_cubierta_por_defecto"),
+                        "muro": mat.get("tipo_muro_por_defecto")},
+        "estructura": {"sistema": est.get("sistema"), "material": est.get("material_estructural"),
+                       "columnas": est.get("columnas"), "vigas": est.get("vigas")},
+    }
+
+
+def _capas_de_muro(d: Path) -> list[str]:
+    """Capas del CAD que contienen muros, leídas de los planos asignados al proyecto."""
+    capas_cfg = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("capas") or {}
+    patron = re.compile(capas_cfg["muros"]) if capas_cfg.get("muros") else None
+    py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    archivos = [Path(p["archivo"]).name for p in py.get("plantas") or []] or \
+               [f.name for f in (d / "planos").glob("*.dxf")]
+    capas = set()
+    for nombre in archivos:
+        f = d / "planos" / nombre
+        if not f.exists():
+            continue
+        try:
+            capas |= {sg.capa for sg in leer(str(f)).segmentos if patron and patron.search(sg.capa)}
+        except Exception:
+            pass
+    return sorted(capas)
+
+
+class Legos(BaseModel):
+    muros: dict[str, str | None] = {}
+    losa: str | None = None
+    cubierta: str | None = None
+
+
+@app.get("/api/proyectos/{pid}/legos")
+def leer_legos(pid: str):
+    d = _proyecto(pid)
+    legos = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("legos") or {}
+    return {"capas_muro": _capas_de_muro(d), "muros": legos.get("muros") or {},
+            "losa": legos.get("losa"), "cubierta": legos.get("cubierta")}
+
+
+@app.put("/api/proyectos/{pid}/legos")
+def guardar_legos(pid: str, datos: Legos):
+    """Guarda en proyecto.yaml qué lego se usa en cada capa de muros, y la losa y cubierta."""
+    d = _proyecto(pid)
+    py = d / "entradas" / "proyecto.yaml"
+    texto = py.read_text(encoding="utf-8")
+    texto = re.sub(r"^# Legos elegidos.*\n?", "", texto, flags=re.M)
+    texto = re.sub(r"^legos:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
+    bloque = {"muros": {k: v for k, v in datos.muros.items() if v}}
+    if datos.losa:
+        bloque["losa"] = datos.losa
+    if datos.cubierta:
+        bloque["cubierta"] = datos.cubierta
+    texto += "\n# Legos elegidos para este proyecto (se editan en la pestaña Legos de la app)\n"
+    texto += yaml.safe_dump({"legos": bloque}, allow_unicode=True, sort_keys=False)
+    py.write_text(texto, encoding="utf-8")
+    return {"guardado": True, "errores": _validar_entradas(d)}
+
+
 # ---------------------------------------------------------------- planos
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):

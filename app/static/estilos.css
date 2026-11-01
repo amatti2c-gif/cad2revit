@@ -147,3 +147,21 @@ dialog label.fila { flex-direction: row; align-items: center; gap: 8px; }
   .leyenda { position: static; margin-top: 8px; max-width: none; }
   .lienzo { height: 55vh; }
 }
+
+/* ---------- Legos ---------- */
+.fila-legos { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px; }
+.fila-legos label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--tenue); }
+.fila-legos select, #tabla-legos select { min-width: 260px; max-width: 100%; }
+.grupo-legos { margin: 8px 0 20px; }
+.grupo-legos h4 { margin: 0 0 8px; font-size: 13px; color: var(--tenue); text-transform: uppercase; letter-spacing: .4px; }
+.legos { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.lego { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); padding: 12px; }
+.lego.usado { border-color: var(--acento); box-shadow: 0 0 0 1px var(--acento) inset; }
+.lego h5 { margin: 0 0 6px; font-size: 14px; }
+.lego .etiquetas { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.lego .etiqueta { font-size: 11px; padding: 1px 7px; border-radius: 99px; background: var(--superficie-2); }
+.lego .etiqueta.madera { background: #f3e2c7; color: #6b4210; }
+.lego .capas-barra { display: flex; height: 22px; border-radius: 4px; overflow: hidden; border: 1px solid var(--borde); margin: 6px 0; }
+.lego .capas-barra span { display: block; align-self: stretch; min-height: 20px; border-right: 1px solid rgb(0 0 0 / .35); filter: saturate(1.4) brightness(.9); }
+.lego .capas-barra span:last-child { border-right: 0; }
+.lego ul { margin: 6px 0 0; padding-left: 16px; font-size: 12.5px; color: var(--tenue); }

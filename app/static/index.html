@@ -27,9 +27,10 @@
 
   <nav class="pestanas" role="tablist">
     <button data-tab="planos" class="activa">1 · Planos</button>
-    <button data-tab="lineamientos">2 · Lineamientos <span id="badge-errores" class="badge oculto"></span></button>
+    <button data-tab="legos">2 · Legos</button>
     <button data-tab="resultado">3 · Resultado</button>
     <button data-tab="historial">4 · Historial</button>
+    <button data-tab="lineamientos">Lineamientos (avanzado) <span id="badge-errores" class="badge oculto"></span></button>
   </nav>
 
   <main>
@@ -48,6 +49,28 @@
         <div class="panel-tit"><span id="tit-vista-plano"></span><button class="sec" id="cerrar-vista-plano">Cerrar</button></div>
         <svg id="svg-plano" class="lienzo"></svg>
       </div>
+    </section>
+
+    <!-- ======================== LEGOS ======================== -->
+    <section id="tab-legos" class="tab">
+      <div class="panel">
+        <div class="panel-tit"><span>Qué usa este proyecto</span>
+          <span class="acciones"><span id="legos-estado" class="tenue"></span>
+            <button id="btn-guardar-legos" class="pri">Guardar selección</button></span></div>
+        <p class="tenue">Elige el lego de cada capa de muros de tus planos. "Automático" usa las reglas de los lineamientos.</p>
+        <div class="tabla-wrap"><table class="tabla" id="tabla-legos">
+          <thead><tr><th>Capa del CAD</th><th>Lego</th><th>Espesor</th></tr></thead><tbody></tbody>
+        </table></div>
+        <div class="fila-legos">
+          <label>Losa de entrepiso <select id="sel-lego-losa"></select></label>
+          <label>Cubierta <select id="sel-lego-cubierta"></select></label>
+        </div>
+      </div>
+
+      <h3>Catálogo de legos</h3>
+      <p class="tenue">Piezas prearmadas disponibles para todos los proyectos. Para crear o modificar uno, usa
+        <em>Lineamientos (avanzado) → materialidades.yaml</em>.</p>
+      <div id="catalogo"></div>
     </section>
 
     <!-- ===================== LINEAMIENTOS ===================== -->

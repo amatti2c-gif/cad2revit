@@ -159,6 +159,25 @@ def test_sin_entramado_en_lod300_sin_ajuste(proyecto):
     assert construir_modelo(cargar(ruta))["entramados"] == []
 
 
+def test_legos_por_capa(proyecto):
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["legos"] = {"muros": {"A-TABIQUE": "TB-10 Tabique metalcon 10"},
+                   "losa": "L-15 Losa HA 15 (sin terminación)"}
+    ruta = proyecto("proyecto.yaml", py)
+    modelo = construir_modelo(cargar(ruta))
+    tabique = next(m for m in modelo["muros"] if m["capa_cad"] == "A-TABIQUE")
+    assert tabique["tipo"].startswith("TB-10")
+    assert modelo["entramados"] == []          # el metalcon no lleva entramado de madera
+    assert {l["tipo"] for l in modelo["losas"] if not l["cubierta"]} == {"L-15 Losa HA 15 (sin terminación)"}
+
+
+def test_lego_inexistente(proyecto):
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["legos"] = {"muros": {"A-TABIQUE": "No existe"}}
+    with pytest.raises(ErrorConfiguracion, match="No existe"):
+        cargar(proyecto("proyecto.yaml", py))
+
+
 def test_lod100_simplifica(proyecto):
     ruta = proyecto("nivel_detalle.yaml", {"preset": 100, "ajustes": {}})
     modelo = construir_modelo(cargar(ruta))

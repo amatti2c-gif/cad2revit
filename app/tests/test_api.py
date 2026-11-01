@@ -86,6 +86,27 @@ def test_lineamientos_comunes(cliente):
     assert "lineamientos/materialidades.yaml" in py
 
 
+def test_legos(cliente):
+    pid = _crear(cliente)
+    cat = cliente.get("/api/catalogo").json()
+    nombres = [m["nombre"] for m in cat["muros"]]
+    madera = next(m for m in cat["muros"] if m["entramado"])
+    assert madera["clase_entramado"] == "Madera" and madera["espesor_total"] == 0.106
+    lg = cliente.get(f"/api/proyectos/{pid}/legos").json()
+    assert lg["capas_muro"] == ["A-MURO-HA", "A-TABIQUE"]
+    metalcon = next(n for n in nombres if n.startswith("TB-10"))
+    r = cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {"A-TABIQUE": metalcon}}).json()
+    assert r["errores"] == []
+    assert cliente.get(f"/api/proyectos/{pid}/legos").json()["muros"] == {"A-TABIQUE": metalcon}
+    corrida = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert corrida["ok"] and corrida["conteos"]["piezas_entramado"] == 0
+    # volver a madera: se reemplaza el bloque, no se duplica
+    cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {"A-TABIQUE": madera["nombre"]}})
+    py = cliente.get(f"/api/proyectos/{pid}/entradas").json()["archivos"]["proyecto.yaml"]
+    assert py.count("legos:") == 1 and py.count("# Legos elegidos") == 1
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["piezas_entramado"] > 0
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

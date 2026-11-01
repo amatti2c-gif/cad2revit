@@ -94,7 +94,7 @@ async function abrirProyecto(id) {
   estado.sucio.clear();
   estado.cadCache = {};
   try { localStorage.setItem("c2r-proyecto", id); } catch {}
-  await Promise.all([cargarPlanos(), cargarEntradas(), cargarCorridas()]);
+  await Promise.all([cargarPlanos(), cargarEntradas(), cargarCorridas(), cargarLegos()]);
 }
 
 $("#sel-proyecto").addEventListener("change", e => intentar(() => abrirProyecto(e.target.value)));
@@ -145,6 +145,7 @@ async function subir(files) {
     toast(`Subidos: ${r.guardados.join(", ")}`);
     r.guardados.forEach(n => delete estado.cadCache[n]);
     await cargarPlanos();
+    await cargarLegos();
   });
 }
 $("#inp-planos").addEventListener("change", e => { subir(e.target.files); e.target.value = ""; });
@@ -180,6 +181,85 @@ async function verPlano(nombre) {
   $("#vista-plano").scrollIntoView({ behavior: "smooth" });
 }
 $("#cerrar-vista-plano").addEventListener("click", () => $("#vista-plano").classList.add("oculto"));
+
+// ------------------------------------------------------------------ legos
+async function cargarLegos() {
+  const [cat, sel] = await Promise.all([api("GET", "/api/catalogo"), api("GET", P("/legos"))]);
+  estado.catalogo = cat;
+  const porNombre = Object.fromEntries(cat.muros.map(m => [m.nombre, m]));
+  const opciones = (lista, actual, auto) => [h("option", { value: "" }, auto),
+    ...lista.map(t => h("option", { value: t.nombre, selected: t.nombre === actual }, t.nombre))];
+  const espesor = n => porNombre[n] ? `${(porNombre[n].espesor_total * 100).toFixed(1)} cm` : "según reglas";
+
+  const tb = $("#tabla-legos tbody");
+  if (!sel.capas_muro.length) {
+    tb.replaceChildren(h("tr", {}, h("td", { colspan: 3, class: "tenue" },
+      "No hay capas de muros en los planos de este proyecto (revisa la pestaña Planos y proyecto.yaml).")));
+  } else {
+    tb.replaceChildren(...sel.capas_muro.map(capa => {
+      const s = h("select", { "data-capa": capa }, opciones(cat.muros, sel.muros[capa], "Automático (según reglas)"));
+      const td = h("td", { class: "tenue" }, espesor(sel.muros[capa]));
+      s.addEventListener("change", () => { td.textContent = espesor(s.value); marcarUsados(); $("#legos-estado").textContent = "sin guardar"; });
+      return h("tr", {}, h("td", {}, h("code", {}, capa)), h("td", {}, s), td);
+    }));
+  }
+  $("#sel-lego-losa").replaceChildren(...opciones(cat.losas, sel.losa, `Por defecto (${cat.por_defecto.losa ?? "—"})`));
+  $("#sel-lego-cubierta").replaceChildren(...opciones(cat.cubiertas, sel.cubierta, `Por defecto (${cat.por_defecto.cubierta ?? "—"})`));
+  [$("#sel-lego-losa"), $("#sel-lego-cubierta")].forEach(x => x.onchange = () => { marcarUsados(); $("#legos-estado").textContent = "sin guardar"; });
+  $("#legos-estado").textContent = "";
+  pintarCatalogo(cat);
+}
+
+function legosElegidos() {
+  const muros = {};
+  $$("#tabla-legos select").forEach(s => { muros[s.dataset.capa] = s.value || null; });
+  return { muros, losa: $("#sel-lego-losa").value || null, cubierta: $("#sel-lego-cubierta").value || null };
+}
+
+function pintarCatalogo(cat) {
+  const tarjeta = t => {
+    const total = t.capas.reduce((a, c) => a + c.espesor, 0) || 1;
+    const e = t.entramado;
+    return h("div", { class: "lego", "data-nombre": t.nombre },
+      h("h5", {}, t.nombre),
+      h("div", { class: "etiquetas" },
+        h("span", { class: "etiqueta" }, `${(t.espesor_total * 100).toFixed(1)} cm`),
+        t.estructural ? h("span", { class: "etiqueta" }, "estructural") : null,
+        e ? h("span", { class: "etiqueta madera" }, `entramado ${e.material}`) : null),
+      h("div", { class: "capas-barra", title: "Capas (de exterior a interior / de arriba hacia abajo)" },
+        t.capas.map(c => h("span", { style: `flex:${Math.round(c.espesor * 1000)} 1 0;background:${c.color ? `rgb(${c.color})` : "#bbb"}`,
+          title: `${c.material ?? "genérico"} · ${(c.espesor * 1000).toFixed(0)} mm` }))),
+      h("ul", {}, t.capas.map(c => h("li", {}, `${c.material ?? "genérico"} · ${(c.espesor * 1000).toFixed(0)} mm`)),
+        e ? h("li", {}, `Piezas ${(e.pie_derecho.b * 1000).toFixed(0)}×${(e.pie_derecho.h * 1000).toFixed(0)} mm · ` +
+          `pies derechos @${(e.separacion_pies_derechos ?? 0.4) * 100} cm · cadenetas @${(e.separacion_horizontales ?? 0.4) * 100} cm`) : null,
+        e?.revit ? h("li", {}, `Revit: ${e.revit.familia_vertical?.familia ?? "?"} / ${e.revit.familia_horizontal?.familia ?? "?"}`) : null));
+  };
+  const grupo = (titulo, lista) => h("div", { class: "grupo-legos" }, h("h4", {}, titulo), h("div", { class: "legos" }, lista.map(tarjeta)));
+  const es = cat.estructura;
+  $("#catalogo").replaceChildren(
+    grupo("Muros y tabiques", cat.muros), grupo("Losas", cat.losas), grupo("Cubiertas", cat.cubiertas),
+    h("div", { class: "grupo-legos" }, h("h4", {}, "Estructura"),
+      h("div", { class: "lego" }, h("h5", {}, `Sistema: ${es.sistema ?? "—"}`),
+        h("ul", {},
+          h("li", {}, `Material estructural: ${es.material ?? "—"}`),
+          es.columnas ? h("li", {}, `Pilares ${es.columnas.forma ?? "rectangular"} ${es.columnas.seccion_defecto?.b * 100}×${es.columnas.seccion_defecto?.h * 100} cm · ${es.columnas.familia_revit ?? ""}`) : null,
+          es.vigas ? h("li", {}, `Vigas ${es.vigas.forma ?? "rectangular"} ${es.vigas.seccion_defecto?.b * 100}×${es.vigas.seccion_defecto?.h * 100} cm · ${es.vigas.familia_revit ?? ""}`) : null))));
+  marcarUsados();
+}
+
+function marcarUsados() {
+  const usados = new Set(Object.values(legosElegidos().muros).filter(Boolean)
+    .concat([$("#sel-lego-losa").value, $("#sel-lego-cubierta").value].filter(Boolean)));
+  $$("#catalogo .lego").forEach(c => c.classList.toggle("usado", usados.has(c.dataset.nombre)));
+}
+
+$("#btn-guardar-legos").addEventListener("click", () => intentar(async () => {
+  const r = await api("PUT", P("/legos"), legosElegidos());
+  $("#legos-estado").textContent = "guardado ✓";
+  mostrarErroresEntradas(r.errores);
+  await cargarEntradas();        // proyecto.yaml cambió
+  toast("Selección de legos guardada. Presiona ▶ Ejecutar para aplicarla.");
+}));
 
 // ------------------------------------------------------------------ lineamientos
 async function cargarEntradas() {
@@ -240,6 +320,7 @@ $("#ed-texto").addEventListener("keydown", e => {
 
 async function guardarArchivo(a = estado.archivo) {
   const r = await api("PUT", P(`/entradas/${a}`), { texto: estado.entradas[a] });
+  intentar(cargarLegos);
   estado.sucio.delete(a);
   if (a === estado.archivo) $("#ed-estado").textContent = "guardado ✓";
   mostrarErroresEntradas(r.errores);

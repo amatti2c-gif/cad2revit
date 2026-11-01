@@ -173,6 +173,15 @@ def cargar(proyecto_yaml: str | Path) -> Configuracion:
     for p in proyecto.get("plantas") or []:
         if p.get("nivel") not in nombres_niv:
             errores.append(f"La planta '{p.get('archivo')}' apunta al nivel '{p.get('nivel')}', que no existe")
+    legos = proyecto.get("legos") or {}
+    mat = cfg.materialidades
+    for capa, tipo in (legos.get("muros") or {}).items():
+        if tipo and tipo not in {t["nombre"] for t in mat.get("tipos_muro", [])}:
+            errores.append(f"El lego '{tipo}' elegido para la capa '{capa}' ya no existe en el catálogo de muros")
+    for clave, grupo in (("losa", "tipos_losa"), ("cubierta", "tipos_cubierta")):
+        v = legos.get(clave)
+        if v and v not in {t["nombre"] for t in mat.get(grupo, [])}:
+            errores.append(f"El lego de {clave} '{v}' ya no existe en el catálogo")
     if errores:
         raise ErrorConfiguracion("Errores en los archivos de entrada:\n  - " + "\n  - ".join(errores))
     cfg.lod = resolver_lod(cfg.nivel_detalle)

@@ -15,6 +15,16 @@ from .muros import Muro
 # ---------------------------------------------------------------- tipos de muro
 def asignar_tipo_muro(m: Muro, cfg, advertencias: list[str]) -> None:
     mat = cfg.materialidades
+    # 1) Lego elegido para esta capa del CAD en el proyecto (tiene prioridad)
+    elegido = ((cfg.proyecto.get("legos") or {}).get("muros") or {}).get(m.capa_cad)
+    if elegido:
+        m.tipo = elegido
+        t = cfg.tipo_muro(m.tipo)
+        if t and abs(t["espesor_total"] - m.espesor) > 0.03:
+            advertencias.append(f"{m.id}: espesor dibujado {m.espesor} m distinto del lego '{m.tipo}' "
+                                f"({t['espesor_total']} m); revisar")
+        return
+    # 2) Reglas automáticas de materialidades.yaml
     for r in mat.get("reglas_muro", []):
         if "capa_cad" in r and not re.search(r["capa_cad"], m.capa_cad):
             continue
