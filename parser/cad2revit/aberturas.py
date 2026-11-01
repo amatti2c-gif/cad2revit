@@ -20,6 +20,7 @@ class Abertura:
     antepecho: float
     muro: str | None = None
     centro: Punto | None = None
+    modo: str | None = None      # None = el del nivel de detalle; "hueco" = forzar vano
 
 
 def regla_bloque(nombre: str, reglas: list[dict]) -> dict | None:
@@ -85,5 +86,30 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
         tc = max(ab.ancho / 2, min(muro.largo - ab.ancho / 2, tc))
         ab.centro = (round(muro.a[0] + u[0] * tc, 4), round(muro.a[1] + u[1] * tc, 4))
         ab.muro = muro.id
+        _regla_muro_delgado(ab, muro, cfg, advertencias)
         out.append(ab)
     return out
+
+
+def _regla_muro_delgado(ab: Abertura, muro: Muro, cfg, advertencias: list[str]) -> None:
+    """Las familias de puerta/ventana de Revit exigen un espesor mínimo de muro (las de la
+    plantilla métrica de Revit 2027: 12,5 cm). En muros más delgados se usa la familia
+    alternativa configurada o, si no hay, se deja solo el vano."""
+    reglas = cfg.capas_cad.get("aberturas_en_muros_delgados") or {}
+    r = reglas.get(ab.categoria) or {}
+    minimo = r.get("espesor_minimo")
+    if not minimo:
+        return
+    tipo = cfg.tipo_muro(muro.tipo) if muro.tipo else None
+    espesor = tipo["espesor_total"] if tipo else muro.espesor
+    if espesor >= minimo - 1e-6:
+        return
+    if r.get("familia"):
+        ab.familia, ab.tipo = r["familia"], r.get("tipo")
+        advertencias.append(f"{ab.id}: muro {muro.id} de {espesor * 100:.1f} cm (< {minimo * 100:.1f} cm); "
+                            f"se usa la familia para muros delgados '{ab.familia}'")
+    else:
+        ab.modo = "hueco"
+        advertencias.append(f"{ab.id}: la {ab.categoria} va en el muro {muro.id} de {espesor * 100:.1f} cm y las "
+                            f"familias configuradas necesitan al menos {minimo * 100:.1f} cm; se deja solo el vano. "
+                            "Define una familia para muros delgados en capas_cad.yaml (aberturas_en_muros_delgados).")

@@ -74,6 +74,26 @@ def test_lod300_completo(proyecto):
     assert len(mh["capas"]) == 3
 
 
+def test_puertas_en_tabique_delgado(proyecto):
+    modelo = construir_modelo(cargar(proyecto.ruta))
+    tabique = {m["id"] for m in modelo["muros"] if m["espesor"] == 0.1}
+    en_tabique = [a for a in modelo["aberturas"] if a["muro"] in tabique]
+    assert len(en_tabique) == 2 and all(a["modo"] == "hueco" for a in en_tabique)
+    assert any("necesitan al menos 12.5 cm" in a for a in modelo["advertencias"])
+    # la puerta del muro exterior (20 cm) sigue con su familia
+    assert next(a for a in modelo["aberturas"] if a["bloque_cad"] == "P90")["modo"] == "familia"
+
+
+def test_puertas_en_tabique_con_familia_alternativa(proyecto):
+    capas = yaml.safe_load((proyecto.ruta.parent / "capas_cad.yaml").read_text(encoding="utf-8"))
+    capas["aberturas_en_muros_delgados"]["puerta"].update(familia="Puerta Tabique", tipo="80x200")
+    ruta = proyecto("capas_cad.yaml", capas)
+    modelo = construir_modelo(cargar(ruta))
+    tabique = {m["id"] for m in modelo["muros"] if m["espesor"] == 0.1}
+    en_tabique = [a for a in modelo["aberturas"] if a["muro"] in tabique]
+    assert all(a["modo"] == "familia" and a["familia"] == "Puerta Tabique" for a in en_tabique)
+
+
 def test_lod100_simplifica(proyecto):
     ruta = proyecto("nivel_detalle.yaml", {"preset": 100, "ajustes": {}})
     modelo = construir_modelo(cargar(ruta))

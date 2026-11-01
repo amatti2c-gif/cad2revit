@@ -44,3 +44,21 @@ bloques:
   - {bloque: "(?i)P(UERTA)?[-_]?70",  categoria: puerta,  familia: "M_Door-Passage-Single-Flush", tipo: "750 x 2100mm", ancho: 0.70, alto: 2.10}
   - {bloque: "(?i)V(ENTANA)?[-_]?\\d+", categoria: ventana, familia: "M_Window-Fixed",            tipo: "900 x 1200mm", alto: 1.20, antepecho: 0.90}
   - {bloque: "(?i)COL|PILAR",          categoria: columna}
+
+# -----------------------------------------------------------------------------
+#  PUERTAS / VENTANAS EN MUROS DELGADOS
+# -----------------------------------------------------------------------------
+#  Las familias de puerta de la plantilla métrica de Revit 2027 no se pueden
+#  colocar en muros de menos de 12,5 cm (Revit: "Profile sketch is empty").
+#  En muros más delgados se usa la familia indicada aquí (por ejemplo una puerta
+#  para tabiques que hayas cargado en tu plantilla). Si familia queda vacía, se
+#  deja solo el vano en el muro.
+aberturas_en_muros_delgados:
+  puerta:
+    espesor_minimo: 0.125
+    familia:            # ej. "Puerta Tabique 1 Hoja"
+    tipo:
+  # ventana:
+  #   espesor_minimo: 0.125
+  #   familia:
+  #   tipo:

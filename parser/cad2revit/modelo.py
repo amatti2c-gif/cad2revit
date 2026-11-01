@@ -153,7 +153,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
             for ab in asignar_a_muros(abert_ins, muros, cfg, pref, adv):
                 modelo["aberturas"].append(dict(
                     id=ab.id, muro=ab.muro, categoria=ab.categoria, bloque_cad=ab.insercion.nombre,
-                    modo=lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=ab.centro,
+                    modo=ab.modo or lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=ab.centro,
                     ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho))
 
         # 4) Columnas y vigas
