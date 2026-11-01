@@ -44,6 +44,8 @@ from cad2revit.dxf_reader import leer  # noqa: E402
 from cad2revit.modelo import construir_modelo  # noqa: E402
 from cad2revit.validar import validar  # noqa: E402
 
+# Lineamientos COMUNES (uno solo en la app, para todos los proyectos) + proyecto.yaml (propio)
+LINEAMIENTOS = ["materialidades.yaml", "estructuracion.yaml", "nivel_detalle.yaml", "capas_cad.yaml"]
 ARCHIVOS_ENTRADA = ["proyecto.yaml", "materialidades.yaml", "estructuracion.yaml",
                     "nivel_detalle.yaml", "capas_cad.yaml"]
 NOMBRE_SEGURO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\- ]{0,120}$")
@@ -114,10 +116,47 @@ def _slug(texto: str) -> str:
     return s[:60] or "proyecto"
 
 
+def _lineamientos() -> Path:
+    """Carpeta única de lineamientos de la app. La primera vez se crea con los valores
+    por defecto; desde ahí lo que se edite en la app es lo vigente para todos los proyectos."""
+    d = _datos() / "lineamientos"
+    if not d.exists():
+        d.mkdir(parents=True)
+        for a in LINEAMIENTOS:
+            shutil.copy2(RAIZ / "entradas" / a, d / a)
+    return d
+
+
+def _ruta_entrada(d: Path, archivo: str) -> Path:
+    return d / "entradas" / archivo if archivo == "proyecto.yaml" else _lineamientos() / archivo
+
+
+def _enlazar_lineamientos(d: Path) -> None:
+    """Hace que proyecto.yaml use los lineamientos comunes de la app (y migra proyectos
+    antiguos que tenían copias propias)."""
+    py = d / "entradas" / "proyecto.yaml"
+    if not py.exists():
+        return
+    texto = original = py.read_text(encoding="utf-8")
+    rel = os.path.relpath(_lineamientos(), d / "entradas").replace(os.sep, "/")
+    for a in LINEAMIENTOS:
+        clave = a.removesuffix(".yaml")
+        linea = f"{clave}: {rel}/{a}"
+        if re.search(rf"^{clave}:.*$", texto, flags=re.M):
+            texto = re.sub(rf"^{clave}:.*$", linea, texto, count=1, flags=re.M)
+        else:
+            texto = texto.rstrip() + "\n" + linea + "\n"
+    if texto != original:
+        py.write_text(texto, encoding="utf-8")
+    for a in LINEAMIENTOS:                       # las copias antiguas ya no se usan
+        (d / "entradas" / a).unlink(missing_ok=True)
+
+
 def _proyecto(pid: str) -> Path:
     d = _datos() / "proyectos" / _seguro(pid, "proyecto")
     if not (d / "meta.json").exists():
         raise HTTPException(404, f"No existe el proyecto '{pid}'")
+    _enlazar_lineamientos(d)
     return d
 
 
@@ -175,15 +214,16 @@ def crear_proyecto(datos: NuevoProyecto):
     d = _datos() / "proyectos" / pid
     (d / "planos").mkdir(parents=True)
     (d / "corridas").mkdir()
-    shutil.copytree(RAIZ / "entradas", d / "entradas")
-    # Las rutas de planos del proyecto apuntan a su carpeta planos/
+    (d / "entradas").mkdir()
+    # Solo proyecto.yaml es propio del proyecto; los lineamientos son los comunes de la app
     py = d / "entradas" / "proyecto.yaml"
-    texto = py.read_text(encoding="utf-8").replace("../ejemplos/", "../planos/")
+    texto = (RAIZ / "entradas" / "proyecto.yaml").read_text(encoding="utf-8").replace("../ejemplos/", "../planos/")
     texto = re.sub(r"^nombre:.*$", f"nombre: {json.dumps(nombre, ensure_ascii=False)}", texto, count=1, flags=re.M)
     py.write_text(texto, encoding="utf-8")
     if datos.con_ejemplo:
         from generar_ejemplo import generar
         generar(d / "planos")
+    _enlazar_lineamientos(d)
     meta = {"id": pid, "nombre": nombre, "creado": _ahora(), "con_ejemplo": datos.con_ejemplo}
     (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return meta
@@ -203,7 +243,7 @@ class TextoEntrada(BaseModel):
 def leer_entradas(pid: str):
     d = _proyecto(pid)
     return {
-        "archivos": {a: (d / "entradas" / a).read_text(encoding="utf-8") for a in ARCHIVOS_ENTRADA},
+        "archivos": {a: _ruta_entrada(d, a).read_text(encoding="utf-8") for a in ARCHIVOS_ENTRADA},
         "errores": _validar_entradas(d),
     }
 
@@ -219,22 +259,10 @@ def guardar_entrada(pid: str, archivo: str, datos: TextoEntrada):
         marca = getattr(e, "problem_mark", None)
         donde = f" (línea {marca.line + 1}, columna {marca.column + 1})" if marca else ""
         raise HTTPException(400, f"YAML mal formado{donde}: {getattr(e, 'problem', e)}")
-    (d / "entradas" / archivo).write_text(datos.texto, encoding="utf-8")
-    return {"guardado": True, "errores": _validar_entradas(d)}
-
-
-@app.post("/api/proyectos/{pid}/entradas/{archivo}/plantilla")
-def usar_plantilla(pid: str, archivo: str):
-    """Reemplaza un archivo de lineamientos por la plantilla vigente del repositorio
-    (la versión anterior queda guardada en las corridas del historial)."""
-    d = _proyecto(pid)
-    if archivo not in ARCHIVOS_ENTRADA:
-        raise HTTPException(404, f"Archivo de entrada desconocido: {archivo}")
+    _ruta_entrada(d, archivo).write_text(datos.texto, encoding="utf-8")
     if archivo == "proyecto.yaml":
-        raise HTTPException(400, "proyecto.yaml es propio de cada proyecto (niveles y planos); no se reemplaza")
-    texto = (RAIZ / "entradas" / archivo).read_text(encoding="utf-8")
-    (d / "entradas" / archivo).write_text(texto, encoding="utf-8")
-    return {"texto": texto, "errores": _validar_entradas(d)}
+        _enlazar_lineamientos(d)
+    return {"guardado": True, "errores": _validar_entradas(d)}
 
 
 # ---------------------------------------------------------------- planos
@@ -328,7 +356,10 @@ def ejecutar(pid: str, datos: NuevaCorrida):
     previas = sorted(int(c.name) for c in (d / "corridas").glob("[0-9]*"))
     n = (previas[-1] + 1) if previas else 1
     c = d / "corridas" / f"{n:04d}"
-    shutil.copytree(d / "entradas", c / "entradas")
+    # copia de lo usado en esta corrida (para el historial: comparar / restaurar)
+    (c / "entradas").mkdir(parents=True)
+    for a in ARCHIVOS_ENTRADA:
+        shutil.copy2(_ruta_entrada(d, a), c / "entradas" / a)
     resumen = {"n": n, "fecha": _ahora(), "notas": datos.notas, "ok": False, "error": None,
                "conteos": None, "lod": None, "errores_esquema": []}
     try:
@@ -393,7 +424,8 @@ def restaurar(pid: str, n: int):
     d = _proyecto(pid)
     c = _corrida_dir(d, n)
     for a in ARCHIVOS_ENTRADA:
-        shutil.copy2(c / "entradas" / a, d / "entradas" / a)
+        shutil.copy2(c / "entradas" / a, _ruta_entrada(d, a))
+    _enlazar_lineamientos(d)
     return {"restaurado": n, "errores": _validar_entradas(d)}
 
 

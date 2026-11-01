@@ -19,11 +19,11 @@ const s = (tag, attrs = {}) => {
 };
 
 const AYUDA = {
-  "proyecto.yaml": "Niveles y qué plano DXF corresponde a cada nivel. Copia las rutas desde la pestaña Planos.",
-  "materialidades.yaml": "Materiales, tipos de muro/losa/cubierta con sus capas y reglas de asignación por capa CAD y espesor.",
-  "estructuracion.yaml": "Sistema estructural, muros estructurales, columnas, vigas, losas, fundaciones y ejes.",
-  "nivel_detalle.yaml": "Hasta dónde llega el modelo: preset LOD 100/200/300/350 y ajustes por elemento.",
-  "capas_cad.yaml": "Qué capa del CAD es qué cosa y qué bloque corresponde a qué familia de Revit.",
+  "proyecto.yaml": "SOLO ESTE PROYECTO · Niveles y qué plano DXF corresponde a cada nivel. Copia las rutas desde la pestaña Planos.",
+  "materialidades.yaml": "COMÚN A TODOS LOS PROYECTOS · Materiales, tipos de muro/losa/cubierta con sus capas y reglas de asignación por capa CAD y espesor.",
+  "estructuracion.yaml": "COMÚN A TODOS LOS PROYECTOS · Sistema estructural, muros estructurales, columnas, vigas, losas, fundaciones y ejes.",
+  "nivel_detalle.yaml": "COMÚN A TODOS LOS PROYECTOS · Hasta dónde llega el modelo: preset LOD 100/200/300/350 y ajustes por elemento.",
+  "capas_cad.yaml": "COMÚN A TODOS LOS PROYECTOS · Qué capa del CAD es qué cosa y qué bloque corresponde a qué familia de Revit.",
 };
 const PALETA = ["#2563eb", "#d97706", "#059669", "#db2777", "#7c3aed", "#0891b2", "#65a30d", "#dc2626", "#4b5563"];
 
@@ -250,20 +250,7 @@ async function guardarTodo() {
   for (const a of [...estado.sucio]) await guardarArchivo(a);
 }
 $("#btn-guardar").addEventListener("click", () => intentar(() => guardarArchivo()));
-$("#btn-plantilla").addEventListener("click", () => intentar(async () => {
-  const a = estado.archivo;
-  if (a === "proyecto.yaml") return toast("proyecto.yaml es propio de cada proyecto; no tiene plantilla", true);
-  if (!confirm(`¿Reemplazar ${a} por la versión más reciente de cad2revit?\n` +
-               "Tus cambios en este archivo se pierden (quedan guardados en las corridas del Historial).")) return;
-  const r = await api("POST", P(`/entradas/${a}/plantilla`));
-  estado.entradas[a] = r.texto;
-  estado.sucio.delete(a);
-  $("#ed-texto").value = r.texto;
-  $("#ed-estado").textContent = "actualizado ✓";
-  mostrarErroresEntradas(r.errores);
-  pintarListaArchivos();
-  toast(`${a} actualizado a la plantilla actual`);
-}));
+
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && $("#tab-lineamientos").classList.contains("activa")) {
     e.preventDefault();

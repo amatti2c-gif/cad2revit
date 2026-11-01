@@ -73,12 +73,17 @@ def test_flujo_completo(cliente):
     assert [c["n"] for c in cliente.get(f"/api/proyectos/{pid}/corridas").json()] == [2, 1]
 
 
-def test_usar_plantilla(cliente):
-    pid = _crear(cliente)
-    cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "materiales: []\n"})
-    r = cliente.post(f"/api/proyectos/{pid}/entradas/materialidades.yaml/plantilla")
-    assert r.status_code == 200 and "entramado" in r.json()["texto"] and r.json()["errores"] == []
-    assert cliente.post(f"/api/proyectos/{pid}/entradas/proyecto.yaml/plantilla").status_code == 400
+def test_lineamientos_comunes(cliente):
+    a = _crear(cliente)
+    r = cliente.post("/api/proyectos", json={"nombre": "Otro", "con_ejemplo": True}).json()["id"]
+    texto = cliente.get(f"/api/proyectos/{a}/entradas").json()["archivos"]["nivel_detalle.yaml"]
+    cliente.put(f"/api/proyectos/{a}/entradas/nivel_detalle.yaml", json={"texto": texto.replace("preset: 300", "preset: 200")})
+    # el cambio hecho desde un proyecto vale para todos
+    assert "preset: 200" in cliente.get(f"/api/proyectos/{r}/entradas").json()["archivos"]["nivel_detalle.yaml"]
+    assert cliente.post(f"/api/proyectos/{r}/corridas", json={}).json()["lod"] == 200
+    # proyecto.yaml es propio de cada proyecto
+    py = cliente.get(f"/api/proyectos/{a}/entradas").json()["archivos"]["proyecto.yaml"]
+    assert "lineamientos/materialidades.yaml" in py
 
 
 def test_errores_de_lineamientos(cliente):
