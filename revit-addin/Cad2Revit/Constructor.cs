@@ -82,7 +82,7 @@ namespace Cad2Revit
         private Level Nivel(string nombre) =>
             nombre != null && _niveles.TryGetValue(nombre, out var n) ? n : null;
 
-        private ElementId Material(string nombre) =>
+        private ElementId IdMaterial(string nombre) =>
             nombre != null && _materiales.TryGetValue(nombre, out var id) ? id : ElementId.InvalidElementId;
 
         // ------------------------------------------------------------ niveles

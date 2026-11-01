@@ -1,0 +1,45 @@
+name: add-in Revit
+on:
+  push:
+    branches: [main]
+    paths: ["revit-addin/**", ".github/workflows/addin.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  compilar:
+    runs-on: ubuntu-latest
+    env:
+      REVIT: "2027"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Compilar
+        run: dotnet build revit-addin/Cad2Revit -c Release -p:RevitVersion=$REVIT
+      - name: Empaquetar
+        run: |
+          mkdir -p paquete/Cad2Revit
+          cp revit-addin/Cad2Revit/bin/Release/Cad2Revit.dll paquete/Cad2Revit/
+          cp revit-addin/Cad2Revit/Cad2Revit.addin paquete/
+          cp revit-addin/instalador/* paquete/
+          cd paquete && zip -r ../cad2revit-revit$REVIT.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cad2revit-revit${{ env.REVIT }}
+          path: cad2revit-revit${{ env.REVIT }}.zip
+      - name: Publicar en Releases (enlace fijo de descarga)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=addin-revit$REVIT
+          NOTAS="Complemento cad2revit para Revit $REVIT. Compilado desde ${GITHUB_SHA::7}. Descomprime y ejecuta instalar.bat."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$NOTAS"
+          else
+            gh release create "$TAG" --title "Add-in Revit $REVIT" --notes "$NOTAS" --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" "cad2revit-revit$REVIT.zip" --clobber

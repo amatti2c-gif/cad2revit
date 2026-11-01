@@ -87,15 +87,20 @@ o en AutoCAD: `GUARDARCOMO → DXF`.
 
 ## 3. Add-in de Revit (C#)
 
-Requiere Visual Studio 2022 o el .NET SDK 8, y Revit instalado.
+**Instalación (Revit 2027):** descarga
+[cad2revit-revit2027.zip](https://github.com/amatti2c-gif/cad2revit/releases/download/addin-revit2027/cad2revit-revit2027.zip), descomprímelo y ejecuta `instalar.bat` con Revit cerrado.
+GitHub Actions lo compila y publica automáticamente en *Releases* cada vez que cambia `revit-addin/`.
+
+Para compilarlo tú mismo (no hace falta tener Revit instalado, porque la API viene de los
+paquetes NuGet `Nice3point.Revit.Api.*`):
 
 ```bash
 cd revit-addin/Cad2Revit
-dotnet build -c Release                         # Revit 2025 (por defecto)
+dotnet build -c Release                         # Revit 2027 (.NET 10, por defecto)
 ```
 
 ```bash
-dotnet build -c Release -p:RevitVersion=2024    # Revit 2024 (.NET Framework 4.8)
+dotnet build -c Release -p:RevitVersion=2026    # Revit 2025/2026 (.NET 8)
 ```
 
 Al compilar se copia el add-in a `%AppData%\Autodesk\Revit\Addins\<versión>\`. En Revit aparece

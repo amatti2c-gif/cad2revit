@@ -1,0 +1,19 @@
+cad2revit - complemento para Revit 2027
+========================================
+
+INSTALAR
+  1. Cierra Revit.
+  2. Descomprime este .zip en cualquier carpeta.
+  3. Doble clic en "instalar.bat".
+  4. Abre Revit 2027. La primera vez elige "Cargar siempre" en el aviso de seguridad.
+
+USAR
+  1. En la app web de cad2revit, ejecuta una corrida y descarga "modelo.json".
+  2. En Revit, crea o abre un proyecto desde tu plantilla (con familias de puertas,
+     ventanas, columnas, vigas y zapatas cargadas).
+  3. Pestana "cad2revit" -> "Construir modelo" -> elige el modelo.json.
+  4. Revisa el informe. Todo se deshace con un solo Ctrl+Z.
+  5. Guarda el proyecto con Archivo -> Guardar como (.rvt) donde quieras.
+
+DESINSTALAR
+  Doble clic en "desinstalar.bat".

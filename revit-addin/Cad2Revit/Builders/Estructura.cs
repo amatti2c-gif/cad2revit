@@ -10,7 +10,7 @@ namespace Cad2Revit
         private static readonly string[] NombresB = { "b", "Width", "Ancho", "Anchura" };
         private static readonly string[] NombresH = { "h", "Depth", "Height", "Altura", "Profundidad" };
 
-        private ElementId MaterialEstructural => Material(_m.MaterialEstructural);
+        private ElementId MaterialEstructural => IdMaterial(_m.MaterialEstructural);
 
         // ------------------------------------------------------------ columnas
         private void CrearColumnas()

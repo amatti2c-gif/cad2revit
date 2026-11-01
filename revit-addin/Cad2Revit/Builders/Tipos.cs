@@ -89,7 +89,7 @@ namespace Cad2Revit
             foreach (var c in t.Capas)
             {
                 var ancho = c.Funcion == "membrana" ? 0.0 : U.M(c.Espesor);  // Revit exige membranas de espesor 0
-                capas.Add(new CompoundStructureLayer(ancho, Funcion(c.Funcion), Material(c.Material)));
+                capas.Add(new CompoundStructureLayer(ancho, Funcion(c.Funcion), IdMaterial(c.Material)));
             }
             var cs = CompoundStructure.CreateSimpleCompoundStructure(capas);
             int primera = t.Capas.FindIndex(c => c.Funcion == "estructura");

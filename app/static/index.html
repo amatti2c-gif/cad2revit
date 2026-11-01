@@ -147,11 +147,13 @@
     <form method="dialog">
       <h3>Llevar el modelo a Revit</h3>
       <ol>
-        <li>Compila e instala el add-in una vez (carpeta <code>revit-addin/</code> del repositorio, ver README).</li>
+        <li><strong>Una sola vez:</strong> descarga el <a href="https://github.com/amatti2c-gif/cad2revit/releases/download/addin-revit2027/cad2revit-revit2027.zip" target="_blank" rel="noopener">complemento para Revit 2027</a>,
+          descomprímelo y haz doble clic en <code>instalar.bat</code> (con Revit cerrado).</li>
         <li>Descarga <code>modelo.json</code> de esta corrida.</li>
-        <li>En Revit abre un proyecto nuevo desde tu plantilla (con las familias de puertas, ventanas, columnas y vigas cargadas).</li>
+        <li>En Revit abre un proyecto desde tu plantilla (con familias de puertas, ventanas, columnas y vigas cargadas).</li>
         <li>Pestaña <strong>cad2revit → Construir modelo</strong> y elige el JSON.</li>
-        <li>Revisa el informe; anota en el Historial lo que haya que mejorar y vuelve a iterar.</li>
+        <li>Revisa el informe y guarda con <strong>Archivo → Guardar como</strong> (.rvt) donde quieras.</li>
+        <li>Anota en el Historial lo que haya que mejorar y vuelve a iterar.</li>
       </ol>
       <div class="acciones"><button class="pri">Entendido</button></div>
     </form>
