@@ -217,7 +217,7 @@ function legosElegidos() {
 }
 
 function pintarCatalogo(cat) {
-  const tarjeta = t => {
+  const tarjeta = (t, grupo) => {
     const total = t.capas.reduce((a, c) => a + c.espesor, 0) || 1;
     const e = t.entramado;
     return h("div", { class: "lego", "data-nombre": t.nombre },
@@ -232,12 +232,24 @@ function pintarCatalogo(cat) {
       h("ul", {}, t.capas.map(c => h("li", {}, `${c.material ?? "genérico"} · ${(c.espesor * 1000).toFixed(0)} mm`)),
         e ? h("li", {}, `Piezas ${(e.pie_derecho.b * 1000).toFixed(0)}×${(e.pie_derecho.h * 1000).toFixed(0)} mm · ` +
           `pies derechos @${(e.separacion_pies_derechos ?? 0.4) * 100} cm · cadenetas @${(e.separacion_horizontales ?? 0.4) * 100} cm`) : null,
-        e?.revit ? h("li", {}, `Revit: ${e.revit.familia_vertical?.familia ?? "?"} / ${e.revit.familia_horizontal?.familia ?? "?"}`) : null));
+        e?.revit ? h("li", {}, `Revit: ${e.revit.familia_vertical?.familia ?? "?"} / ${e.revit.familia_horizontal?.familia ?? "?"}`) : null),
+      h("div", { class: "acciones-lego" },
+        h("button", { class: "sec", onclick: () => abrirEditorLego(grupo, t, false) }, "Editar"),
+        h("button", { class: "sec", onclick: () => abrirEditorLego(grupo, t, true) }, "Duplicar"),
+        h("button", { class: "sec", onclick: () => intentar(async () => {
+          if (!confirm(`¿Eliminar el lego "${t.nombre}"?`)) return;
+          await api("DELETE", `/api/catalogo/${grupo}/${encodeURIComponent(t.nombre)}`);
+          toast(`"${t.nombre}" eliminado`);
+          await recargarTodo();
+        }) }, "Eliminar")));
   };
-  const grupo = (titulo, lista) => h("div", { class: "grupo-legos" }, h("h4", {}, titulo), h("div", { class: "legos" }, lista.map(tarjeta)));
+  const grupo = (titulo, clave, lista) => h("div", { class: "grupo-legos" },
+    h("div", { class: "tit" }, h("h4", {}, titulo),
+      h("button", { class: "sec", onclick: () => abrirEditorLego(clave, null, false) }, "+ Nuevo")),
+    h("div", { class: "legos" }, lista.map(t => tarjeta(t, clave))));
   const es = cat.estructura;
   $("#catalogo").replaceChildren(
-    grupo("Muros y tabiques", cat.muros), grupo("Losas", cat.losas), grupo("Cubiertas", cat.cubiertas),
+    grupo("Muros y tabiques", "muros", cat.muros), grupo("Losas", "losas", cat.losas), grupo("Cubiertas", "cubiertas", cat.cubiertas),
     h("div", { class: "grupo-legos" }, h("h4", {}, "Estructura"),
       h("div", { class: "lego" }, h("h5", {}, `Sistema: ${es.sistema ?? "—"}`),
         h("ul", {},
@@ -252,6 +264,136 @@ function marcarUsados() {
     .concat([$("#sel-lego-losa").value, $("#sel-lego-cubierta").value].filter(Boolean)));
   $$("#catalogo .lego").forEach(c => c.classList.toggle("usado", usados.has(c.dataset.nombre)));
 }
+
+// ------------------------------------------------------------------ editor de legos
+const FUNCIONES = { terminacion1: "Terminación exterior / superior", sustrato: "Sustrato", aislacion: "Aislación",
+  membrana: "Membrana", estructura: "Estructura (núcleo)", terminacion2: "Terminación interior / inferior" };
+const lego = { grupo: null, original: null };
+
+async function recargarTodo() {
+  await cargarLegos();
+  await cargarEntradas();
+}
+
+function filaCapa(c = { funcion: "estructura", material: "", espesor: 0.1 }) {
+  const mats = estado.catalogo.materiales;
+  const fn = h("select", {}, Object.entries(FUNCIONES).map(([v, t]) => h("option", { value: v, selected: v === c.funcion }, t)));
+  const mt = h("select", {}, mats.map(m => h("option", { value: m.nombre, selected: m.nombre === c.material }, `${m.nombre} (${m.clase ?? "—"})`)));
+  const es = h("input", { type: "number", step: "1", min: "0", value: Math.round(c.espesor * 1000) });
+  const tr = h("tr", {}, h("td", {}, fn), h("td", {}, mt), h("td", {}, es), h("td", {},
+    h("button", { type: "button", class: "sec", title: "Subir", onclick: () => { tr.previousElementSibling?.before(tr); vistaPreviaLego(); } }, "↑"), " ",
+    h("button", { type: "button", class: "sec", title: "Bajar", onclick: () => { tr.nextElementSibling?.after(tr); vistaPreviaLego(); } }, "↓"), " ",
+    h("button", { type: "button", class: "sec", title: "Quitar", onclick: () => { tr.remove(); vistaPreviaLego(); } }, "✕")));
+  [fn, mt, es].forEach(x => x.addEventListener("input", vistaPreviaLego));
+  return tr;
+}
+
+function capasDelEditor() {
+  return $$("#lego-capas tbody tr").map(tr => {
+    const [fn, mt] = tr.querySelectorAll("select");
+    return { funcion: fn.value, material: mt.value, espesor: (+tr.querySelector("input").value || 0) / 1000 };
+  });
+}
+
+function vistaPreviaLego() {
+  const capas = capasDelEditor();
+  const color = Object.fromEntries(estado.catalogo.materiales.map(m => [m.nombre, m.color]));
+  $("#lego-total").textContent = Math.round(capas.reduce((a, c) => a + c.espesor, 0) * 1000);
+  $("#lego-barra").replaceChildren(...capas.map(c => h("span", {
+    style: `flex:${Math.max(1, Math.round(c.espesor * 1000))} 1 0;background:${color[c.material] ? `rgb(${color[c.material]})` : "#bbb"}`,
+    title: `${c.material} · ${Math.round(c.espesor * 1000)} mm` })));
+}
+
+function abrirEditorLego(grupo, t, duplicar) {
+  lego.grupo = grupo;
+  lego.original = t && !duplicar ? t.nombre : null;
+  const titulo = { muros: "muro / tabique", losas: "losa", cubiertas: "cubierta" }[grupo];
+  $("#lego-titulo").textContent = (t ? (duplicar ? "Duplicar " : "Editar ") : "Nuevo ") + titulo;
+  $("#lego-orden").textContent = grupo === "muros" ? "(de exterior a interior)" : "(de arriba hacia abajo)";
+  $("#lego-nombre").value = t ? (duplicar ? `${t.nombre} (copia)` : t.nombre) : "";
+  $("#lego-estructural").checked = !!t?.estructural;
+  $("#lego-capas tbody").replaceChildren(...(t?.capas?.length ? t.capas : [{ funcion: "estructura", material: estado.catalogo.materiales[0]?.nombre, espesor: 0.1 }]).map(filaCapa));
+  // entramado (solo muros)
+  $("#lego-entramado-box").classList.toggle("oculto", grupo !== "muros");
+  const e = t?.entramado;
+  $("#lego-entramado").checked = !!e;
+  const maderas = estado.catalogo.materiales.filter(m => /mader/i.test(m.clase ?? ""));
+  $("#ent-material").replaceChildren(...(maderas.length ? maderas : estado.catalogo.materiales)
+    .map(m => h("option", { value: m.nombre, selected: m.nombre === e?.material }, m.nombre)));
+  $("#ent-b").value = Math.round((e?.pie_derecho?.b ?? 0.05) * 1000);
+  $("#ent-h").value = Math.round((e?.pie_derecho?.h ?? 0.076) * 1000);
+  $("#ent-sv").value = Math.round((e?.separacion_pies_derechos ?? 0.4) * 100);
+  $("#ent-sh").value = Math.round((e?.separacion_horizontales ?? 0.4) * 100);
+  $("#ent-soleras").checked = e?.soleras ?? true;
+  $("#ent-refuerzo").checked = e?.refuerzo_vanos ?? true;
+  $("#ent-fv").value = e?.revit?.familia_vertical?.familia ?? "Timber-Column";
+  $("#ent-fvt").value = e?.revit?.familia_vertical?.tipo ?? "2x3";
+  $("#ent-fh").value = e?.revit?.familia_horizontal?.familia ?? "Dimension Lumber";
+  $("#ent-fht").value = e?.revit?.familia_horizontal?.tipo ?? "2x3";
+  $("#lego-entramado-campos").classList.toggle("oculto", !e);
+  $("#lego-error").classList.add("oculto");
+  vistaPreviaLego();
+  $("#dlg-lego").showModal();
+}
+
+$("#lego-entramado").addEventListener("change", e => $("#lego-entramado-campos").classList.toggle("oculto", !e.target.checked));
+// la capa de estructura (núcleo) acompaña la profundidad de las piezas del entramado
+$("#ent-h").addEventListener("input", () => {
+  if (!$("#lego-entramado").checked) return;
+  const fila = $$("#lego-capas tbody tr").find(tr => tr.querySelector("select").value === "estructura");
+  if (fila) { fila.querySelector("input").value = $("#ent-h").value; vistaPreviaLego(); }
+});
+$("#lego-agregar-capa").addEventListener("click", () => {
+  $("#lego-capas tbody").append(filaCapa({ funcion: "terminacion2", material: estado.catalogo.materiales[0]?.nombre, espesor: 0.015 }));
+  vistaPreviaLego();
+});
+$("#lego-nuevo-material").addEventListener("click", () => $("#dlg-material").showModal());
+$("#dlg-material").addEventListener("close", () => {
+  if ($("#dlg-material").returnValue !== "ok" || !$("#mat-nombre").value.trim()) return;
+  const hex = $("#mat-color").value;
+  const color = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+  intentar(async () => {
+    await api("POST", "/api/materiales", { nombre: $("#mat-nombre").value.trim(), clase: $("#mat-clase").value, color });
+    estado.catalogo = await api("GET", "/api/catalogo");
+    // refrescar las listas de material del editor sin perder lo escrito
+    const capas = capasDelEditor();
+    $("#lego-capas tbody").replaceChildren(...capas.map(filaCapa));
+    const actual = $("#ent-material").value;
+    const maderas = estado.catalogo.materiales.filter(m => /mader/i.test(m.clase ?? ""));
+    $("#ent-material").replaceChildren(...maderas.map(m => h("option", { value: m.nombre, selected: m.nombre === actual }, m.nombre)));
+    vistaPreviaLego();
+    toast(`Material "${$("#mat-nombre").value.trim()}" creado`);
+    $("#mat-nombre").value = "";
+  });
+});
+
+$("#form-lego").addEventListener("submit", ev => {
+  if (ev.submitter?.value !== "ok") return;
+  ev.preventDefault();                                  // el diálogo se cierra solo si se guardó
+  const datos = { nombre: $("#lego-nombre").value.trim(), estructural: $("#lego-estructural").checked, capas: capasDelEditor() };
+  if (lego.grupo === "muros" && $("#lego-entramado").checked) {
+    datos.entramado = {
+      material: $("#ent-material").value,
+      pie_derecho: { b: +$("#ent-b").value / 1000, h: +$("#ent-h").value / 1000 },
+      separacion_pies_derechos: +$("#ent-sv").value / 100, separacion_horizontales: +$("#ent-sh").value / 100,
+      soleras: $("#ent-soleras").checked, refuerzo_vanos: $("#ent-refuerzo").checked,
+      revit: { familia_vertical: { familia: $("#ent-fv").value.trim(), tipo: $("#ent-fvt").value.trim() },
+               familia_horizontal: { familia: $("#ent-fh").value.trim(), tipo: $("#ent-fht").value.trim() } },
+    };
+  }
+  (async () => {
+    try {
+      if (lego.original) await api("PUT", `/api/catalogo/${lego.grupo}/${encodeURIComponent(lego.original)}`, datos);
+      else await api("POST", `/api/catalogo/${lego.grupo}`, datos);
+      $("#dlg-lego").close();
+      toast(`Lego "${datos.nombre}" guardado`);
+      await recargarTodo();
+    } catch (e) {
+      $("#lego-error").textContent = e.message;
+      $("#lego-error").classList.remove("oculto");
+    }
+  })();
+});
 
 $("#btn-guardar-legos").addEventListener("click", () => intentar(async () => {
   const r = await api("PUT", P("/legos"), legosElegidos());

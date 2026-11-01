@@ -297,7 +297,234 @@ def catalogo():
                         "muro": mat.get("tipo_muro_por_defecto")},
         "estructura": {"sistema": est.get("sistema"), "material": est.get("material_estructural"),
                        "columnas": est.get("columnas"), "vigas": est.get("vigas")},
+        "materiales": mat.get("materiales", []),
     }
+
+
+# ---------------------------------------------------------------- edición del catálogo
+GRUPOS = {"muros": "tipos_muro", "losas": "tipos_losa", "cubiertas": "tipos_cubierta"}
+DEFECTO = {"muros": "tipo_muro_por_defecto", "losas": "tipo_losa_por_defecto", "cubiertas": "tipo_cubierta_por_defecto"}
+CLAVE_PROYECTO = {"losas": "losa", "cubiertas": "cubierta"}
+
+
+def _ry():
+    from ruamel.yaml import YAML
+    y = YAML()                     # ida y vuelta: conserva comentarios y orden del archivo
+    y.preserve_quotes = True
+    y.width = 4096
+    y.indent(mapping=2, sequence=4, offset=2)
+    return y
+
+
+def _leer_mat_rt():
+    ruta = _lineamientos() / "materialidades.yaml"
+    with ruta.open(encoding="utf-8") as f:
+        return ruta, _ry().load(f)
+
+
+def _guardar_mat_rt(ruta: Path, datos) -> None:
+    """Valida con las mismas reglas del parser y recién entonces escribe."""
+    import io
+    from cad2revit.config import _validar_materialidades
+    plano = json.loads(json.dumps(datos))          # copia sin metadatos de ruamel
+    errores = _validar_materialidades(plano)
+    if errores:
+        raise HTTPException(400, "El lego no es válido:\n• " + "\n• ".join(errores))
+    buf = io.StringIO()
+    _ry().dump(datos, buf)
+    ruta.write_text(_reubicar_titulos(buf.getvalue()), encoding="utf-8")
+
+
+def _reubicar_titulos(texto: str) -> str:
+    """ruamel deja los títulos de sección (comentarios en columna 0) pegados al último
+    elemento de la lista anterior; si quedan sobre elementos agregados, se devuelven
+    justo antes de la siguiente clave de primer nivel (su sección real)."""
+    lineas = texto.split("\n")
+    cambiado = True
+    while cambiado:
+        cambiado = False
+        i = 0
+        while i < len(lineas):
+            if lineas[i].startswith("#"):
+                j = i
+                while j < len(lineas) and (lineas[j].startswith("#") or lineas[j] == ""):
+                    j += 1
+                if j < len(lineas) and lineas[j].startswith("  - "):
+                    k = j
+                    while k < len(lineas) and (lineas[k].startswith(" ") or lineas[k] == ""):
+                        k += 1
+                    bloque = lineas[i:j]
+                    while k > j and lineas[k - 1] == "":
+                        k -= 1
+                    lineas = lineas[:i] + lineas[j:k] + [""] + [l for l in bloque if l != "" or True] + lineas[k:]
+                    cambiado = True
+                    break
+                i = j
+            else:
+                i += 1
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lineas))
+
+
+def _flow(d: dict):
+    """Diccionario en una línea ({funcion: ..., material: ..., espesor: ...}) como en el archivo."""
+    from ruamel.yaml.comments import CommentedMap
+    m = CommentedMap(d)
+    m.fa.set_flow_style()
+    return m
+
+
+def _lego_a_yaml(grupo: str, lego: dict) -> dict:
+    from ruamel.yaml.comments import CommentedMap
+    out = CommentedMap()
+    out["nombre"] = lego["nombre"].strip()
+    if grupo != "cubiertas" or lego.get("estructural"):
+        out["estructural"] = bool(lego.get("estructural"))
+    out["capas"] = [_flow({"funcion": c["funcion"], "material": c["material"], "espesor": round(float(c["espesor"]), 4)})
+                    for c in lego.get("capas") or []]
+    e = lego.get("entramado")
+    if grupo == "muros" and e:
+        ent = CommentedMap()
+        ent["material"] = e["material"]
+        ent["pie_derecho"] = _flow({"b": round(float(e["pie_derecho"]["b"]), 4), "h": round(float(e["pie_derecho"]["h"]), 4)})
+        ent["separacion_pies_derechos"] = round(float(e.get("separacion_pies_derechos", 0.4)), 3)
+        ent["separacion_horizontales"] = round(float(e.get("separacion_horizontales", 0.4)), 3)
+        ent["soleras"] = bool(e.get("soleras", True))
+        ent["refuerzo_vanos"] = bool(e.get("refuerzo_vanos", True))
+        rv = e.get("revit") or {}
+        r = CommentedMap()
+        for k in ("familia_vertical", "familia_horizontal"):
+            f = rv.get(k) or {}
+            r[k] = _flow({"familia": f.get("familia") or "", "tipo": f.get("tipo") or ""})
+        ent["revit"] = r
+        out["entramado"] = ent
+    return out
+
+
+def _usos(grupo: str, nombre: str) -> list[str]:
+    """Dónde se usa un lego: reglas, valores por defecto y proyectos."""
+    usos = []
+    mat = _leer_yaml_seguro(_lineamientos() / "materialidades.yaml")
+    if grupo == "muros" and any(r.get("tipo") == nombre for r in mat.get("reglas_muro", [])):
+        usos.append("reglas automáticas de muros (Lineamientos → materialidades.yaml → reglas_muro)")
+    if mat.get(DEFECTO[grupo]) == nombre:
+        usos.append(f"valor por defecto ({DEFECTO[grupo]})")
+    for d in (_datos() / "proyectos").iterdir():
+        legos = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("legos") or {}
+        if (grupo == "muros" and nombre in (legos.get("muros") or {}).values()) or \
+           (grupo in CLAVE_PROYECTO and legos.get(CLAVE_PROYECTO[grupo]) == nombre):
+            usos.append(f"proyecto '{d.name}'")
+    return usos
+
+
+def _renombrar_en_proyectos(grupo: str, viejo: str, nuevo: str) -> None:
+    for d in (_datos() / "proyectos").iterdir():
+        py = d / "entradas" / "proyecto.yaml"
+        if not py.exists():
+            continue
+        datos = _leer_yaml_seguro(py)
+        legos = datos.get("legos") or {}
+        cambio = False
+        if grupo == "muros":
+            for capa, t in list((legos.get("muros") or {}).items()):
+                if t == viejo:
+                    legos["muros"][capa] = nuevo
+                    cambio = True
+        elif legos.get(CLAVE_PROYECTO[grupo]) == viejo:
+            legos[CLAVE_PROYECTO[grupo]] = nuevo
+            cambio = True
+        if cambio:
+            guardar_legos(d.name, Legos(muros=legos.get("muros") or {}, losa=legos.get("losa"), cubierta=legos.get("cubierta")))
+
+
+class Lego(BaseModel):
+    nombre: str
+    estructural: bool = False
+    capas: list[dict]
+    entramado: dict | None = None
+
+
+@app.post("/api/catalogo/{grupo}", status_code=201)
+def crear_lego(grupo: str, lego: Lego):
+    if grupo not in GRUPOS:
+        raise HTTPException(404, "Grupo desconocido")
+    ruta, mat = _leer_mat_rt()
+    lista = mat.setdefault(GRUPOS[grupo], [])
+    if any(t["nombre"] == lego.nombre.strip() for t in lista):
+        raise HTTPException(409, f"Ya existe un lego llamado '{lego.nombre}'")
+    lista.append(_lego_a_yaml(grupo, lego.model_dump()))
+    _guardar_mat_rt(ruta, mat)
+    return {"creado": lego.nombre}
+
+
+@app.put("/api/catalogo/{grupo}/{nombre}")
+def editar_lego(grupo: str, nombre: str, lego: Lego):
+    if grupo not in GRUPOS:
+        raise HTTPException(404, "Grupo desconocido")
+    ruta, mat = _leer_mat_rt()
+    lista = mat.get(GRUPOS[grupo]) or []
+    i = next((k for k, t in enumerate(lista) if t["nombre"] == nombre), None)
+    if i is None:
+        raise HTTPException(404, f"No existe el lego '{nombre}'")
+    nuevo = lego.nombre.strip()
+    if nuevo != nombre and any(t["nombre"] == nuevo for t in lista):
+        raise HTTPException(409, f"Ya existe un lego llamado '{nuevo}'")
+    lista[i] = _lego_a_yaml(grupo, lego.model_dump())
+    if nuevo != nombre:                       # el nombre cambia también donde se usa
+        for r in mat.get("reglas_muro", []) if grupo == "muros" else []:
+            if r.get("tipo") == nombre:
+                r["tipo"] = nuevo
+        if mat.get(DEFECTO[grupo]) == nombre:
+            mat[DEFECTO[grupo]] = nuevo
+    _guardar_mat_rt(ruta, mat)
+    if nuevo != nombre:
+        _renombrar_en_proyectos(grupo, nombre, nuevo)
+    return {"guardado": nuevo}
+
+
+@app.delete("/api/catalogo/{grupo}/{nombre}")
+def eliminar_lego(grupo: str, nombre: str):
+    if grupo not in GRUPOS:
+        raise HTTPException(404, "Grupo desconocido")
+    usos = _usos(grupo, nombre)
+    if usos:
+        raise HTTPException(409, f"No se puede eliminar '{nombre}' porque se usa en:\n• " + "\n• ".join(usos))
+    ruta, mat = _leer_mat_rt()
+    lista = mat.get(GRUPOS[grupo]) or []
+    i = next((k for k, t in enumerate(lista) if t["nombre"] == nombre), None)
+    if i is None:
+        raise HTTPException(404, f"No existe el lego '{nombre}'")
+    del lista[i]
+    _guardar_mat_rt(ruta, mat)
+    return {"eliminado": nombre}
+
+
+class Material(BaseModel):
+    nombre: str
+    clase: str
+    color: list[int]
+
+
+@app.get("/api/materiales")
+def listar_materiales():
+    return _leer_yaml_seguro(_lineamientos() / "materialidades.yaml").get("materiales", [])
+
+
+@app.post("/api/materiales", status_code=201)
+def crear_material(m: Material):
+    ruta, mat = _leer_mat_rt()
+    lista = mat.setdefault("materiales", [])
+    if any(x["nombre"] == m.nombre.strip() for x in lista):
+        raise HTTPException(409, f"Ya existe el material '{m.nombre}'")
+    from ruamel.yaml.comments import CommentedMap, CommentedSeq
+    nuevo = CommentedMap()
+    nuevo["nombre"] = m.nombre.strip()
+    nuevo["clase"] = m.clase
+    col = CommentedSeq([max(0, min(255, int(c))) for c in m.color[:3]])
+    col.fa.set_flow_style()
+    nuevo["color"] = col
+    lista.append(nuevo)
+    _guardar_mat_rt(ruta, mat)
+    return {"creado": m.nombre}
 
 
 def _capas_de_muro(d: Path) -> list[str]:

@@ -107,6 +107,38 @@ def test_legos(cliente):
     assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["piezas_entramado"] > 0
 
 
+def test_editor_de_legos(cliente):
+    pid = _crear(cliente)
+    cat = cliente.get("/api/catalogo").json()
+    madera = next(m for m in cat["muros"] if m["entramado"])
+    # duplicar con otra sección (2x4) y separación 60
+    nuevo = {"nombre": "TM-12 Tabique madera 2x4", "estructural": False,
+             "capas": [{"funcion": c["funcion"], "material": c["material"], "espesor": c["espesor"]} for c in madera["capas"]],
+             "entramado": dict(madera["entramado"], pie_derecho={"b": 0.05, "h": 0.1}, separacion_pies_derechos=0.6)}
+    nuevo["capas"][1]["espesor"] = 0.1
+    assert cliente.post("/api/catalogo/muros", json=nuevo).status_code == 201
+    assert cliente.post("/api/catalogo/muros", json=nuevo).status_code == 409          # nombre repetido
+    mat_txt = cliente.get(f"/api/proyectos/{pid}/entradas").json()["archivos"]["materialidades.yaml"]
+    assert "TM-12 Tabique madera 2x4" in mat_txt and "# ====" in mat_txt               # conserva comentarios
+    # usarlo en el proyecto, renombrarlo y comprobar que el proyecto sigue la referencia
+    cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {"A-TABIQUE": "TM-12 Tabique madera 2x4"}})
+    nuevo2 = dict(nuevo, nombre="TM-12b Tabique 2x4")
+    assert cliente.put("/api/catalogo/muros/TM-12 Tabique madera 2x4", json=nuevo2).status_code == 200
+    assert cliente.get(f"/api/proyectos/{pid}/legos").json()["muros"]["A-TABIQUE"] == "TM-12b Tabique 2x4"
+    corrida = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert corrida["ok"], corrida
+    # no se puede borrar mientras se usa
+    r = cliente.delete("/api/catalogo/muros/TM-12b Tabique 2x4")
+    assert r.status_code == 409 and pid in r.json()["detail"]
+    # lego inválido (material inexistente) se rechaza sin tocar el archivo
+    malo = dict(nuevo, nombre="Malo", capas=[{"funcion": "estructura", "material": "Kriptonita", "espesor": 0.1}])
+    r = cliente.post("/api/catalogo/muros", json=malo)
+    assert r.status_code == 400 and "Kriptonita" in r.json()["detail"]
+    # material nuevo
+    assert cliente.post("/api/materiales", json={"nombre": "OSB 11 mm", "clase": "Madera", "color": [200, 160, 100]}).status_code == 201
+    assert any(m["nombre"] == "OSB 11 mm" for m in cliente.get("/api/materiales").json())
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

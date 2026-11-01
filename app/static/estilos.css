@@ -45,7 +45,7 @@ button, .boton { font: inherit; border-radius: var(--radio); padding: 7px 14px; 
 button:hover, .boton:hover { border-color: var(--acento); }
 button.pri { background: var(--acento); border-color: var(--acento); color: var(--acento-texto); font-weight: 600; }
 button:disabled { opacity: .55; cursor: progress; }
-input[type=text], input:not([type]), select, textarea { font: inherit; color: var(--texto); background: var(--superficie);
+input[type=text], input[type=number], input:not([type]), select, textarea { font: inherit; color: var(--texto); background: var(--superficie);
   border: 1px solid var(--borde); border-radius: var(--radio); padding: 7px 10px; }
 .link { color: var(--acento); cursor: pointer; text-decoration: underline; }
 
@@ -165,3 +165,20 @@ dialog label.fila { flex-direction: row; align-items: center; gap: 8px; }
 .lego .capas-barra span { display: block; align-self: stretch; min-height: 20px; border-right: 1px solid rgb(0 0 0 / .35); filter: saturate(1.4) brightness(.9); }
 .lego .capas-barra span:last-child { border-right: 0; }
 .lego ul { margin: 6px 0 0; padding-left: 16px; font-size: 12.5px; color: var(--tenue); }
+
+/* ---------- Editor de legos ---------- */
+.dlg-ancho { max-width: 860px; }
+.capas-barra.grande { display: flex; height: 28px; border-radius: 4px; overflow: hidden; border: 1px solid var(--borde); margin: 6px 0 10px; }
+.capas-barra.grande span { display: block; align-self: stretch; border-right: 1px solid rgb(0 0 0 / .35); filter: saturate(1.4) brightness(.9); }
+#lego-capas select, #lego-capas input { width: 100%; min-width: 0; }
+#lego-capas td:nth-child(3) { width: 120px; }
+#lego-capas td:last-child { white-space: nowrap; width: 1%; }
+#lego-capas button { padding: 4px 8px; }
+fieldset { border: 1px solid var(--borde); border-radius: var(--radio); margin: 14px 0; padding: 8px 12px; }
+legend { padding: 0 4px; }
+.grilla-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 4px 12px; }
+.grilla-campos label { margin: 6px 0; font-size: 12.5px; }
+.lego .acciones-lego { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.lego .acciones-lego button { padding: 4px 10px; font-size: 12.5px; }
+.grupo-legos .tit { display: flex; justify-content: space-between; align-items: center; }
+.grupo-legos .tit button { padding: 4px 10px; font-size: 12.5px; }

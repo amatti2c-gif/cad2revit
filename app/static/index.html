@@ -182,6 +182,59 @@
     </form>
   </dialog>
 
+  <dialog id="dlg-lego" class="dlg-ancho">
+    <form method="dialog" id="form-lego">
+      <h3 id="lego-titulo">Lego</h3>
+      <label>Nombre <input id="lego-nombre" required></label>
+      <label class="fila"><input id="lego-estructural" type="checkbox"> Estructural</label>
+
+      <div class="panel-tit"><span>Capas <span class="tenue" id="lego-orden"></span></span>
+        <span class="tenue">Total: <strong id="lego-total">0</strong> mm</span></div>
+      <div class="capas-barra grande" id="lego-barra"></div>
+      <div class="tabla-wrap"><table class="tabla" id="lego-capas">
+        <thead><tr><th>Función</th><th>Material</th><th>Espesor (mm)</th><th></th></tr></thead><tbody></tbody>
+      </table></div>
+      <div class="acciones" style="margin-top:8px">
+        <button type="button" class="sec" id="lego-agregar-capa">+ Agregar capa</button>
+        <button type="button" class="sec" id="lego-nuevo-material">+ Nuevo material</button>
+      </div>
+
+      <fieldset id="lego-entramado-box">
+        <legend><label class="fila"><input id="lego-entramado" type="checkbox"> Lleva entramado de madera</label></legend>
+        <div id="lego-entramado-campos" class="grilla-campos">
+          <label>Material de las piezas <select id="ent-material"></select></label>
+          <label>Sección: cara vista (mm) <input id="ent-b" type="number" step="1" min="10"></label>
+          <label>Sección: profundidad (mm) <input id="ent-h" type="number" step="1" min="10"></label>
+          <label>Pies derechos cada (cm) <input id="ent-sv" type="number" step="1" min="10"></label>
+          <label>Cadenetas cada (cm) <input id="ent-sh" type="number" step="1" min="10"></label>
+          <label class="fila"><input id="ent-soleras" type="checkbox"> Soleras inferior y superior</label>
+          <label class="fila"><input id="ent-refuerzo" type="checkbox"> Refuerzo de vanos (jambas, dintel, alféizar)</label>
+          <label>Familia Revit vertical <input id="ent-fv" placeholder="Timber-Column"></label>
+          <label>Tipo <input id="ent-fvt" placeholder="2x3"></label>
+          <label>Familia Revit horizontal <input id="ent-fh" placeholder="Dimension Lumber"></label>
+          <label>Tipo <input id="ent-fht" placeholder="2x3"></label>
+        </div>
+      </fieldset>
+
+      <div id="lego-error" class="aviso error oculto"></div>
+      <div class="acciones"><button value="cancel" class="sec" formnovalidate>Cancelar</button>
+        <button id="lego-guardar" value="ok" class="pri">Guardar lego</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-material">
+    <form method="dialog">
+      <h3>Nuevo material</h3>
+      <label>Nombre <input id="mat-nombre" required placeholder="OSB 11 mm"></label>
+      <label>Clase <select id="mat-clase">
+        <option>Madera</option><option>Metal</option><option>Hormigón</option><option>Mampostería</option>
+        <option>Yeso</option><option>Aislamiento</option><option>Cerámica</option><option>Vidrio</option><option>Otro</option>
+      </select></label>
+      <label>Color <input id="mat-color" type="color" value="#c8a27a"></label>
+      <div class="acciones"><button value="cancel" class="sec" formnovalidate>Cancelar</button><button value="ok" class="pri">Crear</button></div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast oculto"></div>
   <script type="module" src="app.js"></script>
 </body>
