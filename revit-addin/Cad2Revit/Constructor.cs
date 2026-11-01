@@ -69,48 +69,77 @@ namespace Cad2Revit
         private string _etapa = "";
         private string _ultimoFallo = "";
 
-        /// <summary>Agrupa la creación de un tipo de elemento (para el informe).</summary>
-        private void Etapa(string nombre, Action accion)
+        // ElementId de Revit -> id cad2revit (para traducir los rechazos de Revit al informe)
+        private readonly Dictionary<ElementId, string> _origen = new();
+        // Elementos que Revit eliminó al confirmar una etapa, con el motivo
+        private readonly Dictionary<ElementId, string> _eliminadosPorRevit = new();
+
+        /// <summary>Pone el comentario "cad2revit id" y recuerda el origen del elemento.</summary>
+        private void Marcar(Element e, string id)
         {
-            _etapa = nombre;
-            try { accion(); }
-            catch (Exception ex) { _inf.Error($"Etapa '{nombre}' abortada: {ex.Message}"); }
+            if (e == null) return;
+            e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + id);
+            _origen[e.Id] = id;
         }
 
         /// <summary>
-        /// Crea UN elemento en su propia transacción. Si Revit lo rechaza al confirmar
-        /// (p.ej. una familia que no cabe en el muro), se pierde solo ese elemento y se
-        /// informa; antes, un rechazo deshacía la etapa completa sin aviso.
+        /// Una transacción por etapa. Si Revit rechaza algún elemento al confirmar, el
+        /// manejador de fallas elimina SOLO ese elemento (en vez de deshacer la etapa) y lo
+        /// informa con su id de cad2revit.
         /// </summary>
-        private bool Intentar(string id, Action accion, bool registrarError = true)
+        private void Etapa(string nombre, Action accion)
         {
-            var conteo = new Dictionary<string, int>(_inf.Creados);
-            var fallas = new ManejadorFallas(_inf);
-            using (var t = new Transaction(_doc, $"cad2revit: {_etapa} {id}"))
+            _etapa = nombre;
+            var fallas = new ManejadorFallas(_inf, _origen, _eliminadosPorRevit);
+            using (var t = new Transaction(_doc, "cad2revit: " + nombre))
             {
                 var op = t.GetFailureHandlingOptions();
                 op.SetFailuresPreprocessor(fallas);
                 op.SetClearAfterRollback(true);
                 t.SetFailureHandlingOptions(op);
-                t.Start();
-                string motivo = null;
+                if (t.Start() != TransactionStatus.Started)
+                {
+                    _inf.Error($"Etapa '{nombre}': Revit no permitió iniciar la transacción");
+                    return;
+                }
                 try
                 {
                     accion();
-                    if (t.Commit() != TransactionStatus.Committed)
-                        motivo = "Revit lo rechazó" + (fallas.Errores.Count > 0 ? ": " + string.Join(" | ", fallas.Errores) : "");
+                    var estado = t.Commit();
+                    if (estado != TransactionStatus.Committed)
+                        _inf.Error($"Etapa '{nombre}': Revit deshizo la etapa completa ({estado})" +
+                                   (fallas.NoResueltas.Count > 0 ? ": " + string.Join(" | ", fallas.NoResueltas) : ""));
                 }
                 catch (Exception ex)
                 {
                     if (t.HasStarted() && !t.HasEnded()) t.RollBack();
-                    motivo = ex.Message;
+                    _inf.Error($"Etapa '{nombre}' abortada: {ex.Message}");
                 }
-                if (motivo == null) return true;
-                _inf.Creados.Clear();
-                foreach (var kv in conteo) _inf.Creados[kv.Key] = kv.Value;
-                _ultimoFallo = motivo;
-                if (registrarError) _inf.Error($"{id}: {motivo}");
-                return false;
+            }
+        }
+
+        /// <summary>Crea un elemento dentro de la etapa; una excepción afecta solo a ese elemento.</summary>
+        private bool Intentar(string id, Action accion, bool registrarError = true)
+        {
+            using (var st = new SubTransaction(_doc))
+            {
+                var conteo = new Dictionary<string, int>(_inf.Creados);
+                st.Start();
+                try
+                {
+                    accion();
+                    st.Commit();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    if (st.HasStarted() && !st.HasEnded()) st.RollBack();
+                    _inf.Creados.Clear();
+                    foreach (var kv in conteo) _inf.Creados[kv.Key] = kv.Value;
+                    _ultimoFallo = ex.Message;
+                    if (registrarError) _inf.Error($"{id}: {ex.Message}");
+                    return false;
+                }
             }
         }
 
@@ -141,13 +170,6 @@ namespace Cad2Revit
                 _inf.Familias[nombre] = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
                     .Cast<FamilySymbol>().Select(x => $"{x.FamilyName} : {x.Name}").Distinct().OrderBy(x => x).ToList();
             }
-        }
-
-        /// <summary>Ejecuta la creación de un elemento sin que un fallo detenga la etapa.</summary>
-        private void Intentar(string id, Action accion)
-        {
-            try { accion(); }
-            catch (Exception ex) { _inf.Error($"{id}: {ex.Message}"); }
         }
 
         private Level Nivel(string nombre) =>

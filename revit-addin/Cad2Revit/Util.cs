@@ -73,30 +73,67 @@ namespace Cad2Revit
     }
 
     /// <summary>
-    /// Silencia advertencias de Revit (las anota en el informe) y, si hay errores que
-    /// Revit no puede resolver, los registra y deshace solo la transacción en curso.
+    /// Procesa las fallas al confirmar una etapa:
+    ///  - advertencias: se anotan en el informe y se descartan;
+    ///  - errores con elementos responsables: se eliminan SOLO esos elementos (lo
+    ///    estándar en la API de Revit) y se informa cuál fue y por qué;
+    ///  - errores con resolución propuesta por Revit: se aplica esa resolución;
+    ///  - el resto: se deshace la etapa y se informa.
     /// </summary>
     internal class ManejadorFallas : IFailuresPreprocessor
     {
         private readonly Informe _informe;
-        public List<string> Errores { get; } = new();
-        public ManejadorFallas(Informe informe) { _informe = informe; }
+        private readonly Dictionary<ElementId, string> _origen;
+        private readonly Dictionary<ElementId, string> _eliminados;
+        public List<string> NoResueltas { get; } = new();
+
+        public ManejadorFallas(Informe informe, Dictionary<ElementId, string> origen, Dictionary<ElementId, string> eliminados)
+        {
+            _informe = informe;
+            _origen = origen;
+            _eliminados = eliminados;
+        }
 
         public FailureProcessingResult PreprocessFailures(FailuresAccessor fa)
         {
+            bool modificado = false;
             foreach (var f in fa.GetFailureMessages())
             {
+                var texto = f.GetDescriptionText();
                 if (f.GetSeverity() == FailureSeverity.Warning)
                 {
-                    _informe.Advertencia("Revit: " + f.GetDescriptionText());
+                    _informe.Advertencia("Revit: " + texto);
                     fa.DeleteWarning(f);
+                    continue;
+                }
+                // Solo se eliminan elementos "colgantes" (puertas, ventanas, columnas, vigas, zapatas,
+                // vanos); nunca muros, losas o niveles, que sostienen al resto del modelo.
+                var ids = f.GetFailingElementIds()
+                           .Where(id => fa.GetDocument().GetElement(id) is FamilyInstance || fa.GetDocument().GetElement(id) is Opening)
+                           .ToList();
+                if (ids.Count > 0)
+                {
+                    foreach (var id in ids)
+                    {
+                        _eliminados[id] = texto;
+                        var quien = _origen.TryGetValue(id, out var o) ? o : $"elemento {id}";
+                        _informe.Advertencia($"Revit rechazó {quien} y se eliminó: {texto.Trim()}");
+                    }
+                    fa.DeleteElements(ids);
+                    modificado = true;
+                }
+                else if (f.HasResolutions())
+                {
+                    fa.ResolveFailure(f);
+                    modificado = true;
                 }
                 else
                 {
-                    Errores.Add(f.GetDescriptionText());
+                    NoResueltas.Add(texto.Trim());
                 }
             }
-            return Errores.Count > 0 ? FailureProcessingResult.ProceedWithRollBack : FailureProcessingResult.Continue;
+            if (NoResueltas.Count > 0) return FailureProcessingResult.ProceedWithRollBack;
+            return modificado ? FailureProcessingResult.ProceedWithCommit : FailureProcessingResult.Continue;
         }
     }
 

@@ -24,7 +24,7 @@ namespace Cad2Revit
                     var w = Wall.Create(_doc, linea, tipo.Id, nivel.Id, alto, 0, false, m.Estructural);
                     if (sup != null) U.Fijar(w, BuiltInParameter.WALL_HEIGHT_TYPE, sup.Id);
                     // Comentario con el id de origen para trazabilidad CAD <-> Revit
-                    w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + m.Id);
+                    Marcar(w, m.Id);
                     _muros[m.Id] = w;
                     _inf.Contar(m.Estructural ? "Muros estructurales" : "Muros no estructurales");
                 });
@@ -63,7 +63,7 @@ namespace Cad2Revit
             var fi = _doc.Create.NewFamilyInstance(U.P(a.Centro, nivel.Elevation), s, muro, nivel, StructuralType.NonStructural);
             if (a.Categoria == "ventana")
                 U.Fijar(fi, BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM, U.M(a.Antepecho));
-            fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
+            Marcar(fi, a.Id);
             _inf.Contar(a.Categoria == "puerta" ? "Puertas" : "Ventanas");
             _aberturasCreadas.Add((a.Id, fi.Id, muro.Id));
         }
@@ -79,16 +79,26 @@ namespace Cad2Revit
         {
             foreach (var (id, idAb, idMuro) in _aberturasCreadas)
             {
-                var fi = _doc.GetElement(idAb) as FamilyInstance;
-                var muro = _doc.GetElement(idMuro) as Wall;
-                if (fi == null || muro == null) continue;
                 var def = _m.Aberturas.First(x => x.Id == id);
+                var muro = _doc.GetElement(idMuro) as Wall;
+                if (muro == null) continue;
+                var fi = _doc.GetElement(idAb) as FamilyInstance;
+                if (fi == null)
+                {
+                    // Revit la eliminó al confirmar (p.ej. el marco no cabe en el muro): se deja el vano
+                    var clave = def.Categoria == "puerta" ? "Puertas" : "Ventanas";
+                    if (_inf.Creados.TryGetValue(clave, out var n)) _inf.Creados[clave] = n - 1;
+                    _eliminadosPorRevit.TryGetValue(idAb, out var motivo);
+                    _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: Revit la eliminó ({motivo?.Trim()}); se crea el vano");
+                    Intentar(id + " (vano)", () => ColocarVano(def, muro));
+                    continue;
+                }
                 bool alojada = fi.Host?.Id == idMuro;
                 bool corta = muro.FindInserts(true, false, true, true).Contains(idAb);
                 _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: alojada={(alojada ? "sí" : "NO")}, " +
                                       $"corta el muro={(corta ? "sí" : "NO")}, tipo='{fi.Symbol.FamilyName} : {fi.Symbol.Name}'");
                 if (alojada && corta) continue;
-                if (Intentar(id + " (vano de respaldo)", () => ColocarVano(def, muro), registrarError: true))
+                if (Intentar(id + " (vano de respaldo)", () => ColocarVano(def, muro)))
                     _inf.Advertencia($"{id}: la {def.Categoria} no cortaba el muro {def.Muro}; se agregó un vano del mismo tamaño.");
             }
         }
@@ -101,7 +111,7 @@ namespace Cad2Revit
             var p1 = centro - dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho);
             var p2 = centro + dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho + a.Alto);
             var o = _doc.Create.NewOpening(muro, p1, p2);
-            o.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
+            Marcar(o, a.Id);
             _inf.Contar("Vanos (sin puerta/ventana)");
         }
 
@@ -119,7 +129,7 @@ namespace Cad2Revit
                     var loop = U.Contorno(l.Contorno, nivel.Elevation);
                     var f = Floor.Create(_doc, new List<CurveLoop> { loop }, tipo.Id, nivel.Id, est && !l.Terminacion, null, 0);
                     U.Fijar(f, BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM, U.M(l.Desfase));
-                    f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + l.Id);
+                    Marcar(f, l.Id);
                     _inf.Contar(l.Cubierta ? "Cubiertas" : l.Terminacion ? "Pisos de terminación" : "Losas");
                 });
             }
@@ -135,7 +145,7 @@ namespace Cad2Revit
                     var loop = U.Contorno(c.Contorno, nivel.Elevation);
                     var ce = Ceiling.Create(_doc, new List<CurveLoop> { loop }, tipoCielo.Id, nivel.Id);
                     U.Fijar(ce, BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM, U.M(c.Altura));
-                    ce.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "cielo " + c.Nivel);
+                    Marcar(ce, "cielo " + c.Nivel);
                     _inf.Contar("Cielos");
                 });
             }
@@ -151,7 +161,7 @@ namespace Cad2Revit
                     var nivel = Nivel(r.Nivel) ?? throw new System.Exception($"nivel '{r.Nivel}' inexistente");
                     var room = _doc.Create.NewRoom(nivel, new UV(U.M(r.Punto[0]), U.M(r.Punto[1])));
                     room.Name = U.NombreSeguro(r.Nombre);
-                    room.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "recinto");
+                    Marcar(room, "recinto");
                     _inf.Contar("Recintos");
                 });
             }
