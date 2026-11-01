@@ -16,11 +16,10 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     try:
-        cfg = cargar(args.proyecto)
+        modelo = construir_modelo(cargar(args.proyecto))
     except ErrorConfiguracion as e:
         print(e, file=sys.stderr)
         return 2
-    modelo = construir_modelo(cfg)
     if args.validar:
         from .validar import validar
         errores = validar(modelo)

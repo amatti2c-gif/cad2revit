@@ -15,3 +15,4 @@ obj/
 modelo.json
 *.informe.txt
 ejemplos/*.dxf
+datos/

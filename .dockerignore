@@ -1,0 +1,6 @@
+.git
+datos/
+**/__pycache__
+**/*.egg-info
+revit-addin/**/bin
+revit-addin/**/obj

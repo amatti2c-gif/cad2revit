@@ -8,8 +8,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e "parser[dev]"
-      - run: pytest -q parser
+      - run: pip install -e "parser[dev]" -r app/requirements.txt
+      - run: pytest -q parser app
       - name: Flujo de ejemplo
         run: |
           python ejemplos/generar_ejemplo.py

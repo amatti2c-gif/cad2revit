@@ -11,7 +11,7 @@ from shapely.geometry import Polygon
 
 from . import __version__
 from .aberturas import asignar_a_muros, clasificar_inserciones
-from .config import Configuracion
+from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
@@ -90,7 +90,15 @@ def _nombres_ejes(n: int, estilo: str) -> list[str]:
 
 
 # ---------------------------------------------------------------- principal
+def _verificar_archivos(cfg: Configuracion) -> None:
+    faltan = [r for r in [p["archivo"] for p in cfg.proyecto.get("plantas") or []]
+              + list(cfg.proyecto.get("elevaciones") or []) if not cfg.ruta(r).exists()]
+    if faltan:
+        raise ErrorConfiguracion("No se encuentran estos planos (revisa proyecto.yaml):\n  - " + "\n  - ".join(faltan))
+
+
 def construir_modelo(cfg: Configuracion) -> dict:
+    _verificar_archivos(cfg)
     lod = cfg.lod
     adv: list[str] = []
     unidades = cfg.capas_cad.get("unidades", "auto")

@@ -112,13 +112,56 @@ ventanas (o huecos), losas y cubierta, cielos, columnas, vigas, fundaciones y re
   esa categoría y se avisa. Los tipos con medidas nuevas se duplican automáticamente
   (por ejemplo `0915 x 2134mm [90x210]`).
 
-## 4. ArchiCAD
+## 4. Aplicación web (trabajar e iterar desde el navegador)
+
+La app permite hacer todo el ciclo sin usar la terminal:
+
+1. **Planos:** subes los DXF arrastrándolos. Ves sus capas y bloques (útil para escribir
+   `capas_cad.yaml`) y una vista previa.
+2. **Lineamientos:** editas los 5 YAML en el navegador. Al guardar se validan y los errores
+   aparecen en español.
+3. **Ejecutar:** procesa los planos y registra la corrida junto con una nota de qué cambiaste.
+4. **Resultado:** conteos con la diferencia respecto de la corrida anterior, advertencias,
+   **planta 2D** (lo detectado sobre el CAD original, con el id, tipo y espesor de cada elemento
+   al pasar el cursor) y **modelo 3D** navegable. Desde aquí descargas `modelo.json` para Revit.
+5. **Historial:** todas las corridas con sus notas. Puedes **comparar** dos corridas (qué
+   lineamientos cambiaron y cómo cambiaron los conteos) y **restaurar** los lineamientos de una
+   corrida anterior.
+
+### Ejecutar localmente
+
+```bash
+pip install -e parser -r app/requirements.txt
+```
+
+```bash
+uvicorn app.servidor:app --reload
+```
+
+Luego abre http://localhost:8000. Los proyectos se guardan en `./datos/` (configurable con
+`CAD2REVIT_DATOS`).
+
+### Publicarla en internet
+
+- **Docker:** `docker build -t cad2revit .` y luego
+  `docker run -p 8000:8000 -v cad2revit-datos:/datos -e CAD2REVIT_CLAVE=tu-clave cad2revit`.
+- **Render:** New → Blueprint → este repositorio (usa `render.yaml`, con un disco persistente
+  para los proyectos).
+- Define siempre `CAD2REVIT_CLAVE` al publicarla: la app pedirá esa contraseña. Cualquier
+  nombre de usuario sirve.
+
+> El paso final a Revit sigue siendo local, porque Revit solo corre en Windows: descargas
+> `modelo.json` y usas el add-in. Para generar el `.rvt` en la nube habría que integrar
+> Autodesk Platform Services (Design Automation for Revit), que requiere cuenta y créditos de
+> Autodesk.
+
+## 5. ArchiCAD
 ArchiCAD ya trabaja en 3D, así que **no hay que reconstruir** el modelo: exporta a **IFC 4**
 (traductor "Revit" de ArchiCAD) y en Revit usa *Abrir → IFC*. Para mapear tipos de ArchiCAD a
 los de Revit, usa la tabla de mapeo IFC de Revit. Si solo tienes DWG exportados desde ArchiCAD,
 usa el flujo de este repositorio como con cualquier DWG.
 
-## 5. Estructura del repositorio
+## 6. Estructura del repositorio
 
 ```
 entradas/          tus indicaciones (YAML comentados)
@@ -126,13 +169,16 @@ parser/cad2revit/  lectura DXF, detección de muros/aberturas/columnas, reglas, 
 parser/tests/      pruebas de punta a punta con planos generados
 schema/            contrato JSON entre parser y add-in
 revit-addin/       add-in C# (Revit API)
+app/               aplicación web (FastAPI + interfaz HTML/JS, visor 2D/3D)
 ejemplos/          generador de planos de prueba
 ```
 
-## 6. Hoja de ruta
+## 7. Hoja de ruta
 - [ ] Muros curvos (arcos) y muros con altura variable desde elevaciones.
 - [ ] Escaleras y rampas desde la planta.
 - [ ] Cubiertas inclinadas a partir de cortes y elevaciones.
 - [ ] Lectura directa de DWG (ODA SDK) sin pasar por DXF.
-- [ ] Interfaz de revisión: mostrar sobre el CAD lo que se detectó antes de construir.
+- [x] Interfaz de revisión: mostrar sobre el CAD lo que se detectó antes de construir.
+- [ ] Generar el .rvt en la nube (Autodesk Platform Services, Design Automation).
+- [ ] Formularios guiados para los lineamientos (además del editor YAML).
 - [ ] Planos sin estándar o escaneados (visión por computador o machine learning).

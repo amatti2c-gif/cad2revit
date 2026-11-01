@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cad2revit</title>
+  <link rel="stylesheet" href="estilos.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <header class="barra">
+    <div class="marca">cad2revit</div>
+    <div class="proyecto">
+      <select id="sel-proyecto" aria-label="Proyecto"></select>
+      <button id="btn-nuevo" class="sec">+ Nuevo proyecto</button>
+    </div>
+    <div class="ejecutar">
+      <input id="notas-corrida" type="text" placeholder="¿Qué cambiaste en esta iteración? (opcional)">
+      <button id="btn-ejecutar" class="pri">▶ Ejecutar</button>
+    </div>
+  </header>
+
+  <nav class="pestanas" role="tablist">
+    <button data-tab="planos" class="activa">1 · Planos</button>
+    <button data-tab="lineamientos">2 · Lineamientos <span id="badge-errores" class="badge oculto"></span></button>
+    <button data-tab="resultado">3 · Resultado</button>
+    <button data-tab="historial">4 · Historial</button>
+  </nav>
+
+  <main>
+    <!-- ======================= PLANOS ======================= -->
+    <section id="tab-planos" class="tab activa">
+      <div id="zona-subida" class="zona-subida">
+        <p><strong>Arrastra aquí tus planos .dxf</strong> o <label class="link">elígelos<input id="inp-planos" type="file" accept=".dxf" multiple hidden></label></p>
+        <p class="tenue">¿Tienes DWG? En AutoCAD: GUARDARCOMO → DXF, o conviértelos en lote con ODA File Converter.
+          Luego asígnalos a un nivel en <em>Lineamientos → proyecto.yaml</em> usando la ruta que aparece en la tabla.</p>
+      </div>
+      <div class="tabla-wrap"><table class="tabla" id="tabla-planos">
+        <thead><tr><th>Archivo</th><th>Ruta para proyecto.yaml</th><th>Capas</th><th>Bloques</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div id="vista-plano" class="panel oculto">
+        <div class="panel-tit"><span id="tit-vista-plano"></span><button class="sec" id="cerrar-vista-plano">Cerrar</button></div>
+        <svg id="svg-plano" class="lienzo"></svg>
+      </div>
+    </section>
+
+    <!-- ===================== LINEAMIENTOS ===================== -->
+    <section id="tab-lineamientos" class="tab">
+      <div id="errores-entradas" class="aviso error oculto"></div>
+      <div class="editor-wrap">
+        <aside class="lista-archivos" id="lista-archivos"></aside>
+        <div class="editor">
+          <div class="editor-cab">
+            <div>
+              <strong id="ed-titulo"></strong>
+              <div class="tenue" id="ed-ayuda"></div>
+            </div>
+            <div class="acciones">
+              <span id="ed-estado" class="tenue"></span>
+              <button id="btn-guardar" class="pri">Guardar (Ctrl+S)</button>
+            </div>
+          </div>
+          <textarea id="ed-texto" spellcheck="false" wrap="off"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======================= RESULTADO ======================= -->
+    <section id="tab-resultado" class="tab">
+      <div id="sin-resultado" class="vacio">Aún no hay corridas. Presiona <strong>▶ Ejecutar</strong>.</div>
+      <div id="con-resultado" class="oculto">
+        <div class="res-cab">
+          <div>
+            <select id="sel-corrida" aria-label="Corrida"></select>
+            <span id="res-estado"></span>
+          </div>
+          <div class="acciones">
+            <a id="btn-descargar" class="boton sec" download>⬇ modelo.json</a>
+            <button id="btn-como-revit" class="sec">¿Cómo lo llevo a Revit?</button>
+          </div>
+        </div>
+        <div id="res-error" class="aviso error oculto"></div>
+        <div id="tarjetas" class="tarjetas"></div>
+
+        <div class="visor-cab">
+          <div class="seg" role="group">
+            <button data-vista="2d" class="activa">Planta 2D</button>
+            <button data-vista="3d">Modelo 3D</button>
+          </div>
+          <label>Nivel <select id="sel-nivel"></select></label>
+          <label id="corte-3d" class="oculto"><input type="checkbox" id="chk-corte"> Mostrar solo hasta este nivel</label>
+          <div id="capas-2d" class="capas">
+            <label><input type="checkbox" data-capa="cad" checked> Plano CAD</label>
+            <label><input type="checkbox" data-capa="losas" checked> Losas</label>
+            <label><input type="checkbox" data-capa="muros" checked> Muros</label>
+            <label><input type="checkbox" data-capa="aberturas" checked> Aberturas</label>
+            <label><input type="checkbox" data-capa="estructura" checked> Estructura</label>
+            <label><input type="checkbox" data-capa="ejes" checked> Ejes</label>
+            <label><input type="checkbox" data-capa="recintos" checked> Recintos</label>
+          </div>
+        </div>
+        <div class="visor">
+          <svg id="svg-resultado" class="lienzo"></svg>
+          <div id="visor-3d" class="lienzo oculto"></div>
+          <div id="leyenda" class="leyenda"></div>
+        </div>
+        <p class="tenue">Rueda: zoom · arrastrar: mover · pasa el cursor sobre un elemento para ver su id, tipo y espesor.
+          En 3D las aberturas se muestran como bloques de color (en Revit sí cortan el muro).</p>
+
+        <h3>Advertencias</h3>
+        <ul id="lista-advertencias" class="advertencias"></ul>
+      </div>
+    </section>
+
+    <!-- ======================= HISTORIAL ======================= -->
+    <section id="tab-historial" class="tab">
+      <div class="tabla-wrap"><table class="tabla" id="tabla-historial">
+        <thead><tr><th>#</th><th>Fecha</th><th>LOD</th><th>Estado</th><th>Muros</th><th>Aberturas</th>
+          <th>Columnas</th><th>Vigas</th><th>Advert.</th><th>Notas</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <div id="comparacion" class="panel oculto">
+        <div class="panel-tit"><span id="tit-comparacion"></span><button class="sec" id="cerrar-comparacion">Cerrar</button></div>
+        <div id="cmp-conteos"></div>
+        <div id="cmp-difs"></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlg-nuevo">
+    <form method="dialog">
+      <h3>Nuevo proyecto</h3>
+      <label>Nombre <input id="nuevo-nombre" required placeholder="Edificio Los Aromos"></label>
+      <label class="fila"><input id="nuevo-ejemplo" type="checkbox" checked> Incluir planos de ejemplo (casa de 2 pisos)</label>
+      <p class="tenue">Los lineamientos se copian de las plantillas del repositorio; luego los ajustas en la pestaña 2.</p>
+      <div class="acciones"><button value="cancel" class="sec">Cancelar</button><button id="btn-crear" value="ok" class="pri">Crear</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-revit">
+    <form method="dialog">
+      <h3>Llevar el modelo a Revit</h3>
+      <ol>
+        <li>Compila e instala el add-in una vez (carpeta <code>revit-addin/</code> del repositorio, ver README).</li>
+        <li>Descarga <code>modelo.json</code> de esta corrida.</li>
+        <li>En Revit abre un proyecto nuevo desde tu plantilla (con las familias de puertas, ventanas, columnas y vigas cargadas).</li>
+        <li>Pestaña <strong>cad2revit → Construir modelo</strong> y elige el JSON.</li>
+        <li>Revisa el informe; anota en el Historial lo que haya que mejorar y vuelve a iterar.</li>
+      </ol>
+      <div class="acciones"><button class="pri">Entendido</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast oculto"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
