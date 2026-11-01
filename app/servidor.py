@@ -96,7 +96,10 @@ async def _autenticacion_basica(request: Request, call_next):
 
 @app.get("/salud")
 def salud():
-    return {"ok": True, "version": __version__}
+    # Railway informa el commit desplegado; sirve para saber qué versión está en línea
+    commit = (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT") or "")[:7]
+    return {"ok": True, "version": __version__, "commit": commit or "local",
+            "tipos_madera": "entramado" in (RAIZ / "entradas" / "materialidades.yaml").read_text(encoding="utf-8")}
 
 
 # ---------------------------------------------------------------- utilidades

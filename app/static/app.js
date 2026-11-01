@@ -573,6 +573,11 @@ async function comparar(a, b) {
 $("#cerrar-comparacion").addEventListener("click", () => $("#comparacion").classList.add("oculto"));
 
 // ------------------------------------------------------------------ inicio
+fetch("/salud").then(r => r.json()).then(v => {
+  $("#version").textContent = `v${v.version} · ${v.commit}`;
+  $("#version").title = "Versión publicada (commit de GitHub)";
+}).catch(() => {});
+
 intentar(async () => {
   await cargarProyectos();
   let tab = null;
