@@ -72,11 +72,15 @@ namespace Cad2Revit
         }
     }
 
-    /// <summary>Silencia advertencias de Revit (uniones, solapes menores) durante la construcción.</summary>
-    internal class SilenciarAdvertencias : IFailuresPreprocessor
+    /// <summary>
+    /// Silencia advertencias de Revit (las anota en el informe) y, si hay errores que
+    /// Revit no puede resolver, los registra y deshace solo la transacción en curso.
+    /// </summary>
+    internal class ManejadorFallas : IFailuresPreprocessor
     {
         private readonly Informe _informe;
-        public SilenciarAdvertencias(Informe informe) { _informe = informe; }
+        public List<string> Errores { get; } = new();
+        public ManejadorFallas(Informe informe) { _informe = informe; }
 
         public FailureProcessingResult PreprocessFailures(FailuresAccessor fa)
         {
@@ -87,8 +91,12 @@ namespace Cad2Revit
                     _informe.Advertencia("Revit: " + f.GetDescriptionText());
                     fa.DeleteWarning(f);
                 }
+                else
+                {
+                    Errores.Add(f.GetDescriptionText());
+                }
             }
-            return FailureProcessingResult.Continue;
+            return Errores.Count > 0 ? FailureProcessingResult.ProceedWithRollBack : FailureProcessingResult.Continue;
         }
     }
 

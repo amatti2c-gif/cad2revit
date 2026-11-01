@@ -29,7 +29,6 @@ namespace Cad2Revit
                     _inf.Contar(m.Estructural ? "Muros estructurales" : "Muros no estructurales");
                 });
             }
-            _doc.Regenerate();
         }
 
         // ------------------------------------------------------------ aberturas
@@ -37,39 +36,47 @@ namespace Cad2Revit
         {
             foreach (var a in _m.Aberturas)
             {
-                Intentar(a.Id, () =>
+                if (!_muros.TryGetValue(a.Muro, out var muro))
                 {
-                    if (!_muros.TryGetValue(a.Muro, out var muro))
-                        throw new System.Exception($"muro anfitrión '{a.Muro}' no existe");
-                    var nivel = (Level)_doc.GetElement(muro.LevelId);
-                    var centro = U.P(a.Centro, nivel.Elevation);
-
-                    if (a.Modo == "familia")
-                    {
-                        var cat = a.Categoria == "puerta" ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows;
-                        var s = Simbolo(cat, a.Familia, a.Tipo, a.Id);
-                        if (s != null)
-                        {
-                            s = ConMedidas(s, $"{a.Ancho * 100:0}x{a.Alto * 100:0}",
-                                (BuiltInParameter.FAMILY_WIDTH_PARAM, new[] { "Width", "Ancho", "Anchura" }, a.Ancho),
-                                (BuiltInParameter.FAMILY_HEIGHT_PARAM, new[] { "Height", "Altura" }, a.Alto));
-                            var fi = _doc.Create.NewFamilyInstance(centro, s, muro, nivel, StructuralType.NonStructural);
-                            if (a.Categoria == "ventana")
-                                U.Fijar(fi, BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM, U.M(a.Antepecho));
-                            fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
-                            _inf.Contar(a.Categoria == "puerta" ? "Puertas" : "Ventanas");
-                            return;
-                        }
-                        _inf.Advertencia($"{a.Id}: no hay familias de {a.Categoria} cargadas; se crea un hueco");
-                    }
-
-                    var dir = (muro.Location as LocationCurve)?.Curve is Line l ? l.Direction : XYZ.BasisX;
-                    var p1 = centro - dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho);
-                    var p2 = centro + dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho + a.Alto);
-                    _doc.Create.NewOpening(muro, p1, p2);
-                    _inf.Contar("Huecos");
-                });
+                    _inf.Error($"{a.Id}: muro anfitrión '{a.Muro}' no existe");
+                    continue;
+                }
+                if (a.Modo == "familia")
+                {
+                    if (Intentar(a.Id, () => ColocarFamilia(a, muro), registrarError: false)) continue;
+                    _inf.Advertencia($"{a.Id}: no se pudo colocar la {a.Categoria} con su familia ({_ultimoFallo}); " +
+                                     "se dejó el vano en el muro. Prueba otra familia o revisa el espesor del muro.");
+                }
+                Intentar(a.Id, () => ColocarVano(a, muro));
             }
+        }
+
+        private void ColocarFamilia(AberturaDef a, Wall muro)
+        {
+            var nivel = (Level)_doc.GetElement(muro.LevelId);
+            var cat = a.Categoria == "puerta" ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows;
+            var s = Simbolo(cat, a.Familia, a.Tipo, a.Id)
+                    ?? throw new System.Exception($"no hay familias de {a.Categoria} cargadas en la plantilla");
+            s = ConMedidas(s, $"{a.Ancho * 100:0}x{a.Alto * 100:0}",
+                (BuiltInParameter.FAMILY_WIDTH_PARAM, new[] { "Width", "Ancho", "Anchura" }, a.Ancho),
+                (BuiltInParameter.FAMILY_HEIGHT_PARAM, new[] { "Height", "Altura" }, a.Alto));
+            var fi = _doc.Create.NewFamilyInstance(U.P(a.Centro, nivel.Elevation), s, muro, nivel, StructuralType.NonStructural);
+            if (a.Categoria == "ventana")
+                U.Fijar(fi, BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM, U.M(a.Antepecho));
+            fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
+            _inf.Contar(a.Categoria == "puerta" ? "Puertas" : "Ventanas");
+        }
+
+        private void ColocarVano(AberturaDef a, Wall muro)
+        {
+            var nivel = (Level)_doc.GetElement(muro.LevelId);
+            var centro = U.P(a.Centro, nivel.Elevation);
+            var dir = (muro.Location as LocationCurve)?.Curve is Line l ? l.Direction : XYZ.BasisX;
+            var p1 = centro - dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho);
+            var p2 = centro + dir * U.M(a.Ancho / 2) + XYZ.BasisZ * U.M(a.Antepecho + a.Alto);
+            var o = _doc.Create.NewOpening(muro, p1, p2);
+            o.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
+            _inf.Contar("Vanos (sin puerta/ventana)");
         }
 
         // ------------------------------------------------------------ losas y cielos
@@ -111,7 +118,6 @@ namespace Cad2Revit
         // ------------------------------------------------------------ recintos
         private void CrearRecintos()
         {
-            _doc.Regenerate();
             foreach (var r in _m.Recintos)
             {
                 Intentar("Recinto " + r.Nombre, () =>

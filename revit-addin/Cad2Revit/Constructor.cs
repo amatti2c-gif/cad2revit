@@ -65,28 +65,55 @@ namespace Cad2Revit
             return _inf;
         }
 
+        private string _etapa = "";
+        private string _ultimoFallo = "";
+
+        /// <summary>Agrupa la creación de un tipo de elemento (para el informe).</summary>
         private void Etapa(string nombre, Action accion)
         {
-            using (var t = new Transaction(_doc, "cad2revit: " + nombre))
+            _etapa = nombre;
+            try { accion(); }
+            catch (Exception ex) { _inf.Error($"Etapa '{nombre}' abortada: {ex.Message}"); }
+        }
+
+        /// <summary>
+        /// Crea UN elemento en su propia transacción. Si Revit lo rechaza al confirmar
+        /// (p.ej. una familia que no cabe en el muro), se pierde solo ese elemento y se
+        /// informa; antes, un rechazo deshacía la etapa completa sin aviso.
+        /// </summary>
+        private bool Intentar(string id, Action accion, bool registrarError = true)
+        {
+            var conteo = new Dictionary<string, int>(_inf.Creados);
+            var fallas = new ManejadorFallas(_inf);
+            using (var t = new Transaction(_doc, $"cad2revit: {_etapa} {id}"))
             {
                 var op = t.GetFailureHandlingOptions();
-                op.SetFailuresPreprocessor(new SilenciarAdvertencias(_inf));
+                op.SetFailuresPreprocessor(fallas);
+                op.SetClearAfterRollback(true);
                 t.SetFailureHandlingOptions(op);
                 t.Start();
+                string motivo = null;
                 try
                 {
                     accion();
-                    t.Commit();
+                    if (t.Commit() != TransactionStatus.Committed)
+                        motivo = "Revit lo rechazó" + (fallas.Errores.Count > 0 ? ": " + string.Join(" | ", fallas.Errores) : "");
                 }
                 catch (Exception ex)
                 {
-                    t.RollBack();
-                    _inf.Error($"Etapa '{nombre}' abortada: {ex.Message}");
+                    if (t.HasStarted() && !t.HasEnded()) t.RollBack();
+                    motivo = ex.Message;
                 }
+                if (motivo == null) return true;
+                _inf.Creados.Clear();
+                foreach (var kv in conteo) _inf.Creados[kv.Key] = kv.Value;
+                _ultimoFallo = motivo;
+                if (registrarError) _inf.Error($"{id}: {motivo}");
+                return false;
             }
         }
 
-        private void EliminarAnterior()
+        private void EliminarAnterior() => Intentar("eliminar importación anterior", () =>
         {
             var ids = ElementosPrevios(_doc);
             // primero lo alojado (puertas/ventanas), luego el resto; los ya borrados en cascada se ignoran
@@ -97,7 +124,7 @@ namespace Cad2Revit
                 try { _doc.Delete(id); n++; } catch { /* ya eliminado junto a su anfitrión */ }
             }
             _inf.Advertencia($"Se eliminaron {n} elementos de la importación anterior");
-        }
+        });
 
         private void ListarFamilias()
         {
