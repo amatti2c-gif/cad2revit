@@ -9,6 +9,5 @@ COPY . .
 
 ENV CAD2REVIT_DATOS=/datos \
     PORT=8000
-VOLUME ["/datos"]
 EXPOSE 8000
 CMD ["sh", "-c", "python -m uvicorn app.servidor:app --host 0.0.0.0 --port ${PORT:-8000}"]
