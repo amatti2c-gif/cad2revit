@@ -185,8 +185,9 @@ namespace Cad2Revit
                     sb.AppendLine("      " + (kv.Value.motivo ?? "no está en el proyecto ni en la biblioteca de Revit de este equipo"));
                     sb.AppendLine("      Elementos: " + string.Join(", ", kv.Value.ids.Take(12)) + (kv.Value.ids.Count > 12 ? ", …" : ""));
                 }
-                sb.AppendLine("  Para resolverlo una sola vez: carga la familia en tu PLANTILLA (Insertar → Cargar familia de");
-                sb.AppendLine("  Autodesk) o copia el .rfa a Documentos\\cad2revit\\Familias; desde ahí se carga sola.");
+                sb.AppendLine("  Para resolverlo UNA SOLA VEZ: abre un proyecto que tenga esas familias cargadas (o cárgalas con");
+                sb.AppendLine("  Insertar → Cargar familia de Autodesk) y presiona cad2revit → \"Guardar familias\". Desde ahí");
+                sb.AppendLine("  cualquier proyecto las carga solo.");
                 sb.AppendLine();
             }
             foreach (var e in Errores) sb.AppendLine("ERROR  " + e);

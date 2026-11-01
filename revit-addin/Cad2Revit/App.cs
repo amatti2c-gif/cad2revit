@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
@@ -20,6 +21,13 @@ namespace Cad2Revit
                           "muros, aberturas, losas, estructura y recintos según el nivel de detalle elegido."
             };
             panel.AddItem(boton);
+            panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
+            {
+                ToolTip = "Guarda en Documentos\\cad2revit\\Familias las familias de pilares, vigas y fundaciones " +
+                          "cargadas en este proyecto. Desde ahí cad2revit las carga solo en cualquier proyecto nuevo. " +
+                          "Basta hacerlo una vez."
+            });
             return Result.Succeeded;
         }
 
@@ -81,6 +89,61 @@ namespace Cad2Revit
                 ExpandedContent = informe.Detalle(),
             };
             td.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>
+    /// Exporta (una sola vez) las familias estructurales cargadas en el proyecto abierto a
+    /// Documentos\cad2revit\Familias\&lt;categoría&gt;\, carpeta donde el complemento busca las
+    /// familias que faltan en un proyecto.
+    /// </summary>
+    [Transaction(TransactionMode.Manual)]
+    public class ComandoGuardarFamilias : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var doc = data.Application.ActiveUIDocument?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var raiz = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments),
+                                              "cad2revit", "Familias");
+            var categorias = new (BuiltInCategory cat, string carpeta)[]
+            {
+                (BuiltInCategory.OST_StructuralColumns, "Structural Columns"),
+                (BuiltInCategory.OST_StructuralFraming, "Structural Framing"),
+                (BuiltInCategory.OST_StructuralFoundation, "Structural Foundations"),
+                (BuiltInCategory.OST_Doors, "Doors"),
+                (BuiltInCategory.OST_Windows, "Windows"),
+            };
+            var guardadas = new System.Collections.Generic.List<string>();
+            var fallidas = new System.Collections.Generic.List<string>();
+            foreach (var (cat, carpeta) in categorias)
+            {
+                var familias = new FilteredElementCollector(doc).OfClass(typeof(Family)).Cast<Family>()
+                    .Where(f => f.FamilyCategory?.Id == new ElementId(cat) && f.IsEditable && !f.IsInPlace).ToList();
+                foreach (var f in familias)
+                {
+                    try
+                    {
+                        var dir = System.IO.Path.Combine(raiz, carpeta);
+                        System.IO.Directory.CreateDirectory(dir);
+                        var fam = doc.EditFamily(f);
+                        fam.SaveAs(System.IO.Path.Combine(dir, U.NombreSeguro(f.Name) + ".rfa"),
+                                   new SaveAsOptions { OverwriteExistingFile = true });
+                        fam.Close(false);
+                        guardadas.Add($"{carpeta}: {f.Name}");
+                    }
+                    catch (System.Exception ex) { fallidas.Add($"{f.Name}: {ex.Message}"); }
+                }
+            }
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = $"{guardadas.Count} familias guardadas para cad2revit",
+                MainContent = $"Carpeta: {raiz}\n\nDesde ahora, si un proyecto no tiene alguna de estas familias, " +
+                              "cad2revit la carga sola desde esa carpeta.",
+                ExpandedContent = string.Join("\n", guardadas) +
+                                  (fallidas.Count > 0 ? "\n\nNo se pudieron guardar:\n" + string.Join("\n", fallidas) : ""),
+            }.Show();
             return Result.Succeeded;
         }
     }
