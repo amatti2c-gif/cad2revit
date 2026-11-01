@@ -65,6 +65,32 @@ namespace Cad2Revit
                 U.Fijar(fi, BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM, U.M(a.Antepecho));
             fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
             _inf.Contar(a.Categoria == "puerta" ? "Puertas" : "Ventanas");
+            _aberturasCreadas.Add((a.Id, fi.Id, muro.Id));
+        }
+
+        private readonly List<(string id, ElementId abertura, ElementId muro)> _aberturasCreadas = new();
+
+        /// <summary>
+        /// Comprueba, ya con el modelo regenerado, que cada puerta/ventana quedó alojada en su
+        /// muro y que Revit la registra como inserto que corta ese muro. Si no la corta, agrega un
+        /// vano rectangular del mismo tamaño para que el muro quede abierto.
+        /// </summary>
+        private void VerificarAberturas()
+        {
+            foreach (var (id, idAb, idMuro) in _aberturasCreadas)
+            {
+                var fi = _doc.GetElement(idAb) as FamilyInstance;
+                var muro = _doc.GetElement(idMuro) as Wall;
+                if (fi == null || muro == null) continue;
+                var def = _m.Aberturas.First(x => x.Id == id);
+                bool alojada = fi.Host?.Id == idMuro;
+                bool corta = muro.FindInserts(true, false, true, true).Contains(idAb);
+                _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: alojada={(alojada ? "sí" : "NO")}, " +
+                                      $"corta el muro={(corta ? "sí" : "NO")}, tipo='{fi.Symbol.FamilyName} : {fi.Symbol.Name}'");
+                if (alojada && corta) continue;
+                if (Intentar(id + " (vano de respaldo)", () => ColocarVano(def, muro), registrarError: true))
+                    _inf.Advertencia($"{id}: la {def.Categoria} no cortaba el muro {def.Muro}; se agregó un vano del mismo tamaño.");
+            }
         }
 
         private void ColocarVano(AberturaDef a, Wall muro)

@@ -106,6 +106,7 @@ namespace Cad2Revit
         public List<string> Advertencias { get; } = new();
         public List<string> Errores { get; } = new();
         public SortedDictionary<string, List<string>> Familias { get; } = new();
+        public List<string> Verificacion { get; } = new();
 
         public void Contar(string que) => Creados[que] = Creados.TryGetValue(que, out var n) ? n + 1 : 1;
         public void Advertencia(string s) => Advertencias.Add(s);
@@ -124,6 +125,12 @@ namespace Cad2Revit
             var sb = new StringBuilder();
             foreach (var e in Errores) sb.AppendLine("ERROR  " + e);
             foreach (var a in Advertencias) sb.AppendLine("aviso  " + a);
+            if (Verificacion.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("VERIFICACIÓN DE PUERTAS Y VENTANAS");
+                foreach (var v in Verificacion) sb.AppendLine("  " + v);
+            }
             if (Familias.Count > 0)
             {
                 sb.AppendLine();
