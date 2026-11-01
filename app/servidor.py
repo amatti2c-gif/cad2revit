@@ -152,10 +152,33 @@ def _enlazar_lineamientos(d: Path) -> None:
         (d / "entradas" / a).unlink(missing_ok=True)
 
 
+def _texto_proyecto_inicial(nombre: str) -> str:
+    texto = (RAIZ / "entradas" / "proyecto.yaml").read_text(encoding="utf-8").replace("../ejemplos/", "../planos/")
+    return re.sub(r"^nombre:.*$", f"nombre: {json.dumps(nombre, ensure_ascii=False)}", texto, count=1, flags=re.M)
+
+
+def _reparar_proyecto(d: Path) -> None:
+    """Si proyecto.yaml perdió sus niveles (archivo dañado), se reconstruye desde la plantilla
+    conservando la selección de legos. Las plantas apuntan a los planos del proyecto."""
+    py = d / "entradas" / "proyecto.yaml"
+    datos = _leer_yaml_seguro(py) if py.exists() else {}
+    if datos.get("niveles"):
+        return
+    texto = _texto_proyecto_inicial(_meta(d).get("nombre", d.name))
+    if datos.get("legos"):
+        texto += "\n# Legos elegidos para este proyecto (se editan en la pestaña Legos de la app)\n"
+        texto += yaml.safe_dump({"legos": datos["legos"]}, allow_unicode=True, sort_keys=False)
+    py.parent.mkdir(parents=True, exist_ok=True)
+    py.write_text(texto, encoding="utf-8")
+    (d / "reparado.txt").write_text(f"{_ahora()}: proyecto.yaml sin niveles; reconstruido desde la plantilla\n",
+                                    encoding="utf-8")
+
+
 def _proyecto(pid: str) -> Path:
     d = _datos() / "proyectos" / _seguro(pid, "proyecto")
     if not (d / "meta.json").exists():
         raise HTTPException(404, f"No existe el proyecto '{pid}'")
+    _reparar_proyecto(d)
     _enlazar_lineamientos(d)
     return d
 
@@ -217,9 +240,7 @@ def crear_proyecto(datos: NuevoProyecto):
     (d / "entradas").mkdir()
     # Solo proyecto.yaml es propio del proyecto; los lineamientos son los comunes de la app
     py = d / "entradas" / "proyecto.yaml"
-    texto = (RAIZ / "entradas" / "proyecto.yaml").read_text(encoding="utf-8").replace("../ejemplos/", "../planos/")
-    texto = re.sub(r"^nombre:.*$", f"nombre: {json.dumps(nombre, ensure_ascii=False)}", texto, count=1, flags=re.M)
-    py.write_text(texto, encoding="utf-8")
+    py.write_text(_texto_proyecto_inicial(nombre), encoding="utf-8")
     if datos.con_ejemplo:
         from generar_ejemplo import generar
         generar(d / "planos")
@@ -254,11 +275,15 @@ def guardar_entrada(pid: str, archivo: str, datos: TextoEntrada):
     if archivo not in ARCHIVOS_ENTRADA:
         raise HTTPException(404, f"Archivo de entrada desconocido: {archivo}")
     try:
-        yaml.safe_load(datos.texto)
+        contenido = yaml.safe_load(datos.texto)
     except yaml.YAMLError as e:
         marca = getattr(e, "problem_mark", None)
         donde = f" (línea {marca.line + 1}, columna {marca.column + 1})" if marca else ""
         raise HTTPException(400, f"YAML mal formado{donde}: {getattr(e, 'problem', e)}")
+    if archivo == "proyecto.yaml" and not (isinstance(contenido, dict) and contenido.get("niveles")):
+        raise HTTPException(400, "proyecto.yaml debe tener la lista 'niveles' (con al menos un nivel); no se guardó")
+    if archivo != "proyecto.yaml" and not isinstance(contenido, dict):
+        raise HTTPException(400, f"{archivo} quedaría vacío; no se guardó")
     _ruta_entrada(d, archivo).write_text(datos.texto, encoding="utf-8")
     if archivo == "proyecto.yaml":
         _enlazar_lineamientos(d)

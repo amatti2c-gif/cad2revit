@@ -433,9 +433,8 @@ function pintarListaArchivos() {
 }
 
 function abrirArchivo(a) {
-  // conserva lo escrito en el archivo anterior
-  if (estado.archivo && $("#ed-texto").dataset.archivo === estado.archivo)
-    estado.entradas[estado.archivo] = $("#ed-texto").value;
+  // (lo escrito ya se guarda en estado.entradas con cada tecla; aquí no se copia nada de la
+  //  pantalla, para no pisar con texto viejo lo que acaba de llegar del servidor)
   estado.archivo = a;
   $("#ed-titulo").textContent = a;
   $("#ed-ayuda").textContent = AYUDA[a] || "";

@@ -139,6 +139,20 @@ def test_editor_de_legos(cliente):
     assert any(m["nombre"] == "OSB 11 mm" for m in cliente.get("/api/materiales").json())
 
 
+def test_proyecto_yaml_protegido_y_reparado(cliente, tmp_path):
+    pid = _crear(cliente)
+    # no se puede guardar sin niveles ni vacío
+    assert cliente.put(f"/api/proyectos/{pid}/entradas/proyecto.yaml", json={"texto": ""}).status_code == 400
+    assert cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": ""}).status_code == 400
+    # un archivo dañado (como el reportado) se repara solo y conserva los legos
+    py = tmp_path / "proyectos" / pid / "entradas" / "proyecto.yaml"
+    py.write_text("materialidades: ../../../lineamientos/materialidades.yaml\n\n"
+                  "legos:\n  muros:\n    A-TABIQUE: TB-10 Tabique metalcon 10\n", encoding="utf-8")
+    texto = cliente.get(f"/api/proyectos/{pid}/entradas").json()["archivos"]["proyecto.yaml"]
+    assert "niveles:" in texto and "A-TABIQUE: TB-10 Tabique metalcon 10" in texto
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["ok"]
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})
