@@ -153,13 +153,17 @@ namespace Cad2Revit
                 })
                 .Where(c => !double.IsNaN(c.dist))
                 .OrderBy(c => c.misma).ThenBy(c => c.dist)
-                .Take(4).ToList();
+                .ToList();
+            // Variedad: hasta 2 tipos de la misma familia y el mejor tipo de hasta 2 familias distintas
+            candidatos = candidatos.Where(c => c.misma == 0).Take(2)
+                .Concat(candidatos.Where(c => c.misma == 1).GroupBy(c => c.s.FamilyName).Select(g => g.First()).Take(2))
+                .ToList();
 
             var familiasQueFallaron = new HashSet<string>();
             foreach (var c in candidatos)
             {
-                // Si ya fallaron 2 familias distintas en este muro, el problema es el muro, no la puerta
-                if (familiasQueFallaron.Count >= 2) break;
+                // Si ya fallaron 3 familias distintas en este muro, el problema es el muro, no la puerta
+                if (familiasQueFallaron.Count >= 3) break;
                 ElementId nuevo = ElementId.InvalidElementId;
                 Etapa($"Reintento {a.Id}", () => Intentar(a.Id, () => nuevo = ColocarConSimbolo(a, muro, c.s), registrarError: false));
                 var fi = nuevo == ElementId.InvalidElementId ? null : _doc.GetElement(nuevo) as FamilyInstance;

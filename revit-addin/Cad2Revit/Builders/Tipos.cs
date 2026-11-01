@@ -43,7 +43,12 @@ namespace Cad2Revit
             }
 
             // Tipos de muro
-            var baseMuro = U.De<WallType>(_doc).FirstOrDefault(w => w.Kind == WallKind.Basic);
+            // Base: un muro básico genérico (sin configuraciones especiales heredadas)
+            var baseMuro = U.De<WallType>(_doc).Where(w => w.Kind == WallKind.Basic && w.GetCompoundStructure() != null)
+                               .OrderByDescending(w => w.Name.IndexOf("Generic", System.StringComparison.OrdinalIgnoreCase) >= 0
+                                                    || w.Name.IndexOf("Genérico", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                               .ThenBy(w => w.GetCompoundStructure().LayerCount)
+                               .FirstOrDefault();
             if (baseMuro == null) { _inf.Error("La plantilla no tiene ningún tipo de muro básico"); return; }
             var murosExist = U.De<WallType>(_doc).GroupBy(w => w.Name).ToDictionary(g => g.Key, g => g.First());
             foreach (var t in _m.TiposMuro)
@@ -55,7 +60,11 @@ namespace Cad2Revit
                         wt = (WallType)baseMuro.Duplicate(U.NombreSeguro(t.Nombre));
                         _inf.Contar("Tipos de muro");
                     }
-                    wt.SetCompoundStructure(Estructura(t, wt.GetCompoundStructure() ?? baseMuro.GetCompoundStructure()));
+                    var csMuro = Estructura(t, wt.GetCompoundStructure() ?? baseMuro.GetCompoundStructure());
+                    // Sin envolver capas en puertas/ventanas: en muros delgados el envolvente deja sin
+                    // espacio al marco de la puerta ("Profile sketch is empty").
+                    csMuro.OpeningWrapping = OpeningWrappingCondition.None;
+                    wt.SetCompoundStructure(csMuro);
                     _tiposMuro[t.Nombre] = wt;
                 });
             }
