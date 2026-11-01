@@ -37,8 +37,10 @@ patron_nivel: "(?i)(?:N\\.?P\\.?T\\.?|NIVEL|N\\.?)\\s*([+-]?\\d+(?:[.,]\\d+)?)"
 #  bloque. ancho/alto/antepecho en metros; si ancho se omite, se mide del
 #  bloque en planta.
 bloques:
-  - {bloque: "(?i)P(UERTA)?[-_]?90",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0915 x 2134mm", ancho: 0.90, alto: 2.10}
-  - {bloque: "(?i)P(UERTA)?[-_]?80",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0813 x 2134mm", ancho: 0.80, alto: 2.10}
-  - {bloque: "(?i)P(UERTA)?[-_]?70",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0762 x 2134mm", ancho: 0.70, alto: 2.10}
-  - {bloque: "(?i)V(ENTANA)?[-_]?\\d+", categoria: ventana, familia: "M_Fixed",       tipo: "0915 x 1220mm", alto: 1.20, antepecho: 0.90}
+  # Familias de la plantilla métrica de Revit 2027. Si el ancho/alto no coincide con un
+  # tipo existente, el complemento duplica el tipo más cercano con las medidas indicadas.
+  - {bloque: "(?i)P(UERTA)?[-_]?90",  categoria: puerta,  familia: "M_Door-Passage-Single-Flush", tipo: "900 x 2100mm", ancho: 0.90, alto: 2.10}
+  - {bloque: "(?i)P(UERTA)?[-_]?80",  categoria: puerta,  familia: "M_Door-Passage-Single-Flush", tipo: "900 x 2100mm", ancho: 0.80, alto: 2.10}
+  - {bloque: "(?i)P(UERTA)?[-_]?70",  categoria: puerta,  familia: "M_Door-Passage-Single-Flush", tipo: "750 x 2100mm", ancho: 0.70, alto: 2.10}
+  - {bloque: "(?i)V(ENTANA)?[-_]?\\d+", categoria: ventana, familia: "M_Window-Fixed",            tipo: "900 x 1200mm", alto: 1.20, antepecho: 0.90}
   - {bloque: "(?i)COL|PILAR",          categoria: columna}

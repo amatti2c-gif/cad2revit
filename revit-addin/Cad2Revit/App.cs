@@ -52,6 +52,24 @@ namespace Cad2Revit
             }
 
             var constructor = new Constructor(doc, modelo);
+            var previos = Constructor.ElementosPrevios(doc).Count;
+            if (previos > 0)
+            {
+                var pregunta = new TaskDialog("cad2revit")
+                {
+                    MainInstruction = "Este proyecto ya tiene una importación de cad2revit",
+                    MainContent = $"Hay {previos} elementos creados por una importación anterior. " +
+                                  "Si construyes encima, quedarán muros y recintos duplicados.",
+                    CommonButtons = TaskDialogCommonButtons.Cancel,
+                };
+                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Reemplazar la importación anterior",
+                    "Borra los elementos anteriores de cad2revit y construye el modelo nuevo (se puede deshacer con Ctrl+Z).");
+                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Construir encima",
+                    "Mantiene lo anterior y agrega el modelo nuevo.");
+                var r = pregunta.Show();
+                if (r == TaskDialogResult.CommandLink1) constructor.ReemplazarAnterior = true;
+                else if (r != TaskDialogResult.CommandLink2) return Result.Cancelled;
+            }
             var informe = constructor.Construir();
             informe.Guardar(System.IO.Path.ChangeExtension(ruta, ".informe.txt"));
 

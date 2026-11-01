@@ -24,7 +24,7 @@ namespace Cad2Revit
                     var w = Wall.Create(_doc, linea, tipo.Id, nivel.Id, alto, 0, false, m.Estructural);
                     if (sup != null) U.Fijar(w, BuiltInParameter.WALL_HEIGHT_TYPE, sup.Id);
                     // Comentario con el id de origen para trazabilidad CAD <-> Revit
-                    w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("cad2revit " + m.Id);
+                    w.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + m.Id);
                     _muros[m.Id] = w;
                     _inf.Contar(m.Estructural ? "Muros estructurales" : "Muros no estructurales");
                 });
@@ -56,7 +56,7 @@ namespace Cad2Revit
                             var fi = _doc.Create.NewFamilyInstance(centro, s, muro, nivel, StructuralType.NonStructural);
                             if (a.Categoria == "ventana")
                                 U.Fijar(fi, BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM, U.M(a.Antepecho));
-                            fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("cad2revit " + a.Id);
+                            fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + a.Id);
                             _inf.Contar(a.Categoria == "puerta" ? "Puertas" : "Ventanas");
                             return;
                         }
@@ -86,7 +86,7 @@ namespace Cad2Revit
                     var loop = U.Contorno(l.Contorno, nivel.Elevation);
                     var f = Floor.Create(_doc, new List<CurveLoop> { loop }, tipo.Id, nivel.Id, est && !l.Terminacion, null, 0);
                     U.Fijar(f, BuiltInParameter.FLOOR_HEIGHTABOVELEVEL_PARAM, U.M(l.Desfase));
-                    f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("cad2revit " + l.Id);
+                    f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + l.Id);
                     _inf.Contar(l.Cubierta ? "Cubiertas" : l.Terminacion ? "Pisos de terminación" : "Losas");
                 });
             }
@@ -102,6 +102,7 @@ namespace Cad2Revit
                     var loop = U.Contorno(c.Contorno, nivel.Elevation);
                     var ce = Ceiling.Create(_doc, new List<CurveLoop> { loop }, tipoCielo.Id, nivel.Id);
                     U.Fijar(ce, BuiltInParameter.CEILING_HEIGHTABOVELEVEL_PARAM, U.M(c.Altura));
+                    ce.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "cielo " + c.Nivel);
                     _inf.Contar("Cielos");
                 });
             }
@@ -118,6 +119,7 @@ namespace Cad2Revit
                     var nivel = Nivel(r.Nivel) ?? throw new System.Exception($"nivel '{r.Nivel}' inexistente");
                     var room = _doc.Create.NewRoom(nivel, new UV(U.M(r.Punto[0]), U.M(r.Punto[1])));
                     room.Name = U.NombreSeguro(r.Nombre);
+                    room.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "recinto");
                     _inf.Contar("Recintos");
                 });
             }

@@ -24,6 +24,18 @@ namespace Cad2Revit
         private readonly Dictionary<string, Wall> _muros = new();
         private readonly Dictionary<string, FamilyInstance> _columnas = new();
 
+        /// <summary>Prefijo del parámetro Comentarios en todo lo que crea cad2revit.</summary>
+        public const string Marca = "cad2revit ";
+
+        /// <summary>Elementos creados por una importación anterior (identificados por su comentario).</summary>
+        public static List<ElementId> ElementosPrevios(Document doc) =>
+            new FilteredElementCollector(doc).WhereElementIsNotElementType()
+                .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(Marca) == true)
+                .Select(e => e.Id).ToList();
+
+        /// <summary>Si es true, se borra la importación anterior antes de construir.</summary>
+        public bool ReemplazarAnterior { get; set; }
+
         public Constructor(Document doc, Modelo modelo)
         {
             _doc = doc;
@@ -37,6 +49,7 @@ namespace Cad2Revit
             using (var grupo = new TransactionGroup(_doc, "cad2revit: construir modelo"))
             {
                 grupo.Start();
+                if (ReemplazarAnterior) Etapa("Eliminar importación anterior", EliminarAnterior);
                 Etapa("Materiales y tipos", CrearMaterialesYTipos);
                 Etapa("Niveles y ejes", CrearNivelesYEjes);
                 Etapa("Muros", CrearMuros);
@@ -71,6 +84,19 @@ namespace Cad2Revit
                     _inf.Error($"Etapa '{nombre}' abortada: {ex.Message}");
                 }
             }
+        }
+
+        private void EliminarAnterior()
+        {
+            var ids = ElementosPrevios(_doc);
+            // primero lo alojado (puertas/ventanas), luego el resto; los ya borrados en cascada se ignoran
+            int n = 0;
+            foreach (var id in ids)
+            {
+                if (_doc.GetElement(id) == null) continue;
+                try { _doc.Delete(id); n++; } catch { /* ya eliminado junto a su anfitrión */ }
+            }
+            _inf.Advertencia($"Se eliminaron {n} elementos de la importación anterior");
         }
 
         private void ListarFamilias()
@@ -129,14 +155,26 @@ namespace Cad2Revit
                 });
             }
 
-            var nombresEje = new HashSet<string>(U.De<Grid>(_doc).Select(g => g.Name));
+            var ejes = U.De<Grid>(_doc).GroupBy(g => g.Name).ToDictionary(g => g.Key, g => g.First());
             foreach (var e in _m.Ejes)
             {
                 Intentar("Eje " + e.Nombre, () =>
                 {
-                    var g = Grid.Create(_doc, Line.CreateBound(U.P(e.Inicio), U.P(e.Fin)));
-                    if (!nombresEje.Contains(e.Nombre)) { g.Name = U.NombreSeguro(e.Nombre); nombresEje.Add(e.Nombre); }
-                    else _inf.Advertencia($"Ya existe un eje '{e.Nombre}'; se deja el nombre automático {g.Name}");
+                    var nombre = U.NombreSeguro(e.Nombre);
+                    var linea = Line.CreateBound(U.P(e.Inicio), U.P(e.Fin));
+                    if (ejes.TryGetValue(nombre, out var existente))
+                    {
+                        // Mismo eje de una importación anterior: se reutiliza; si está en otra posición se avisa
+                        var c = existente.Curve;
+                        var mismo = c is Line l && l.Direction.CrossProduct(linea.Direction).GetLength() < 1e-6
+                                    && linea.Distance(new XYZ(c.GetEndPoint(0).X, c.GetEndPoint(0).Y, 0)) < U.M(0.01);
+                        if (!mismo)
+                            _inf.Advertencia($"Ya existe un eje '{nombre}' en otra posición; no se creó. Renómbralo o bórralo si sobra.");
+                        return;
+                    }
+                    var g = Grid.Create(_doc, linea);
+                    g.Name = nombre;
+                    ejes[nombre] = g;
                     _inf.Contar("Ejes");
                 });
             }

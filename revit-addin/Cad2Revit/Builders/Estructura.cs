@@ -44,7 +44,7 @@ namespace Cad2Revit
                             c.Rotacion * Math.PI / 180.0);
                     if (MaterialEstructural != ElementId.InvalidElementId)
                         U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, MaterialEstructural);
-                    fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("cad2revit " + c.Id);
+                    fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + c.Id);
                     _columnas[c.Id] = fi;
                     _inf.Contar("Columnas");
                 });
@@ -69,7 +69,7 @@ namespace Cad2Revit
                     var fi = _doc.Create.NewFamilyInstance(linea, s, nivel, StructuralType.Beam);
                     if (MaterialEstructural != ElementId.InvalidElementId)
                         U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, MaterialEstructural);
-                    fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set("cad2revit " + v.Id);
+                    fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + v.Id);
                     _inf.Contar("Vigas");
                 });
             }
@@ -91,7 +91,8 @@ namespace Cad2Revit
                         if (!_muros.TryGetValue(c.Muro, out var muro))
                             throw new Exception($"muro '{c.Muro}' no existe");
                         var tipo = TipoCorrida(baseTipo, c.Ancho, c.Alto);
-                        WallFoundation.Create(_doc, tipo.Id, muro.Id);
+                        var wf = WallFoundation.Create(_doc, tipo.Id, muro.Id);
+                        wf.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "fundación " + c.Muro);
                         _inf.Contar("Fundaciones corridas");
                     });
                 }
@@ -113,6 +114,7 @@ namespace Cad2Revit
                     var fi = _doc.Create.NewFamilyInstance(U.P(a.Centro, nivel.Elevation), s, nivel, StructuralType.Footing);
                     // Cara superior de la zapata = sello + alto
                     ElementTransformUtils.MoveElement(_doc, fi.Id, XYZ.BasisZ * U.M(a.CotaSello + a.H));
+                    fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + "zapata " + a.Columna);
                     if (MaterialEstructural != ElementId.InvalidElementId)
                         U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, MaterialEstructural);
                     _inf.Contar("Zapatas aisladas");

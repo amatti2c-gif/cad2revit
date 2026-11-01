@@ -130,20 +130,32 @@ namespace Cad2Revit
         private FamilySymbol ConMedidas(FamilySymbol s, string sufijo,
             params (BuiltInParameter? bip, string[] nombres, double metros)[] medidas)
         {
-            bool Cumple(FamilySymbol x) => medidas.All(md =>
+            Parameter Param(FamilySymbol x, (BuiltInParameter? bip, string[] nombres, double metros) md)
             {
                 var p = md.bip.HasValue ? x.get_Parameter(md.bip.Value) : null;
-                p ??= md.nombres.Select(x.LookupParameter).FirstOrDefault(q => q != null);
-                return p != null && p.StorageType == StorageType.Double && System.Math.Abs(p.AsDouble() - U.M(md.metros)) < U.M(0.001);
+                return p ?? md.nombres.Select(x.LookupParameter).FirstOrDefault(q => q != null && q.StorageType == StorageType.Double);
+            }
+            double Distancia(FamilySymbol x) => medidas.Sum(md =>
+            {
+                var p = Param(x, md);
+                return p == null || p.StorageType != StorageType.Double ? 1e9 : System.Math.Abs(p.AsDouble() - U.M(md.metros));
             });
-            if (Cumple(s)) return s;
 
+            // 1) un tipo de la misma familia que ya tenga esas medidas
+            var hermanos = s.Family.GetFamilySymbolIds().Select(id => (FamilySymbol)_doc.GetElement(id)).ToList();
+            var exacto = hermanos.Where(x => Distancia(x) < U.M(0.001) * medidas.Length)
+                                 .OrderBy(x => x.Id == s.Id ? 0 : 1).FirstOrDefault();
+            if (exacto != null) return Activar(exacto);
+
+            // 2) un duplicado creado antes por cad2revit
             var nombre = U.NombreSeguro($"{s.Name} - {sufijo}");
-            var existente = s.Family.GetFamilySymbolIds().Select(id => (FamilySymbol)_doc.GetElement(id))
-                             .FirstOrDefault(x => x.Name == nombre);
-            if (existente != null) return existente;
+            var cercano = hermanos.OrderBy(Distancia).First();
+            nombre = U.NombreSeguro($"{cercano.Name} - {sufijo}");
+            var existente = hermanos.FirstOrDefault(x => x.Name == nombre);
+            if (existente != null) return Activar(existente);
 
-            var nuevo = (FamilySymbol)s.Duplicate(nombre);
+            // 3) duplicar el tipo de medidas más cercanas (cambia menos la geometría de la familia)
+            var nuevo = (FamilySymbol)cercano.Duplicate(nombre);
             foreach (var md in medidas)
             {
                 bool ok = md.bip.HasValue && U.Fijar(nuevo, md.bip.Value, U.M(md.metros));
@@ -152,7 +164,16 @@ namespace Cad2Revit
                     _inf.Advertencia($"Familia '{s.FamilyName}': no se encontró parámetro editable " +
                                      $"{string.Join("/", md.nombres)}; revisa los nombres en estructuracion.yaml");
             }
-            return nuevo;
+            // marca de tipo única para evitar el aviso de "Type Mark" duplicado
+            var marca = nuevo.get_Parameter(BuiltInParameter.ALL_MODEL_TYPE_MARK);
+            if (marca != null && !marca.IsReadOnly) marca.Set(sufijo);
+            return Activar(nuevo);
+        }
+
+        private FamilySymbol Activar(FamilySymbol s)
+        {
+            if (!s.IsActive) { s.Activate(); _doc.Regenerate(); }
+            return s;
         }
 
         // Palabras que hacen preferible una familia cuando la pedida no está cargada
@@ -162,20 +183,33 @@ namespace Cad2Revit
                                            new[] { "double", "doble", "garage", "curtain", "bifold", "sliding" }),
             [BuiltInCategory.OST_Windows] = (new[] { "fixed", "fija", "fijo" }, new[] { "skylight", "curtain" }),
             [BuiltInCategory.OST_StructuralColumns] = (new[] { "concrete", "hormig", "rectangular" },
-                                                       new[] { "steel", "acero", "hss", "pipe", "wide flange", "uc-", "w-" }),
+                                                       new[] { "steel", "acero", "hss", "pipe", "wide flange", "uc-", "universal", "reference", "referencia" }),
             [BuiltInCategory.OST_StructuralFraming] = (new[] { "concrete", "hormig", "rectangular" },
-                                                       new[] { "reference", "referencia", "steel", "acero", "joist", "truss" }),
+                                                       new[] { "reference", "referencia", "steel", "acero", "joist", "truss", "shapes", "hss" }),
             [BuiltInCategory.OST_StructuralFoundation] = (new[] { "footing", "zapata", "rectangular" }, new[] { "pile", "pilote" }),
         };
 
         private readonly HashSet<string> _avisosFamilia = new();
 
+        // En estructura no se reemplaza por una familia de otro material (p.ej. acero en vez de hormigón)
+        private static readonly HashSet<BuiltInCategory> SoloAfines = new()
+        {
+            BuiltInCategory.OST_StructuralColumns, BuiltInCategory.OST_StructuralFraming, BuiltInCategory.OST_StructuralFoundation,
+        };
+
         private FamilySymbol Simbolo(BuiltInCategory cat, string familia, string tipo, string id)
         {
-            var simbolos = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
-                               .Cast<FamilySymbol>().ToList();
-            var s = simbolos.FirstOrDefault(x => x.FamilyName == familia && (tipo == null || x.Name == tipo))
-                    ?? simbolos.FirstOrDefault(x => x.FamilyName == familia);
+            List<FamilySymbol> Simbolos() => new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
+                                                 .Cast<FamilySymbol>().ToList();
+            var simbolos = Simbolos();
+            FamilySymbol Buscar(List<FamilySymbol> l) =>
+                l.FirstOrDefault(x => x.FamilyName == familia && (tipo == null || x.Name == tipo))
+                ?? l.FirstOrDefault(x => x.FamilyName == familia);
+
+            var s = Buscar(simbolos);
+            if (s == null && !string.IsNullOrEmpty(familia) && CargarDesdeBiblioteca(familia))
+                s = Buscar(simbolos = Simbolos());
+
             if (s == null && simbolos.Count > 0)
             {
                 int Puntaje(FamilySymbol x)
@@ -184,17 +218,53 @@ namespace Cad2Revit
                     var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
                     return af.mas.Count(n.Contains) * 2 - af.menos.Count(n.Contains) * 5;
                 }
-                s = simbolos.OrderByDescending(Puntaje).ThenBy(x => x.FamilyName).First();
+                var mejor = simbolos.OrderByDescending(Puntaje).ThenBy(x => x.FamilyName).First();
+                if (SoloAfines.Contains(cat) && Puntaje(mejor) <= 0)
+                {
+                    if (_avisosFamilia.Add($"{cat}|{familia}"))
+                        _inf.Error($"Familia '{familia}' no está cargada ni se encontró en la biblioteca de Revit, y no hay " +
+                                   "una equivalente en la plantilla; no se crearon esos elementos. Cárgala con Insertar → " +
+                                   "Cargar familia (o desde Autodesk Content) y vuelve a construir.");
+                    return null;
+                }
+                s = mejor;
                 if (_avisosFamilia.Add($"{cat}|{familia}"))
                     _inf.Advertencia($"Familia '{familia}' no está cargada en la plantilla; se usa '{s.FamilyName} : {s.Name}' " +
                                      $"(primer caso: {id}). Cárgala (Insertar → Cargar familia) o cambia el nombre en los lineamientos.");
             }
-            if (s != null && !s.IsActive)
+            return s == null ? null : Activar(s);
+        }
+
+        private readonly HashSet<string> _intentosCarga = new();
+
+        /// <summary>Busca "familia.rfa" en las bibliotecas locales de Revit y la carga en el proyecto.</summary>
+        private bool CargarDesdeBiblioteca(string familia)
+        {
+            if (!_intentosCarga.Add(familia)) return false;
+            var version = _doc.Application.VersionNumber;
+            var raices = new[]
             {
-                s.Activate();
-                _doc.Regenerate();
+                System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData),
+                                       "Autodesk", $"RVT {version}", "Libraries"),
+                System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData),
+                                       "Autodesk", $"RVT {version}"),
+            };
+            foreach (var raiz in raices.Where(System.IO.Directory.Exists))
+            {
+                string archivo = null;
+                try
+                {
+                    archivo = System.IO.Directory.EnumerateFiles(raiz, familia + ".rfa", System.IO.SearchOption.AllDirectories)
+                                                 .FirstOrDefault();
+                }
+                catch { /* carpetas sin permiso */ }
+                if (archivo != null && _doc.LoadFamily(archivo, out _))
+                {
+                    _inf.Advertencia($"Familia '{familia}' cargada automáticamente desde {archivo}");
+                    return true;
+                }
             }
-            return s;
+            return false;
         }
     }
 }

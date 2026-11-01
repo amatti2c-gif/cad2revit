@@ -42,6 +42,8 @@ columnas:
 # -----------------------------------------------------------------------------
 vigas:
   seccion_defecto: {b: 0.20, h: 0.50}
+  # No viene en la plantilla de Revit 2027: el complemento la busca en la biblioteca
+  # local de Revit y la carga sola; si no la encuentra, cárgala con Insertar → Cargar familia.
   familia_revit: "M_Concrete-Rectangular Beam"
   parametro_b: b
   parametro_h: h

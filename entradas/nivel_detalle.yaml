@@ -48,5 +48,5 @@ altura_cielo: 2.40
 
 # Familias de puertas/ventanas cuando aberturas = familia y el bloque CAD no
 # tiene una correspondencia en capas_cad.yaml
-familia_puerta_generica: {familia: "M_Single-Flush", tipo: "0915 x 2134mm"}
-familia_ventana_generica: {familia: "M_Fixed", tipo: "0915 x 1220mm"}
+familia_puerta_generica: {familia: "M_Door-Passage-Single-Flush", tipo: "900 x 2100mm"}
+familia_ventana_generica: {familia: "M_Window-Fixed", tipo: "900 x 1200mm"}
