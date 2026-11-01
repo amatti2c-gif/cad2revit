@@ -145,6 +145,19 @@ namespace Cad2Revit
         public SortedDictionary<string, List<string>> Familias { get; } = new();
         public List<string> Verificacion { get; } = new();
 
+        // familia|tipo|categoría -> (motivo, elementos afectados)
+        private readonly SortedDictionary<string, (string motivo, List<string> ids)> _faltantes = new();
+
+        /// <summary>Registra un elemento que no se pudo crear con la familia estándar indicada.</summary>
+        public void Faltante(string familia, string tipo, string categoria, string id, string motivo)
+        {
+            var clave = $"{familia}|{tipo}|{categoria}";
+            if (!_faltantes.TryGetValue(clave, out var v)) _faltantes[clave] = v = (motivo, new List<string>());
+            v.ids.Add(id);
+        }
+
+        public int CantidadFaltantes => _faltantes.Values.Sum(v => v.ids.Count);
+
         public void Contar(string que, int cuantos = 1) => Creados[que] = (Creados.TryGetValue(que, out var n) ? n : 0) + cuantos;
         public void Advertencia(string s) => Advertencias.Add(s);
         public void Error(string s) => Errores.Add(s);
@@ -153,13 +166,29 @@ namespace Cad2Revit
         {
             var sb = new StringBuilder();
             foreach (var kv in Creados) sb.AppendLine($"{kv.Key}: {kv.Value}");
-            sb.AppendLine($"Advertencias: {Advertencias.Count}   Errores: {Errores.Count}");
+            sb.AppendLine($"Advertencias: {Advertencias.Count}   Errores: {Errores.Count}   " +
+                          $"No creados por familia faltante: {CantidadFaltantes}");
             return sb.ToString();
         }
 
         public string Detalle()
         {
             var sb = new StringBuilder();
+            if (_faltantes.Count > 0)
+            {
+                sb.AppendLine("NO SE PUDO CREAR CON FAMILIAS ESTÁNDAR DE REVIT");
+                foreach (var kv in _faltantes)
+                {
+                    var p = kv.Key.Split('|');
+                    sb.AppendLine($"  - Familia '{p[0]}'" + (string.IsNullOrEmpty(p[1]) ? "" : $", tipo '{p[1]}'") +
+                                  $" ({p[2]}): {kv.Value.ids.Count} elemento(s) sin crear");
+                    sb.AppendLine("      " + (kv.Value.motivo ?? "no está en el proyecto ni en la biblioteca de Revit de este equipo"));
+                    sb.AppendLine("      Elementos: " + string.Join(", ", kv.Value.ids.Take(12)) + (kv.Value.ids.Count > 12 ? ", …" : ""));
+                }
+                sb.AppendLine("  Para resolverlo una sola vez: carga la familia en tu PLANTILLA (Insertar → Cargar familia de");
+                sb.AppendLine("  Autodesk) o copia el .rfa a Documentos\\cad2revit\\Familias; desde ahí se carga sola.");
+                sb.AppendLine();
+            }
             foreach (var e in Errores) sb.AppendLine("ERROR  " + e);
             // avisos idénticos se muestran una vez con su cantidad
             foreach (var g in Advertencias.GroupBy(a => a))

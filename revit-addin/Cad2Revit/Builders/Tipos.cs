@@ -185,99 +185,127 @@ namespace Cad2Revit
             return s;
         }
 
-        // Palabras que hacen preferible una familia cuando la pedida no está cargada
-        private static readonly Dictionary<BuiltInCategory, (string[] mas, string[] menos)> Afinidad = new()
-        {
-            [BuiltInCategory.OST_Doors] = (new[] { "single", "simple", "flush", "interior", "1 hoja" },
-                                           new[] { "double", "doble", "garage", "curtain", "bifold", "sliding" }),
-            [BuiltInCategory.OST_Windows] = (new[] { "fixed", "fija", "fijo" }, new[] { "skylight", "curtain" }),
-            [BuiltInCategory.OST_StructuralColumns] = (new[] { "concrete", "hormig", "rectangular" },
-                                                       new[] { "steel", "acero", "hss", "pipe", "wide flange", "uc-", "universal", "reference", "referencia" }),
-            [BuiltInCategory.OST_StructuralFraming] = (new[] { "concrete", "hormig", "rectangular" },
-                                                       new[] { "reference", "referencia", "steel", "acero", "joist", "truss", "shapes", "hss" }),
-            [BuiltInCategory.OST_StructuralFoundation] = (new[] { "footing", "zapata", "rectangular" }, new[] { "pile", "pilote" }),
-        };
+        // ---------------------------------------------------------------- familias estándar
+        // Regla única: cada elemento se crea con la familia y el tipo que indica la app. Si la
+        // familia no está en el proyecto se carga automáticamente desde la biblioteca de Revit.
+        // Si tampoco está ahí, el elemento NO se crea y queda en la sección "faltantes" del informe.
 
-        private readonly HashSet<string> _avisosFamilia = new();
+        private static string SinPrefijo(string n) => (n ?? "").StartsWith("M_") ? n.Substring(2) : (n ?? "");
 
-        // En estructura no se reemplaza por una familia de otro material (p.ej. acero en vez de hormigón)
-        private static readonly HashSet<BuiltInCategory> SoloAfines = new()
+        private FamilySymbol BuscarSimbolo(BuiltInCategory cat, string familia, string tipo)
         {
-            BuiltInCategory.OST_StructuralColumns, BuiltInCategory.OST_StructuralFraming, BuiltInCategory.OST_StructuralFoundation,
-        };
+            var l = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
+                        .Cast<FamilySymbol>().ToList();
+            bool MismaFamilia(FamilySymbol x) => x.FamilyName == familia ||
+                string.Equals(SinPrefijo(x.FamilyName), SinPrefijo(familia), System.StringComparison.OrdinalIgnoreCase);
+            return l.FirstOrDefault(x => MismaFamilia(x) && (tipo == null || x.Name == tipo))
+                   ?? l.FirstOrDefault(MismaFamilia);
+        }
 
         private FamilySymbol Simbolo(BuiltInCategory cat, string familia, string tipo, string id)
         {
-            List<FamilySymbol> Simbolos() => new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
-                                                 .Cast<FamilySymbol>().ToList();
-            var simbolos = Simbolos();
-            // "M_Concrete-Rectangular Beam" (métrica) y "Concrete-Rectangular Beam" (imperial) son la
-            // misma familia: se acepta cualquiera de las dos, prefiriendo el nombre exacto.
-            static string Normal(string n) => (n ?? "").StartsWith("M_") ? n.Substring(2) : (n ?? "");
-            FamilySymbol Buscar(List<FamilySymbol> l) =>
-                l.FirstOrDefault(x => x.FamilyName == familia && (tipo == null || x.Name == tipo))
-                ?? l.FirstOrDefault(x => x.FamilyName == familia)
-                ?? l.FirstOrDefault(x => string.Equals(Normal(x.FamilyName), Normal(familia), System.StringComparison.OrdinalIgnoreCase));
-
-            var s = Buscar(simbolos);
-            if (s == null && !string.IsNullOrEmpty(familia) && CargarDesdeBiblioteca(familia))
-                s = Buscar(simbolos = Simbolos());
-
-            if (s == null && simbolos.Count > 0)
+            if (string.IsNullOrEmpty(familia))
             {
-                int Puntaje(FamilySymbol x)
-                {
-                    if (!Afinidad.TryGetValue(cat, out var af)) return 0;
-                    var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
-                    return af.mas.Count(n.Contains) * 2 - af.menos.Count(n.Contains) * 5;
-                }
-                var mejor = simbolos.OrderByDescending(Puntaje).ThenBy(x => x.FamilyName).First();
-                if (SoloAfines.Contains(cat) && Puntaje(mejor) <= 0)
-                {
-                    if (_avisosFamilia.Add($"{cat}|{familia}"))
-                        _inf.Error($"Familia '{familia}' no está cargada ni se encontró en la biblioteca de Revit, y no hay " +
-                                   "una equivalente en la plantilla; no se crearon esos elementos. Cárgala con Insertar → " +
-                                   "Cargar familia (o desde Autodesk Content) y vuelve a construir.");
-                    return null;
-                }
-                s = mejor;
-                if (_avisosFamilia.Add($"{cat}|{familia}"))
-                    _inf.Advertencia($"Familia '{familia}' no está cargada en la plantilla; se usa '{s.FamilyName} : {s.Name}' " +
-                                     $"(primer caso: {id}). Cárgala (Insertar → Cargar familia) o cambia el nombre en los lineamientos.");
+                _inf.Faltante("(sin familia)", tipo, cat.ToString(), id, "los lineamientos no indican qué familia usar");
+                return null;
             }
-            return s == null ? null : Activar(s);
+            var s = BuscarSimbolo(cat, familia, tipo);
+            if (s == null && CargarDesdeBiblioteca(familia)) s = BuscarSimbolo(cat, familia, tipo);
+            if (s == null)
+            {
+                _inf.Faltante(familia, tipo, cat.ToString(), id, null);
+                return null;
+            }
+            return Activar(s);
         }
 
-        private readonly HashSet<string> _intentosCarga = new();
+        /// <summary>
+        /// Para piezas de sección rectangular (pilares, vigas, entramado): si la familia indicada no
+        /// existe, se usa cualquier familia estándar de la categoría cuya sección sea editable
+        /// (prefiriendo las que calzan con el material) y luego se ajustan sus dimensiones.
+        /// </summary>
+        private FamilySymbol SimboloRectangular(BuiltInCategory cat, string familia, string tipo, string id,
+                                                string[] nombresB, string[] nombresH, params string[] preferidas)
+        {
+            var s = string.IsNullOrEmpty(familia) ? null : BuscarSimbolo(cat, familia, tipo);
+            if (s == null && !string.IsNullOrEmpty(familia) && CargarDesdeBiblioteca(familia)) s = BuscarSimbolo(cat, familia, tipo);
+            if (s != null) return Activar(s);
 
-        /// <summary>Busca "familia.rfa" en las bibliotecas locales de Revit y la carga en el proyecto.</summary>
+            bool Editable(FamilySymbol x, string[] nombres) => nombres.Any(n =>
+            {
+                var p = x.LookupParameter(n);
+                return p != null && !p.IsReadOnly && p.StorageType == StorageType.Double;
+            });
+            var candidatos = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
+                .Cast<FamilySymbol>()
+                .Where(x => !NoRectangulares.Any(k => (x.FamilyName + " " + x.Name).ToLowerInvariant().Contains(k)))
+                .Where(x => Editable(x, nombresB) && Editable(x, nombresH)).ToList();
+            int Preferencia(FamilySymbol x)
+            {
+                var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
+                return preferidas.Any(k => n.Contains(k)) ? 0 : n.Contains("rectangular") ? 1 : 2;
+            }
+            var elegido = candidatos.OrderBy(Preferencia).ThenBy(x => x.FamilyName).FirstOrDefault();
+            if (elegido == null)
+            {
+                _inf.Faltante(familia, tipo, cat.ToString(), id,
+                              "no está disponible y no hay ninguna familia de esa categoría con sección editable");
+                return null;
+            }
+            var clave = $"{cat}|{familia}";
+            if (_avisosRectangular.Add(clave))
+                _inf.Advertencia($"'{familia}' no está disponible; se usa '{elegido.FamilyName}' con sus dimensiones " +
+                                 $"ajustadas (primer caso: {id}).");
+            return Activar(elegido);
+        }
+
+        private readonly HashSet<string> _avisosRectangular = new();
+
+        // Perfiles cuya forma no es un rectángulo macizo: nunca se usan como sustituto
+        private static readonly string[] NoRectangulares =
+            { "shapes", "hss", "pipe", "steel", "acero", "uc-", "ub-", "universal", "reference", "referencia", "channel", "angle", "joist", "truss", "pile" };
+
+        private readonly Dictionary<string, bool> _intentosCarga = new();
+
+        /// <summary>Carpetas donde se buscan familias estándar (.rfa) para cargarlas solas.</summary>
+        private IEnumerable<string> CarpetasFamilias()
+        {
+            var version = _doc.Application.VersionNumber;
+            var comun = System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData);
+            var docs = System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments);
+            var addin = System.IO.Path.GetDirectoryName(typeof(Constructor).Assembly.Location) ?? "";
+            return new[]
+            {
+                System.IO.Path.Combine(comun, "Autodesk", $"RVT {version}", "Libraries"),   // biblioteca de Revit
+                System.IO.Path.Combine(docs, "cad2revit", "Familias"),                      // carpeta propia
+                System.IO.Path.Combine(addin, "Familias"),
+            }.Where(System.IO.Directory.Exists);
+        }
+
         private bool CargarDesdeBiblioteca(string familia)
         {
-            if (!_intentosCarga.Add(familia)) return false;
-            var version = _doc.Application.VersionNumber;
-            var raices = new[]
+            if (_intentosCarga.TryGetValue(familia, out var ya)) return ya;
+            var nombres = new[] { familia, SinPrefijo(familia), "M_" + SinPrefijo(familia) }
+                          .Distinct().Select(n => n + ".rfa").ToList();
+            foreach (var raiz in CarpetasFamilias())
             {
-                System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData),
-                                       "Autodesk", $"RVT {version}", "Libraries"),
-                System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonApplicationData),
-                                       "Autodesk", $"RVT {version}"),
-            };
-            foreach (var raiz in raices.Where(System.IO.Directory.Exists))
-            {
-                string archivo = null;
-                try
+                foreach (var nombre in nombres)
                 {
-                    archivo = System.IO.Directory.EnumerateFiles(raiz, familia + ".rfa", System.IO.SearchOption.AllDirectories)
-                                                 .FirstOrDefault();
-                }
-                catch { /* carpetas sin permiso */ }
-                if (archivo != null && _doc.LoadFamily(archivo, out _))
-                {
-                    _inf.Advertencia($"Familia '{familia}' cargada automáticamente desde {archivo}");
-                    return true;
+                    string archivo = null;
+                    try
+                    {
+                        archivo = System.IO.Directory.EnumerateFiles(raiz, nombre, System.IO.SearchOption.AllDirectories)
+                                                     .FirstOrDefault();
+                    }
+                    catch { /* carpetas sin permiso */ }
+                    if (archivo != null && _doc.LoadFamily(archivo, out _))
+                    {
+                        _inf.Advertencia($"Familia '{familia}' cargada automáticamente desde {archivo}");
+                        return _intentosCarga[familia] = true;
+                    }
                 }
             }
-            return false;
+            return _intentosCarga[familia] = false;
         }
     }
 }

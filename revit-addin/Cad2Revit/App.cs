@@ -75,7 +75,8 @@ namespace Cad2Revit
 
             var td = new TaskDialog("cad2revit")
             {
-                MainInstruction = informe.Errores.Count == 0 ? "Modelo construido" : "Modelo construido con observaciones",
+                MainInstruction = informe.Errores.Count == 0 && informe.CantidadFaltantes == 0
+                    ? "Modelo construido" : "Modelo construido con observaciones (ver detalle)",
                 MainContent = informe.Resumen(),
                 ExpandedContent = informe.Detalle(),
             };

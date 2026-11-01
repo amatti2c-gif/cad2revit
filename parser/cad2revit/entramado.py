@@ -152,6 +152,6 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
     return {
         "muro": muro.id, "material": conf.get("material"), "direccion": [round(u[0], 6), round(u[1], 6)],
         "seccion": {"b": b, "h": h}, "piezas": piezas, "resumen": resumen,
-        "revit": conf.get("revit") or {"modo": "piezas"},
+        "revit": conf.get("revit") or {},
         "metros_lineales": round(largo_total, 2),
     }

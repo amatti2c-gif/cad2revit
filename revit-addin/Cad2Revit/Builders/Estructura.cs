@@ -21,8 +21,10 @@ namespace Cad2Revit
                 {
                     var nivel = Nivel(c.Nivel) ?? throw new Exception($"nivel '{c.Nivel}' inexistente");
                     var sup = Nivel(c.NivelSuperior);
-                    var s = Simbolo(BuiltInCategory.OST_StructuralColumns, c.Familia, null, c.Id)
-                            ?? throw new Exception($"carga una familia de columna estructural (p.ej. '{c.Familia}')");
+                    var s = SimboloRectangular(BuiltInCategory.OST_StructuralColumns, c.Familia, null, c.Id,
+                        new[] { c.ParametroB }.Concat(NombresB).ToArray(), new[] { c.ParametroH }.Concat(NombresH).ToArray(),
+                        "concrete", "hormig");
+                    if (s == null) return;   // informado en "faltantes"
                     s = ConMedidas(s, $"{c.B * 100:0}x{c.H * 100:0}",
                         (null, new[] { c.ParametroB }.Concat(NombresB).ToArray(), c.B),
                         (null, new[] { c.ParametroH }.Concat(NombresH).ToArray(), c.H));
@@ -59,8 +61,10 @@ namespace Cad2Revit
                 Intentar(v.Id, () =>
                 {
                     var nivel = Nivel(v.Nivel) ?? throw new Exception($"nivel '{v.Nivel}' inexistente");
-                    var s = Simbolo(BuiltInCategory.OST_StructuralFraming, v.Familia, null, v.Id)
-                            ?? throw new Exception($"carga una familia de viga (p.ej. '{v.Familia}')");
+                    var s = SimboloRectangular(BuiltInCategory.OST_StructuralFraming, v.Familia, null, v.Id,
+                        new[] { v.ParametroB }.Concat(NombresB).ToArray(), new[] { v.ParametroH }.Concat(NombresH).ToArray(),
+                        "concrete", "hormig");
+                    if (s == null) return;   // informado en "faltantes"
                     s = ConMedidas(s, $"{v.B * 100:0}x{v.H * 100:0}",
                         (null, new[] { v.ParametroB }.Concat(NombresB).ToArray(), v.B),
                         (null, new[] { v.ParametroH }.Concat(NombresH).ToArray(), v.H));
@@ -105,8 +109,8 @@ namespace Cad2Revit
                     var col = _m.Columnas.FirstOrDefault(x => x.Id == a.Columna)
                               ?? throw new Exception($"columna '{a.Columna}' no existe");
                     var nivel = Nivel(col.Nivel);
-                    var s = Simbolo(BuiltInCategory.OST_StructuralFoundation, a.Familia, null, "Zapata " + a.Columna)
-                            ?? throw new Exception($"carga una familia de zapata aislada (p.ej. '{a.Familia}')");
+                    var s = Simbolo(BuiltInCategory.OST_StructuralFoundation, a.Familia, null, "Zapata " + a.Columna);
+                    if (s == null) return;   // informado en "faltantes"
                     s = ConMedidas(s, $"{a.B * 100:0}x{a.L * 100:0}x{a.H * 100:0}",
                         (null, new[] { "Width", "Ancho", "Anchura" }, a.B),
                         (null, new[] { "Length", "Largo", "Longitud" }, a.L),

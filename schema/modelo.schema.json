@@ -651,11 +651,16 @@
           "revit": {
             "type": "object",
             "properties": {
-              "modo": {
-                "enum": [
-                  "piezas",
-                  "familias",
-                  "solido"
+              "familia_vertical": {
+                "type": "object",
+                "required": [
+                  "familia"
+                ]
+              },
+              "familia_horizontal": {
+                "type": "object",
+                "required": [
+                  "familia"
                 ]
               }
             }

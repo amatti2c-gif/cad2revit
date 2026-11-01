@@ -44,8 +44,7 @@ namespace Cad2Revit
                 if (a.Modo == "familia")
                 {
                     if (Intentar(a.Id, () => ColocarFamilia(a, muro), registrarError: false)) continue;
-                    _inf.Advertencia($"{a.Id}: no se pudo colocar la {a.Categoria} con su familia ({_ultimoFallo}); " +
-                                     "se dejó el vano en el muro. Prueba otra familia o revisa el espesor del muro.");
+                    // la familia falta o no se pudo colocar: queda el vano (informado en "faltantes")
                 }
                 Intentar(a.Id, () => ColocarVano(a, muro));
             }
@@ -55,7 +54,7 @@ namespace Cad2Revit
         {
             var cat = a.Categoria == "puerta" ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows;
             var s = Simbolo(cat, a.Familia, a.Tipo, a.Id)
-                    ?? throw new System.Exception($"no hay familias de {a.Categoria} cargadas en la plantilla");
+                    ?? throw new System.Exception("familia no disponible (ver faltantes)");
             s = ConMedidas(s, $"{a.Ancho * 100:0}x{a.Alto * 100:0}",
                 (BuiltInParameter.FAMILY_WIDTH_PARAM, new[] { "Width", "Ancho", "Anchura" }, a.Ancho),
                 (BuiltInParameter.FAMILY_HEIGHT_PARAM, new[] { "Height", "Altura" }, a.Alto));
@@ -82,9 +81,12 @@ namespace Cad2Revit
         /// muro y que Revit la registra como inserto que corta ese muro. Si no la corta, agrega un
         /// vano rectangular del mismo tamaño para que el muro quede abierto.
         /// </summary>
+        /// <summary>
+        /// Comprueba que cada puerta/ventana quedó alojada y corta su muro. Si Revit la rechazó al
+        /// confirmar, se deja el vano y se informa (sin probar otras familias).
+        /// </summary>
         private void VerificarAberturas()
         {
-            var tiposRotos = new HashSet<string>();
             foreach (var (id, idAb, idMuro) in _aberturasCreadas.ToList())
             {
                 var def = _m.Aberturas.First(x => x.Id == id);
@@ -96,101 +98,19 @@ namespace Cad2Revit
                     var clave = def.Categoria == "puerta" ? "Puertas" : "Ventanas";
                     if (_inf.Creados.TryGetValue(clave, out var n)) _inf.Creados[clave] = n - 1;
                     _eliminadosPorRevit.TryGetValue(idAb, out var motivo);
-                    var m = System.Text.RegularExpressions.Regex.Match(motivo ?? "", "type \"([^\"]+)\"");
-                    if (m.Success) tiposRotos.Add(m.Groups[1].Value);
-                    var reemplazo = Reintentar(def, muro, tiposRotos);
-                    if (reemplazo != null)
-                    {
-                        _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: Revit rechazó el tipo original " +
-                                              $"({motivo?.Trim()}); se colocó '{reemplazo}' en su lugar");
-                        _inf.Advertencia($"{id}: se usó '{reemplazo}' porque Revit rechazó el tipo pedido; revisa si te sirve.");
-                    }
-                    else
-                    {
-                        _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: ninguna familia de la plantilla " +
-                                              $"pudo colocarse ({motivo?.Trim()}); se dejó el vano");
-                        Etapa("Vano " + id, () => Intentar(id + " (vano)", () => ColocarVano(def, muro)));
-                    }
+                    _inf.Faltante(def.Familia, def.Tipo, clave, id,
+                                  $"Revit rechazó la familia en este muro ({motivo?.Trim()}); se dejó el vano");
+                    Etapa("Vano " + id, () => Intentar(id + " (vano)", () => ColocarVano(def, muro)));
                     continue;
                 }
-                bool alojada = fi.Host?.Id == idMuro;
-                bool corta = muro.FindInserts(true, false, true, true).Contains(idAb);
-                _inf.Verificacion.Add($"{id} ({def.Categoria}) en muro {def.Muro}: alojada={(alojada ? "sí" : "NO")}, " +
-                                      $"corta el muro={(corta ? "sí" : "NO")}, tipo='{fi.Symbol.FamilyName} : {fi.Symbol.Name}'");
-                if (alojada && corta) continue;
+                bool corta = fi.Host?.Id == idMuro && muro.FindInserts(true, false, true, true).Contains(idAb);
+                if (corta) continue;
                 Etapa("Vano " + id, () =>
                 {
-                    if (Intentar(id + " (vano de respaldo)", () => ColocarVano(def, muro)))
-                        _inf.Advertencia($"{id}: la {def.Categoria} no cortaba el muro {def.Muro}; se agregó un vano del mismo tamaño.");
+                    if (Intentar(id + " (vano)", () => ColocarVano(def, muro)))
+                        _inf.Advertencia($"{id}: la {def.Categoria} no cortaba el muro {def.Muro}; se agregó el vano.");
                 });
             }
-            BorrarTiposRotos(tiposRotos);
-        }
-
-        /// <summary>
-        /// Prueba tipos EXISTENTES (sin cambiarles medidas): primero de la misma familia, luego de
-        /// otras familias de la categoría, ordenados por cercanía de ancho y alto. Cada intento se
-        /// confirma por separado para saber si Revit lo acepta. Devuelve el tipo usado o null.
-        /// </summary>
-        private string Reintentar(AberturaDef a, Wall muro, HashSet<string> tiposRotos)
-        {
-            var cat = a.Categoria == "puerta" ? BuiltInCategory.OST_Doors : BuiltInCategory.OST_Windows;
-            double Med(FamilySymbol x, BuiltInParameter bip, params string[] nombres)
-            {
-                var p = x.get_Parameter(bip) ?? nombres.Select(x.LookupParameter).FirstOrDefault(q => q != null);
-                return p != null && p.StorageType == StorageType.Double ? p.AsDouble() : double.NaN;
-            }
-            string Nombre(FamilySymbol x) => $"{x.FamilyName} : {x.Name}";
-            var candidatos = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
-                .Cast<FamilySymbol>()
-                .Where(x => !tiposRotos.Contains(Nombre(x)))
-                .Select(x => new
-                {
-                    s = x,
-                    misma = x.FamilyName == a.Familia || x.FamilyName.EndsWith(a.Familia ?? "~") ? 0 : 1,
-                    dist = System.Math.Abs(Med(x, BuiltInParameter.FAMILY_WIDTH_PARAM, "Width", "Ancho") - U.M(a.Ancho))
-                         + System.Math.Abs(Med(x, BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height", "Altura") - U.M(a.Alto)),
-                })
-                .Where(c => !double.IsNaN(c.dist))
-                .OrderBy(c => c.misma).ThenBy(c => c.dist)
-                .ToList();
-            // Variedad: hasta 2 tipos de la misma familia y el mejor tipo de hasta 2 familias distintas
-            candidatos = candidatos.Where(c => c.misma == 0).Take(2)
-                .Concat(candidatos.Where(c => c.misma == 1).GroupBy(c => c.s.FamilyName).Select(g => g.First()).Take(2))
-                .ToList();
-
-            var familiasQueFallaron = new HashSet<string>();
-            foreach (var c in candidatos)
-            {
-                // Si ya fallaron 3 familias distintas en este muro, el problema es el muro, no la puerta
-                if (familiasQueFallaron.Count >= 3) break;
-                ElementId nuevo = ElementId.InvalidElementId;
-                Etapa($"Reintento {a.Id}", () => Intentar(a.Id, () => nuevo = ColocarConSimbolo(a, muro, c.s), registrarError: false));
-                var fi = nuevo == ElementId.InvalidElementId ? null : _doc.GetElement(nuevo) as FamilyInstance;
-                if (fi != null && muro.FindInserts(true, false, true, true).Contains(nuevo))
-                    return Nombre(c.s);
-                if (fi == null && nuevo != ElementId.InvalidElementId)
-                {
-                    familiasQueFallaron.Add(c.s.FamilyName);
-                    var clave = a.Categoria == "puerta" ? "Puertas" : "Ventanas";
-                    if (_inf.Creados.TryGetValue(clave, out var n)) _inf.Creados[clave] = n - 1;
-                }
-            }
-            return null;
-        }
-
-        /// <summary>Elimina los tipos que Revit no pudo generar (quedan inservibles en el proyecto).</summary>
-        private void BorrarTiposRotos(HashSet<string> nombres)
-        {
-            if (nombres.Count == 0) return;
-            Etapa("Limpiar tipos rechazados", () =>
-            {
-                foreach (var s in new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).Cast<FamilySymbol>()
-                             .Where(x => nombres.Contains($"{x.FamilyName} : {x.Name}")).ToList())
-                {
-                    Intentar("tipo " + s.Name, () => _doc.Delete(s.Id), registrarError: false);
-                }
-            });
         }
 
         private void ColocarVano(AberturaDef a, Wall muro)

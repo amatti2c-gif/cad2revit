@@ -118,12 +118,10 @@ def _validar_materialidades(m: dict) -> list[str]:
                 if not all(isinstance(sec.get(k), (int, float)) and sec[k] > 0 for k in ("b", "h")):
                     errores.append(f"{grupo} '{t['nombre']}': entramado.pie_derecho necesita b y h (m) mayores que 0")
                 rv = ent.get("revit") or {}
-                if rv.get("modo", "piezas") not in ("piezas", "familias", "solido"):
-                    errores.append(f"{grupo} '{t['nombre']}': entramado.revit.modo debe ser 'piezas', 'solido' o 'familias'")
-                if rv.get("modo") == "familias":
-                    for k in ("familia_vertical", "familia_horizontal"):
-                        if not (rv.get(k) or {}).get("familia"):
-                            errores.append(f"{grupo} '{t['nombre']}': entramado.revit.{k} necesita 'familia' (y 'tipo')")
+                for k in ("familia_vertical", "familia_horizontal"):
+                    if not (rv.get(k) or {}).get("familia"):
+                        errores.append(f"{grupo} '{t['nombre']}': falta entramado.revit.{k} con la familia de Revit "
+                                       "(ej. {familia: \"Timber-Column\", tipo: \"2x3\"})")
                 for k in ("separacion_pies_derechos", "separacion_horizontales"):
                     if k in ent and not (isinstance(ent[k], (int, float)) and ent[k] >= 0.1):
                         errores.append(f"{grupo} '{t['nombre']}': entramado.{k} debe ser al menos 0.10 m")
