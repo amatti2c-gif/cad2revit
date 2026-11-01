@@ -161,7 +161,9 @@ namespace Cad2Revit
         {
             var sb = new StringBuilder();
             foreach (var e in Errores) sb.AppendLine("ERROR  " + e);
-            foreach (var a in Advertencias) sb.AppendLine("aviso  " + a);
+            // avisos idénticos se muestran una vez con su cantidad
+            foreach (var g in Advertencias.GroupBy(a => a))
+                sb.AppendLine("aviso  " + (g.Count() > 1 ? $"(x{g.Count()}) " : "") + g.Key);
             if (Verificacion.Count > 0)
             {
                 sb.AppendLine();

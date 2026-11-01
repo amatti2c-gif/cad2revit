@@ -153,10 +153,13 @@ namespace Cad2Revit
                 })
                 .Where(c => !double.IsNaN(c.dist))
                 .OrderBy(c => c.misma).ThenBy(c => c.dist)
-                .Take(6).ToList();
+                .Take(4).ToList();
 
+            var familiasQueFallaron = new HashSet<string>();
             foreach (var c in candidatos)
             {
+                // Si ya fallaron 2 familias distintas en este muro, el problema es el muro, no la puerta
+                if (familiasQueFallaron.Count >= 2) break;
                 ElementId nuevo = ElementId.InvalidElementId;
                 Etapa($"Reintento {a.Id}", () => Intentar(a.Id, () => nuevo = ColocarConSimbolo(a, muro, c.s), registrarError: false));
                 var fi = nuevo == ElementId.InvalidElementId ? null : _doc.GetElement(nuevo) as FamilyInstance;
@@ -164,6 +167,7 @@ namespace Cad2Revit
                     return Nombre(c.s);
                 if (fi == null && nuevo != ElementId.InvalidElementId)
                 {
+                    familiasQueFallaron.Add(c.s.FamilyName);
                     var clave = a.Categoria == "puerta" ? "Puertas" : "Ventanas";
                     if (_inf.Creados.TryGetValue(clave, out var n)) _inf.Creados[clave] = n - 1;
                 }
