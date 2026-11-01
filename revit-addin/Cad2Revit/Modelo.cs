@@ -159,7 +159,17 @@ namespace Cad2Revit
         public double MetrosLineales { get; set; }
         public Dictionary<string, int> Resumen { get; set; } = new();
         public List<PiezaDef> Piezas { get; set; } = new();
+        public RevitEntramadoDef Revit { get; set; } = new();
     }
+
+    public class RevitEntramadoDef
+    {
+        public string Modo { get; set; } = "solido";
+        public FamiliaTipoDef FamiliaVertical { get; set; }
+        public FamiliaTipoDef FamiliaHorizontal { get; set; }
+    }
+
+    public class FamiliaTipoDef { public string Familia { get; set; } public string Tipo { get; set; } }
 
     public class PiezaDef
     {

@@ -94,6 +94,14 @@ tipos_muro:
       separacion_horizontales: 0.40      # cadenetas, medidas desde el piso
       soleras: true                      # solera inferior y superior
       refuerzo_vanos: true               # jambas, dintel, alféizar y pies derechos cortos
+      # Cómo se construye en Revit:
+      #   familias -> cada pieza es un elemento de Revit (permite tablas de cantidades:
+      #               número de piezas y metros lineales). Más pesado.
+      #   solido   -> un solo elemento por muro con todas las piezas. Liviano.
+      revit:
+        modo: familias
+        familia_vertical:   {familia: "Timber-Column",    tipo: "2x3"}   # pies derechos, jambas
+        familia_horizontal: {familia: "Dimension Lumber", tipo: "2x3"}   # soleras, cadenetas, dinteles
 
 # -----------------------------------------------------------------------------
 #  TIPOS DE LOSA / PISO  (capas de arriba hacia abajo)

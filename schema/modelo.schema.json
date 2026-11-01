@@ -647,6 +647,17 @@
                 }
               }
             }
+          },
+          "revit": {
+            "type": "object",
+            "properties": {
+              "modo": {
+                "enum": [
+                  "familias",
+                  "solido"
+                ]
+              }
+            }
           }
         }
       }
