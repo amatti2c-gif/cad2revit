@@ -202,9 +202,13 @@ namespace Cad2Revit
             List<FamilySymbol> Simbolos() => new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
                                                  .Cast<FamilySymbol>().ToList();
             var simbolos = Simbolos();
+            // "M_Concrete-Rectangular Beam" (métrica) y "Concrete-Rectangular Beam" (imperial) son la
+            // misma familia: se acepta cualquiera de las dos, prefiriendo el nombre exacto.
+            static string Normal(string n) => (n ?? "").StartsWith("M_") ? n.Substring(2) : (n ?? "");
             FamilySymbol Buscar(List<FamilySymbol> l) =>
                 l.FirstOrDefault(x => x.FamilyName == familia && (tipo == null || x.Name == tipo))
-                ?? l.FirstOrDefault(x => x.FamilyName == familia);
+                ?? l.FirstOrDefault(x => x.FamilyName == familia)
+                ?? l.FirstOrDefault(x => string.Equals(Normal(x.FamilyName), Normal(familia), System.StringComparison.OrdinalIgnoreCase));
 
             var s = Buscar(simbolos);
             if (s == null && !string.IsNullOrEmpty(familia) && CargarDesdeBiblioteca(familia))
