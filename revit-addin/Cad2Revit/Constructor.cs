@@ -59,7 +59,7 @@ namespace Cad2Revit
                 Etapa("Vigas", CrearVigas);
                 Etapa("Fundaciones", CrearFundaciones);
                 if (_m.Recintos.Count > 0) Etapa("Recintos", CrearRecintos);
-                Etapa("Verificación de aberturas", VerificarAberturas);
+                VerificarAberturas();   // maneja sus propias etapas (reintentos confirmados uno a uno)
                 grupo.Assimilate();
             }
             ListarFamilias();
