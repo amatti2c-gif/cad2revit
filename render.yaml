@@ -4,7 +4,9 @@ services:
   - type: web
     name: cad2revit
     runtime: docker
-    plan: starter            # el plan gratuito no admite disco persistente
+    plan: starter            # siempre encendido; el gratuito se duerme y no admite disco
+    branch: main
+    autoDeploy: true         # cada push a main se publica solo
     healthCheckPath: /salud
     envVars:
       - key: CAD2REVIT_CLAVE
