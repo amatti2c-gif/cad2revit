@@ -12,6 +12,17 @@ namespace Cad2Revit
         /// <summary>Metros -> unidades internas de Revit (pies).</summary>
         public static double M(double metros) => UnitUtils.ConvertToInternalUnits(metros, UnitTypeId.Meters);
 
+        private static readonly char[] Prohibidos = { '\\', ':', '{', '}', '[', ']', '|', ';', '<', '>', '?', '`', '~' };
+
+        /// <summary>Reemplaza los caracteres que Revit no acepta en nombres de elementos.</summary>
+        public static string NombreSeguro(string nombre)
+        {
+            if (string.IsNullOrEmpty(nombre)) return nombre;
+            var sb = new StringBuilder(nombre.Length);
+            foreach (var c in nombre) sb.Append(Array.IndexOf(Prohibidos, c) >= 0 ? '-' : c);
+            return sb.ToString().Trim();
+        }
+
         public static XYZ P(double[] p, double z = 0) => new XYZ(M(p[0]), M(p[1]), z);
 
         public static CurveLoop Contorno(List<double[]> pts, double z)
@@ -86,6 +97,7 @@ namespace Cad2Revit
         public Dictionary<string, int> Creados { get; } = new();
         public List<string> Advertencias { get; } = new();
         public List<string> Errores { get; } = new();
+        public SortedDictionary<string, List<string>> Familias { get; } = new();
 
         public void Contar(string que) => Creados[que] = Creados.TryGetValue(que, out var n) ? n + 1 : 1;
         public void Advertencia(string s) => Advertencias.Add(s);
@@ -104,6 +116,16 @@ namespace Cad2Revit
             var sb = new StringBuilder();
             foreach (var e in Errores) sb.AppendLine("ERROR  " + e);
             foreach (var a in Advertencias) sb.AppendLine("aviso  " + a);
+            if (Familias.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("FAMILIAS CARGADAS EN LA PLANTILLA (familia : tipo) - usa estos nombres en los lineamientos");
+                foreach (var kv in Familias)
+                {
+                    sb.AppendLine("  " + kv.Key + ":");
+                    foreach (var f in kv.Value) sb.AppendLine("    " + f);
+                }
+            }
             return sb.ToString();
         }
 

@@ -48,6 +48,7 @@ namespace Cad2Revit
                 if (_m.Recintos.Count > 0) Etapa("Recintos", CrearRecintos);
                 grupo.Assimilate();
             }
+            ListarFamilias();
             return _inf;
         }
 
@@ -72,6 +73,22 @@ namespace Cad2Revit
             }
         }
 
+        private void ListarFamilias()
+        {
+            var cats = new (BuiltInCategory cat, string nombre)[]
+            {
+                (BuiltInCategory.OST_Doors, "Puertas"), (BuiltInCategory.OST_Windows, "Ventanas"),
+                (BuiltInCategory.OST_StructuralColumns, "Columnas estructurales"),
+                (BuiltInCategory.OST_StructuralFraming, "Vigas"),
+                (BuiltInCategory.OST_StructuralFoundation, "Fundaciones"),
+            };
+            foreach (var (cat, nombre) in cats)
+            {
+                _inf.Familias[nombre] = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
+                    .Cast<FamilySymbol>().Select(x => $"{x.FamilyName} : {x.Name}").Distinct().OrderBy(x => x).ToList();
+            }
+        }
+
         /// <summary>Ejecuta la creación de un elemento sin que un fallo detenga la etapa.</summary>
         private void Intentar(string id, Action accion)
         {
@@ -88,7 +105,7 @@ namespace Cad2Revit
         // ------------------------------------------------------------ niveles
         private void CrearNivelesYEjes()
         {
-            var existentes = U.De<Level>(_doc).ToDictionary(l => l.Name, l => l);
+            var existentes = U.De<Level>(_doc).GroupBy(l => l.Name).ToDictionary(g => g.Key, g => g.First());
             var tipoPlanta = U.De<ViewFamilyType>(_doc).FirstOrDefault(v => v.ViewFamily == ViewFamily.FloorPlan);
             var conVista = new HashSet<ElementId>(U.De<ViewPlan>(_doc).Where(v => !v.IsTemplate && v.GenLevel != null)
                                                                        .Select(v => v.GenLevel.Id));
@@ -96,10 +113,10 @@ namespace Cad2Revit
             {
                 Intentar("Nivel " + n.Nombre, () =>
                 {
-                    if (!existentes.TryGetValue(n.Nombre, out var nivel))
+                    if (!existentes.TryGetValue(U.NombreSeguro(n.Nombre), out var nivel))
                     {
                         nivel = Level.Create(_doc, U.M(n.Cota));
-                        nivel.Name = n.Nombre;
+                        nivel.Name = U.NombreSeguro(n.Nombre);
                         _inf.Contar("Niveles");
                     }
                     else
@@ -118,7 +135,7 @@ namespace Cad2Revit
                 Intentar("Eje " + e.Nombre, () =>
                 {
                     var g = Grid.Create(_doc, Line.CreateBound(U.P(e.Inicio), U.P(e.Fin)));
-                    if (!nombresEje.Contains(e.Nombre)) { g.Name = e.Nombre; nombresEje.Add(e.Nombre); }
+                    if (!nombresEje.Contains(e.Nombre)) { g.Name = U.NombreSeguro(e.Nombre); nombresEje.Add(e.Nombre); }
                     else _inf.Advertencia($"Ya existe un eje '{e.Nombre}'; se deja el nombre automático {g.Name}");
                     _inf.Contar("Ejes");
                 });

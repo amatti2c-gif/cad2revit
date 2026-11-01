@@ -51,8 +51,8 @@ def _partir_terminacion(tipo: dict) -> tuple[dict, dict | None]:
     k = next(i for i, c in enumerate(capas) if c["funcion"] == "estructura")
     if k == 0:
         return tipo, None
-    est = {"nombre": f"{tipo['nombre']} [estructura]", "estructural": True, "capas": capas[k:]}
-    ter = {"nombre": f"{tipo['nombre']} [terminación]", "estructural": False, "capas": capas[:k]}
+    est = {"nombre": f"{tipo['nombre']} - estructura", "estructural": True, "capas": capas[k:]}
+    ter = {"nombre": f"{tipo['nombre']} - terminación", "estructural": False, "capas": capas[:k]}
     return est, ter
 
 

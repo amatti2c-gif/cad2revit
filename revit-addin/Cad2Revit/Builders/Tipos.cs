@@ -24,13 +24,15 @@ namespace Cad2Revit
         {
             // Materiales
             var existentes = U.De<Material>(_doc).GroupBy(m => m.Name).ToDictionary(g => g.Key, g => g.First());
+            // Las claves de los diccionarios internos usan el nombre del JSON; en Revit se usa
+            // U.NombreSeguro (Revit prohíbe caracteres como [ ] { } : ; | < > ? ` ~ \).
             foreach (var md in _m.Materiales)
             {
                 Intentar("Material " + md.Nombre, () =>
                 {
-                    if (!existentes.TryGetValue(md.Nombre, out var mat))
+                    if (!existentes.TryGetValue(U.NombreSeguro(md.Nombre), out var mat))
                     {
-                        mat = (Material)_doc.GetElement(Material.Create(_doc, md.Nombre));
+                        mat = (Material)_doc.GetElement(Material.Create(_doc, U.NombreSeguro(md.Nombre)));
                         _inf.Contar("Materiales");
                     }
                     if (md.Color != null && md.Color.Length == 3)
@@ -48,30 +50,34 @@ namespace Cad2Revit
             {
                 Intentar("Tipo de muro " + t.Nombre, () =>
                 {
-                    if (!murosExist.TryGetValue(t.Nombre, out var wt))
+                    if (!murosExist.TryGetValue(U.NombreSeguro(t.Nombre), out var wt))
                     {
-                        wt = (WallType)baseMuro.Duplicate(t.Nombre);
+                        wt = (WallType)baseMuro.Duplicate(U.NombreSeguro(t.Nombre));
                         _inf.Contar("Tipos de muro");
                     }
-                    wt.SetCompoundStructure(Estructura(t));
+                    wt.SetCompoundStructure(Estructura(t, wt.GetCompoundStructure() ?? baseMuro.GetCompoundStructure()));
                     _tiposMuro[t.Nombre] = wt;
                 });
             }
 
             // Tipos de losa / cubierta
-            var baseLosa = U.De<FloorType>(_doc).FirstOrDefault(f => !f.IsFoundationSlab);
+            // Base: un tipo de suelo con estructura de capas (no losa de cimentación)
+            var baseLosa = U.De<FloorType>(_doc).Where(f => !f.IsFoundationSlab && f.GetCompoundStructure() != null)
+                               .OrderByDescending(f => f.Name.IndexOf("Generic", System.StringComparison.OrdinalIgnoreCase) >= 0
+                                                    || f.Name.IndexOf("Genérico", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                               .FirstOrDefault();
             if (baseLosa == null) { _inf.Error("La plantilla no tiene ningún tipo de suelo"); return; }
             var losasExist = U.De<FloorType>(_doc).GroupBy(f => f.Name).ToDictionary(g => g.Key, g => g.First());
             foreach (var t in _m.TiposLosa)
             {
                 Intentar("Tipo de losa " + t.Nombre, () =>
                 {
-                    if (!losasExist.TryGetValue(t.Nombre, out var ft))
+                    if (!losasExist.TryGetValue(U.NombreSeguro(t.Nombre), out var ft))
                     {
-                        ft = (FloorType)baseLosa.Duplicate(t.Nombre);
+                        ft = (FloorType)baseLosa.Duplicate(U.NombreSeguro(t.Nombre));
                         _inf.Contar("Tipos de losa");
                     }
-                    ft.SetCompoundStructure(Estructura(t));
+                    ft.SetCompoundStructure(Estructura(t, ft.GetCompoundStructure() ?? baseLosa.GetCompoundStructure()));
                     _tiposLosa[t.Nombre] = ft;
                 });
             }
@@ -82,8 +88,11 @@ namespace Cad2Revit
         /// arriba hacia abajo (coincide con el índice 0 de Revit). Las capas antes
         /// de la primera "estructura" son la cáscara exterior; las posteriores a la
         /// última, la interior.
+        /// Se parte de la estructura del tipo base (no de una nueva) porque Revit exige
+        /// que cada categoría conserve sus condiciones de borde (EndCap, envolventes);
+        /// una estructura creada desde cero es rechazada por los tipos de suelo.
         /// </summary>
-        private CompoundStructure Estructura(TipoDef t)
+        private CompoundStructure Estructura(TipoDef t, CompoundStructure plantilla)
         {
             var capas = new List<CompoundStructureLayer>();
             foreach (var c in t.Capas)
@@ -91,7 +100,16 @@ namespace Cad2Revit
                 var ancho = c.Funcion == "membrana" ? 0.0 : U.M(c.Espesor);  // Revit exige membranas de espesor 0
                 capas.Add(new CompoundStructureLayer(ancho, Funcion(c.Funcion), IdMaterial(c.Material)));
             }
-            var cs = CompoundStructure.CreateSimpleCompoundStructure(capas);
+            CompoundStructure cs;
+            if (plantilla != null)
+            {
+                cs = plantilla;
+                cs.SetLayers(capas);
+            }
+            else
+            {
+                cs = CompoundStructure.CreateSimpleCompoundStructure(capas);
+            }
             int primera = t.Capas.FindIndex(c => c.Funcion == "estructura");
             int ultima = t.Capas.FindLastIndex(c => c.Funcion == "estructura");
             if (primera >= 0)
@@ -107,7 +125,7 @@ namespace Cad2Revit
 
         /// <summary>
         /// Devuelve un tipo de familia con las medidas pedidas: reutiliza el
-        /// existente si ya cumple, si no lo duplica como "Tipo [sufijo]".
+        /// existente si ya cumple, si no lo duplica como "Tipo - sufijo".
         /// </summary>
         private FamilySymbol ConMedidas(FamilySymbol s, string sufijo,
             params (BuiltInParameter? bip, string[] nombres, double metros)[] medidas)
@@ -120,7 +138,7 @@ namespace Cad2Revit
             });
             if (Cumple(s)) return s;
 
-            var nombre = $"{s.Name} [{sufijo}]";
+            var nombre = U.NombreSeguro($"{s.Name} - {sufijo}");
             var existente = s.Family.GetFamilySymbolIds().Select(id => (FamilySymbol)_doc.GetElement(id))
                              .FirstOrDefault(x => x.Name == nombre);
             if (existente != null) return existente;
@@ -137,6 +155,21 @@ namespace Cad2Revit
             return nuevo;
         }
 
+        // Palabras que hacen preferible una familia cuando la pedida no está cargada
+        private static readonly Dictionary<BuiltInCategory, (string[] mas, string[] menos)> Afinidad = new()
+        {
+            [BuiltInCategory.OST_Doors] = (new[] { "single", "simple", "flush", "interior", "1 hoja" },
+                                           new[] { "double", "doble", "garage", "curtain", "bifold", "sliding" }),
+            [BuiltInCategory.OST_Windows] = (new[] { "fixed", "fija", "fijo" }, new[] { "skylight", "curtain" }),
+            [BuiltInCategory.OST_StructuralColumns] = (new[] { "concrete", "hormig", "rectangular" },
+                                                       new[] { "steel", "acero", "hss", "pipe", "wide flange", "uc-", "w-" }),
+            [BuiltInCategory.OST_StructuralFraming] = (new[] { "concrete", "hormig", "rectangular" },
+                                                       new[] { "reference", "referencia", "steel", "acero", "joist", "truss" }),
+            [BuiltInCategory.OST_StructuralFoundation] = (new[] { "footing", "zapata", "rectangular" }, new[] { "pile", "pilote" }),
+        };
+
+        private readonly HashSet<string> _avisosFamilia = new();
+
         private FamilySymbol Simbolo(BuiltInCategory cat, string familia, string tipo, string id)
         {
             var simbolos = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
@@ -145,8 +178,16 @@ namespace Cad2Revit
                     ?? simbolos.FirstOrDefault(x => x.FamilyName == familia);
             if (s == null && simbolos.Count > 0)
             {
-                s = simbolos[0];
-                _inf.Advertencia($"{id}: familia '{familia}' no está cargada; se usa '{s.FamilyName} : {s.Name}'");
+                int Puntaje(FamilySymbol x)
+                {
+                    if (!Afinidad.TryGetValue(cat, out var af)) return 0;
+                    var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
+                    return af.mas.Count(n.Contains) * 2 - af.menos.Count(n.Contains) * 5;
+                }
+                s = simbolos.OrderByDescending(Puntaje).ThenBy(x => x.FamilyName).First();
+                if (_avisosFamilia.Add($"{cat}|{familia}"))
+                    _inf.Advertencia($"Familia '{familia}' no está cargada en la plantilla; se usa '{s.FamilyName} : {s.Name}' " +
+                                     $"(primer caso: {id}). Cárgala (Insertar → Cargar familia) o cambia el nombre en los lineamientos.");
             }
             if (s != null && !s.IsActive)
             {

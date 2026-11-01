@@ -93,6 +93,9 @@ def test_lod350_terminaciones_y_fundaciones(proyecto):
     assert len(modelo["fundaciones"]["corridas"]) == 4      # muros estructurales de N1
     assert len(modelo["fundaciones"]["aisladas"]) == 2      # columnas de N1
     assert len(modelo["cielos"]) == 2
+    # Revit no acepta [ ] { } : ; | < > ? ` ~ en nombres de tipos
+    prohibidos = set("[]{}:;|<>?`~\\")
+    assert not any(set(t["nombre"]) & prohibidos for t in modelo["tipos_losa"] + modelo["tipos_muro"])
 
 
 def test_hueco_en_lod200(proyecto):

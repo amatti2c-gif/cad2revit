@@ -117,7 +117,7 @@ namespace Cad2Revit
                 {
                     var nivel = Nivel(r.Nivel) ?? throw new System.Exception($"nivel '{r.Nivel}' inexistente");
                     var room = _doc.Create.NewRoom(nivel, new UV(U.M(r.Punto[0]), U.M(r.Punto[1])));
-                    room.Name = r.Nombre;
+                    room.Name = U.NombreSeguro(r.Nombre);
                     _inf.Contar("Recintos");
                 });
             }
