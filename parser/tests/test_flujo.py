@@ -54,7 +54,7 @@ def test_lod300_completo(proyecto):
     assert {tuple(m["inicio"]) for m in exteriores} | {tuple(m["fin"]) for m in exteriores} == \
         {(0.1, 0.1), (9.9, 0.1), (0.1, 7.9), (9.9, 7.9)}
     tabique = next(m for m in n1 if m["espesor"] == 0.1)
-    assert tabique["tipo"].startswith("TM-10") and not tabique["estructural"]
+    assert tabique["tipo"].startswith("TM-11") and not tabique["estructural"]
     assert tabique["inicio"] == [6.0, 0.1] and tabique["fin"] == [6.0, 7.9]   # unido a pesar del vano
 
     ab = [a for a in modelo["aberturas"] if a["id"].startswith("N1")]

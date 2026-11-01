@@ -43,7 +43,7 @@ def _recortes_extremos(m: Muro, otros: list[Muro]) -> tuple[float, float]:
 
 def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: float,
             aberturas: list[dict]) -> dict:
-    sec = conf.get("pie_derecho") or {"b": 0.041, "h": 0.065}
+    sec = conf.get("pie_derecho") or {"b": 0.050, "h": 0.076}
     b, h = float(sec["b"]), float(sec["h"])
     sep_v = float(conf.get("separacion_pies_derechos", 0.40))
     sep_h = float(conf.get("separacion_horizontales", 0.40))
