@@ -28,6 +28,7 @@ namespace Cad2Revit
         public List<VigaDef> Vigas { get; set; } = new();
         public FundacionesDef Fundaciones { get; set; } = new();
         public List<RecintoDef> Recintos { get; set; } = new();
+        public List<EntramadoDef> Entramados { get; set; } = new();
         public List<string> Advertencias { get; set; } = new();
 
         public static Modelo Leer(string ruta)
@@ -147,6 +148,26 @@ namespace Cad2Revit
         public double H { get; set; }
         public string Familia { get; set; }
         public double CotaSello { get; set; }
+    }
+
+    public class EntramadoDef
+    {
+        public string Muro { get; set; }
+        public string Nivel { get; set; }
+        public string Material { get; set; }
+        public double[] Direccion { get; set; }
+        public double MetrosLineales { get; set; }
+        public Dictionary<string, int> Resumen { get; set; } = new();
+        public List<PiezaDef> Piezas { get; set; } = new();
+    }
+
+    public class PiezaDef
+    {
+        public string Rol { get; set; }
+        public double[] Inicio { get; set; }
+        public double[] Fin { get; set; }
+        public double Ancho { get; set; }
+        public double Profundidad { get; set; }
     }
 
     public class RecintoDef { public string Nivel { get; set; } public string Nombre { get; set; } public double[] Punto { get; set; } }

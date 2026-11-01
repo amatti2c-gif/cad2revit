@@ -313,8 +313,8 @@ async function abrirCorrida(n) {
   const prev = estado.corridas.slice(idx + 1).find(c => c.conteos);
   const etiquetas = { muros: "Muros", muros_estructurales: "Estructurales", puertas: "Puertas", ventanas: "Ventanas",
     losas: "Losas", columnas: "Columnas", vigas: "Vigas", fundaciones: "Fundaciones", recintos: "Recintos",
-    cielos: "Cielos", ejes: "Ejes", niveles: "Niveles", advertencias: "Advertencias" };
-  $("#tarjetas").replaceChildren(...(res.conteos ? Object.entries(etiquetas).map(([k, eti]) => {
+    cielos: "Cielos", piezas_entramado: "Piezas de madera", ejes: "Ejes", niveles: "Niveles", advertencias: "Advertencias" };
+  $("#tarjetas").replaceChildren(...(res.conteos ? Object.entries(etiquetas).filter(([k]) => res.conteos[k] != null).map(([k, eti]) => {
     const v = res.conteos[k], pv = prev?.conteos?.[k];
     const d = pv == null ? null : v - pv;
     return h("div", { class: "tarjeta" }, h("div", {}, h("span", { class: "num" }, v),
@@ -427,6 +427,16 @@ async function dibujar2D() {
       "vector-effect": "non-scaling-stroke" }),
       `${w.id}\n${w.tipo}\nespesor medido ${w.espesor} m · largo ${L.toFixed(2)} m\n${w.estructural ? "estructural" : "no estructural"}${w.perimetral ? " · perimetral" : ""}\ncapa CAD: ${w.capa_cad}`));
     puntos.push(...pts);
+  }
+
+  if (visible("muros")) for (const e of (m.entramados || []).filter(x => x.nivel === nivel)) {
+    for (const p of e.piezas.filter(p => p.inicio[0] === p.fin[0] && p.inicio[1] === p.fin[1])) {
+      raiz.append(titulo(s("rect", { x: p.inicio[0] - (Math.abs(e.direccion[0]) * p.ancho + Math.abs(e.direccion[1]) * p.profundidad) / 2,
+        y: p.inicio[1] - (Math.abs(e.direccion[1]) * p.ancho + Math.abs(e.direccion[0]) * p.profundidad) / 2,
+        width: Math.abs(e.direccion[0]) * p.ancho + Math.abs(e.direccion[1]) * p.profundidad,
+        height: Math.abs(e.direccion[1]) * p.ancho + Math.abs(e.direccion[0]) * p.profundidad,
+        fill: "#a8743f" }), `${e.muro} · ${p.rol} ${p.ancho * 1000}×${p.profundidad * 1000} mm`));
+    }
   }
 
   if (visible("aberturas")) for (const a of m.aberturas.filter(x => porId[x.muro])) {

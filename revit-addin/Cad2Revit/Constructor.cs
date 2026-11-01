@@ -55,6 +55,7 @@ namespace Cad2Revit
                 Etapa("Muros", CrearMuros);
                 if (_m.Lod?.Aberturas != "ninguna") Etapa("Aberturas", CrearAberturas);
                 Etapa("Losas y cielos", CrearLosasYCielos);
+                Etapa("Entramado de madera", CrearEntramados);
                 Etapa("Columnas", CrearColumnas);
                 Etapa("Vigas", CrearVigas);
                 Etapa("Fundaciones", CrearFundaciones);

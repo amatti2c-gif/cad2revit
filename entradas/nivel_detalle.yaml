@@ -12,7 +12,8 @@
 #   300  Muros y losas compuestos por capas, puertas/ventanas con su familia y
 #        tipo, columnas, vigas, fundaciones, recintos.
 #   350  Todo lo anterior + terminaciones de piso/cielo como elementos
-#        separados y uniones muro-losa resueltas.
+#        separados, uniones muro-losa resueltas y entramado de madera pieza
+#        a pieza (pies derechos, soleras, cadenetas, dinteles).
 #
 #  Lo que NUNCA se modela automáticamente (queda fuera de alcance):
 #   armaduras, uniones metálicas, instalaciones (MEP), mobiliario, detalles
@@ -33,6 +34,8 @@ ajustes:
   # terminaciones:  true/false        (pisos/cielos como capas separadas)
   # cielos:         true/false
   # escaleras:      true/false        (pendiente: se marca su ubicación)
+  # entramado:      true/false        (piezas de madera de los muros con
+  #                                    "entramado" en materialidades.yaml)
 
   # --- Estructura -------------------------------------------------------------
   # columnas:       true/false
@@ -40,8 +43,9 @@ ajustes:
   # fundaciones:    true/false
   # ejes:           true/false
 
-  # Ejemplo: modelo LOD 300 pero sin fundaciones
+  # Ejemplo: modelo LOD 300 pero sin fundaciones y con entramado de madera
   fundaciones: false
+  entramado: true
 
 # Altura de cielo (desde el nivel) cuando cielos = true
 altura_cielo: 2.40

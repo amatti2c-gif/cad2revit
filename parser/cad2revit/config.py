@@ -15,16 +15,16 @@ FUNCIONES_CAPA = {"estructura", "sustrato", "aislacion", "terminacion1", "termin
 PRESETS_LOD: dict[int, dict[str, Any]] = {
     100: dict(muros="generico", aberturas="ninguna", losas=True, cubierta=True, recintos=False,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=False, vigas=False, fundaciones=False, ejes=True),
+              columnas=False, vigas=False, fundaciones=False, ejes=True, entramado=False),
     200: dict(muros="tipo", aberturas="hueco", losas=True, cubierta=True, recintos=False,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=True, vigas=False, fundaciones=False, ejes=True),
+              columnas=True, vigas=False, fundaciones=False, ejes=True, entramado=False),
     300: dict(muros="compuesto", aberturas="familia", losas=True, cubierta=True, recintos=True,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=True, vigas=True, fundaciones=True, ejes=True),
+              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=False),
     350: dict(muros="compuesto", aberturas="familia", losas=True, cubierta=True, recintos=True,
               terminaciones=True, cielos=True, escaleras=True,
-              columnas=True, vigas=True, fundaciones=True, ejes=True),
+              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=True),
 }
 
 VALORES_ENUM = {
@@ -109,6 +109,17 @@ def _validar_materialidades(m: dict) -> list[str]:
                                    f"no está en la lista de materiales")
                 if not (isinstance(c.get("espesor"), (int, float)) and c["espesor"] > 0):
                     errores.append(f"{grupo} '{t['nombre']}': espesor inválido en capa {c}")
+            ent = t.get("entramado")
+            if ent:
+                if ent.get("material") not in materiales:
+                    errores.append(f"{grupo} '{t['nombre']}': el material del entramado '{ent.get('material')}' "
+                                   "no está en la lista de materiales")
+                sec = ent.get("pie_derecho") or {}
+                if not all(isinstance(sec.get(k), (int, float)) and sec[k] > 0 for k in ("b", "h")):
+                    errores.append(f"{grupo} '{t['nombre']}': entramado.pie_derecho necesita b y h (m) mayores que 0")
+                for k in ("separacion_pies_derechos", "separacion_horizontales"):
+                    if k in ent and not (isinstance(ent[k], (int, float)) and ent[k] >= 0.1):
+                        errores.append(f"{grupo} '{t['nombre']}': entramado.{k} debe ser al menos 0.10 m")
             if t.get("capas"):
                 t["espesor_total"] = round(sum(c.get("espesor", 0) for c in capas), 4)
     nombres_muro = {t["nombre"] for t in m.get("tipos_muro", [])}

@@ -13,6 +13,7 @@ from . import __version__
 from .aberturas import asignar_a_muros, clasificar_inserciones
 from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
+from . import entramado as entramado_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
 from .muros import Muro, detectar_muros
@@ -120,8 +121,16 @@ def construir_modelo(cfg: Configuracion) -> dict:
         "materiales": cfg.materialidades.get("materiales", []),
         "niveles": niveles, "ejes": [], "tipos_muro": [], "tipos_losa": [],
         "muros": [], "aberturas": [], "losas": [], "cielos": [], "columnas": [], "vigas": [],
-        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "advertencias": adv,
+        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "advertencias": adv,
     }
+    cota = {n["nombre"]: n["cota"] for n in niveles}
+
+    def espesor_tipo(nombre: str | None, grupos=("tipos_losa", "tipos_cubierta")) -> float:
+        for g in grupos:
+            for t in cfg.materialidades.get(g, []):
+                if t["nombre"] == nombre:
+                    return t.get("espesor_total", 0.0)
+        return 0.0
 
     plantas = sorted(cfg.proyecto.get("plantas") or [], key=lambda p: orden.index(p["nivel"]))
     todos_muros: list[tuple[str, Muro]] = []
@@ -215,6 +224,22 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 for s, nombre in zip(grupo, _nombres_ejes(len(grupo), estilo)):
                     modelo["ejes"].append(dict(nombre=nombre, inicio=s.a, fin=s.b))
 
+        # 9) Entramado de madera (tipos de muro con sección "entramado")
+        if lod.get("entramado"):
+            es_ultima = idx == len(plantas) - 1
+            losa_sup = (cub_def if es_ultima else losa_def) if lod["losas"] and sup else None
+            for m in muros:
+                conf = (cfg.tipo_muro(m.tipo) or {}).get("entramado")
+                if not conf:
+                    continue
+                z0 = cota[nivel]
+                z1 = (cota[sup] - espesor_tipo(losa_sup)) if sup else z0 + ALTURA_POR_DEFECTO
+                abs_muro = [a for a in modelo["aberturas"] if a["muro"] == m.id]
+                e = entramado_mod.generar(m, muros, conf, z0, z1, abs_muro)
+                if e["piezas"]:
+                    e["nivel"] = nivel
+                    modelo["entramados"].append(e)
+
         for m in muros:
             d = dict(id=m.id, nivel=nivel, nivel_superior=sup, inicio=m.a, fin=m.b, espesor=m.espesor,
                      tipo=m.tipo, estructural=m.estructural, perimetral=m.perimetral, capa_cad=m.capa_cad)
@@ -264,6 +289,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     usados_mat = {c["material"] for t in tipos_m + tipos_l for c in t["capas"] if c["material"]}
     if cfg.estructuracion.get("material_estructural"):
         usados_mat.add(cfg.estructuracion["material_estructural"])
+    usados_mat |= {e["material"] for e in modelo["entramados"] if e.get("material")}
     modelo["materiales"] = [m for m in modelo["materiales"] if m["nombre"] in usados_mat]
     modelo["material_estructural"] = cfg.estructuracion.get("material_estructural")
     return json.loads(json.dumps(modelo))   # tuplas -> listas: el modelo es JSON puro

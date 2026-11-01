@@ -57,6 +57,10 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
   const matTipo = t => (materiales[t] ||= mat(colores[t] || "#9ca3af"));
   const muroPorId = {};
 
+  // Muros con entramado: semitransparentes para ver las piezas de madera
+  const conEntramado = new Set((modelo.entramados || []).map(e => e.muro));
+  const matTransparente = t => (materiales["~" + t] ||= mat(colores[t] || "#9ca3af",
+    { transparent: true, opacity: 0.18, depthWrite: false }));
   for (const w of modelo.muros) {
     muroPorId[w.id] = w;
     if (!ver(w.nivel)) continue;
@@ -64,7 +68,31 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
     const alto = w.nivel_superior != null ? cota[w.nivel_superior] - z0 : (w.altura ?? 2.6);
     const [x1, y1] = w.inicio, [x2, y2] = w.fin;
     const L = Math.hypot(x2 - x1, y2 - y1);
-    caja(grupo, matTipo(w.tipo), (x1 + x2) / 2, z0 + alto / 2, -(y1 + y2) / 2, L, alto, w.espesor, Math.atan2(y2 - y1, x2 - x1));
+    caja(grupo, conEntramado.has(w.id) ? matTransparente(w.tipo) : matTipo(w.tipo),
+      (x1 + x2) / 2, z0 + alto / 2, -(y1 + y2) / 2, L, alto, w.espesor, Math.atan2(y2 - y1, x2 - x1));
+  }
+
+  // Entramado de madera: cada pieza es un prisma orientado según su eje
+  const mMadera = mat("#c8955a"), mMaderaRef = mat("#a8743f");
+  const eje = new THREE.Vector3(), centro = new THREE.Vector3(), nrm = new THREE.Vector3(), lat = new THREE.Vector3();
+  for (const e of modelo.entramados || []) {
+    if (!ver(e.nivel)) continue;
+    nrm.set(-e.direccion[1], 0, -e.direccion[0]);       // normal al muro en coordenadas three
+    for (const p of e.piezas) {
+      const a = new THREE.Vector3(p.inicio[0], p.inicio[2], -p.inicio[1]);
+      const b = new THREE.Vector3(p.fin[0], p.fin[2], -p.fin[1]);
+      eje.subVectors(b, a);
+      const L = eje.length();
+      if (L < 1e-4) continue;
+      eje.normalize();
+      lat.crossVectors(eje, nrm).normalize();
+      const m = new THREE.Mesh(new THREE.BoxGeometry(p.ancho, L, p.profundidad),
+        ["jamba", "dintel", "alfeizar"].includes(p.rol) ? mMaderaRef : mMadera);
+      // ejes locales de la caja: X = lateral (ancho), Y = eje de la pieza, Z = normal (profundidad)
+      m.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(lat, eje, nrm.clone().normalize()));
+      m.position.copy(centro.addVectors(a, b).multiplyScalar(0.5));
+      grupo.add(m);
+    }
   }
 
   const mPuerta = mat("#b45309"), mVentana = mat("#38bdf8", { transparent: true, opacity: 0.7 });

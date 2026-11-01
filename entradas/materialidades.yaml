@@ -41,6 +41,12 @@ materiales:
   - nombre: Porcelanato
     clase: Cerámica
     color: [215, 205, 190]
+  - nombre: Pino radiata
+    clase: Madera
+    color: [214, 180, 120]
+  - nombre: Entramado madera (núcleo)
+    clase: Madera
+    color: [236, 222, 196]
 
 # -----------------------------------------------------------------------------
 #  TIPOS DE MURO
@@ -68,6 +74,26 @@ tipos_muro:
       - {funcion: terminacion1, material: Yeso cartón 15 mm,          espesor: 0.015}
       - {funcion: estructura,   material: Montante acero galvanizado, espesor: 0.07}
       - {funcion: terminacion2, material: Yeso cartón 15 mm,          espesor: 0.015}
+
+  # Tabique de madera con ENTRAMADO: además del muro (capas), se generan las
+  # piezas de madera una a una en Revit (nivel de detalle 350, o ajuste
+  # "entramado: true" en nivel_detalle.yaml).
+  - nombre: TM-10 Tabique madera 2x3 + yeso cartón
+    estructural: false
+    capas:
+      - {funcion: terminacion1, material: Yeso cartón 15 mm,         espesor: 0.015}
+      - {funcion: estructura,   material: Entramado madera (núcleo), espesor: 0.065}
+      - {funcion: terminacion2, material: Yeso cartón 15 mm,         espesor: 0.015}
+    entramado:
+      material: Pino radiata
+      # Sección de los pies derechos y de todas las piezas (m).
+      #   b = cara vista en el plano del muro, h = profundidad (espesor del tabique)
+      #   2x3" cepillado = 41 x 65 mm;  2x3" en bruto ≈ 50 x 76 mm
+      pie_derecho: {b: 0.041, h: 0.065}
+      separacion_pies_derechos: 0.40     # entre ejes de pies derechos
+      separacion_horizontales: 0.40      # cadenetas, medidas desde el piso
+      soleras: true                      # solera inferior y superior
+      refuerzo_vanos: true               # jambas, dintel, alféizar y pies derechos cortos
 
 # -----------------------------------------------------------------------------
 #  TIPOS DE LOSA / PISO  (capas de arriba hacia abajo)
@@ -101,7 +127,9 @@ tipos_cubierta:
 #  Medir en planta suele incluir estucos; usa rangos con holgura.
 reglas_muro:
   - {capa_cad: "(?i)hormig|HA|MURO-HA", tipo: MH-20 Hormigón 20 + estuco}
-  - {capa_cad: "(?i)tabiq",             tipo: TB-10 Tabique metalcon 10}
+  # Tabiques del CAD -> tabique de madera con entramado. Para metalcon, cambia
+  # el tipo a "TB-10 Tabique metalcon 10".
+  - {capa_cad: "(?i)tabiq",             tipo: TM-10 Tabique madera 2x3 + yeso cartón}
   - {espesor_min: 0.19, espesor_max: 0.26, tipo: MH-20 Hormigón 20 + estuco}
   - {espesor_min: 0.13, espesor_max: 0.19, tipo: MA-14 Albañilería 14 + estuco}
   - {espesor_min: 0.05, espesor_max: 0.13, tipo: TB-10 Tabique metalcon 10}

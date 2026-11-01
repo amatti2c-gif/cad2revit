@@ -145,7 +145,7 @@ namespace Cad2Revit
         public SortedDictionary<string, List<string>> Familias { get; } = new();
         public List<string> Verificacion { get; } = new();
 
-        public void Contar(string que) => Creados[que] = Creados.TryGetValue(que, out var n) ? n + 1 : 1;
+        public void Contar(string que, int cuantos = 1) => Creados[que] = (Creados.TryGetValue(que, out var n) ? n : 0) + cuantos;
         public void Advertencia(string s) => Advertencias.Add(s);
         public void Error(string s) => Errores.Add(s);
 

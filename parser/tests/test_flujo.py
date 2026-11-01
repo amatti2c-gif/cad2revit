@@ -54,7 +54,7 @@ def test_lod300_completo(proyecto):
     assert {tuple(m["inicio"]) for m in exteriores} | {tuple(m["fin"]) for m in exteriores} == \
         {(0.1, 0.1), (9.9, 0.1), (0.1, 7.9), (9.9, 7.9)}
     tabique = next(m for m in n1 if m["espesor"] == 0.1)
-    assert tabique["tipo"].startswith("TB-10") and not tabique["estructural"]
+    assert tabique["tipo"].startswith("TM-10") and not tabique["estructural"]
     assert tabique["inicio"] == [6.0, 0.1] and tabique["fin"] == [6.0, 7.9]   # unido a pesar del vano
 
     ab = [a for a in modelo["aberturas"] if a["id"].startswith("N1")]
@@ -92,6 +92,71 @@ def test_puertas_en_tabique_con_familia_alternativa(proyecto):
     tabique = {m["id"] for m in modelo["muros"] if m["espesor"] == 0.1}
     en_tabique = [a for a in modelo["aberturas"] if a["muro"] in tabique]
     assert all(a["modo"] == "familia" and a["familia"] == "Puerta Tabique" for a in en_tabique)
+
+
+def _cajas_locales(e):
+    """Cada pieza como caja (t0,t1,z0,z1) en coordenadas del muro."""
+    import math
+    ux, uy = e["direccion"]
+    o = e["piezas"][0]["inicio"]
+    cajas = []
+    for p in e["piezas"]:
+        t = [(q[0] - o[0]) * ux + (q[1] - o[1]) * uy for q in (p["inicio"], p["fin"])]
+        z = [p["inicio"][2], p["fin"][2]]
+        if abs(t[1] - t[0]) > 1e-6:          # horizontal: ancho es vertical
+            cajas.append((min(t), max(t), z[0] - p["ancho"] / 2, z[0] + p["ancho"] / 2, p["rol"]))
+        else:                                 # vertical: ancho va a lo largo del muro
+            cajas.append((t[0] - p["ancho"] / 2, t[0] + p["ancho"] / 2, min(z), max(z), p["rol"]))
+    return cajas
+
+
+def test_entramado_madera(proyecto):
+    modelo = construir_modelo(cargar(proyecto.ruta))
+    assert validar(modelo) == []
+    assert len(modelo["entramados"]) == 2                       # un tabique por planta
+    e = next(x for x in modelo["entramados"] if x["muro"] == "N1-M003")
+    r = e["resumen"]
+    assert r["solera_superior"] == 1 and r["solera_inferior"] == 2     # la inferior se corta en la puerta
+    assert r["jamba"] == 2 and r["dintel"] == 1 and "alfeizar" not in r  # puerta: sin alféizar
+    assert r["pie_derecho"] >= 15 and r["cadeneta"] > 50
+    assert e["material"] == "Pino radiata"
+    assert any(m["nombre"] == "Pino radiata" for m in modelo["materiales"])
+    # separación de pies derechos regulares: 40 cm
+    ts = sorted(c[0] for c in _cajas_locales(e) if c[4] == "pie_derecho")
+    pasos = [round(b - a, 3) for a, b in zip(ts, ts[1:])]
+    assert pasos.count(0.4) >= 10
+    # ninguna pieza se superpone con otra (tolerancia 1 mm)
+    cajas = _cajas_locales(e)
+    for i, a in enumerate(cajas):
+        for b in cajas[i + 1:]:
+            sol_t = min(a[1], b[1]) - max(a[0], b[0])
+            sol_z = min(a[3], b[3]) - max(a[2], b[2])
+            assert not (sol_t > 0.001 and sol_z > 0.001), f"{a} se superpone con {b}"
+    # las piezas terminan bajo la losa superior (2.70 - 0.20)
+    assert max(max(p["inicio"][2], p["fin"][2]) for p in e["piezas"]) <= 2.5 + 1e-6
+
+
+def test_entramado_ventana_tiene_alfeizar(proyecto):
+    mat = yaml.safe_load((proyecto.ruta.parent / "materialidades.yaml").read_text(encoding="utf-8"))
+    # el muro de hormigón pasa a ser de madera con entramado: sus ventanas llevan alféizar
+    ent = next(t for t in mat["tipos_muro"] if t.get("entramado"))["entramado"]
+    mh = next(t for t in mat["tipos_muro"] if t["nombre"].startswith("MH-20"))
+    mh["entramado"] = ent
+    ruta = proyecto("materialidades.yaml", mat)
+    modelo = construir_modelo(cargar(ruta))
+    con_ventana = [e for e in modelo["entramados"] if "alfeizar" in e["resumen"]]
+    assert con_ventana
+    for e in con_ventana:
+        cajas = _cajas_locales(e)
+        for i, a in enumerate(cajas):
+            for b in cajas[i + 1:]:
+                assert not (min(a[1], b[1]) - max(a[0], b[0]) > 0.001 and
+                            min(a[3], b[3]) - max(a[2], b[2]) > 0.001), f"{e['muro']}: {a} / {b}"
+
+
+def test_sin_entramado_en_lod300_sin_ajuste(proyecto):
+    ruta = proyecto("nivel_detalle.yaml", {"preset": 300, "ajustes": {}})
+    assert construir_modelo(cargar(ruta))["entramados"] == []
 
 
 def test_lod100_simplifica(proyecto):

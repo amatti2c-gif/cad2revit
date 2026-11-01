@@ -301,6 +301,7 @@ def _conteos(m: dict) -> dict:
         "losas": len(m["losas"]), "cielos": len(m.get("cielos", [])), "columnas": len(m["columnas"]),
         "vigas": len(m["vigas"]), "fundaciones": len(f["corridas"]) + len(f["aisladas"]),
         "recintos": len(m["recintos"]), "advertencias": len(m["advertencias"]),
+        "piezas_entramado": sum(len(e["piezas"]) for e in m.get("entramados", [])),
     }
 
 
