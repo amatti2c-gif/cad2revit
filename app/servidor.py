@@ -223,6 +223,20 @@ def guardar_entrada(pid: str, archivo: str, datos: TextoEntrada):
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
+@app.post("/api/proyectos/{pid}/entradas/{archivo}/plantilla")
+def usar_plantilla(pid: str, archivo: str):
+    """Reemplaza un archivo de lineamientos por la plantilla vigente del repositorio
+    (la versión anterior queda guardada en las corridas del historial)."""
+    d = _proyecto(pid)
+    if archivo not in ARCHIVOS_ENTRADA:
+        raise HTTPException(404, f"Archivo de entrada desconocido: {archivo}")
+    if archivo == "proyecto.yaml":
+        raise HTTPException(400, "proyecto.yaml es propio de cada proyecto (niveles y planos); no se reemplaza")
+    texto = (RAIZ / "entradas" / archivo).read_text(encoding="utf-8")
+    (d / "entradas" / archivo).write_text(texto, encoding="utf-8")
+    return {"texto": texto, "errores": _validar_entradas(d)}
+
+
 # ---------------------------------------------------------------- planos
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):

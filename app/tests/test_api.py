@@ -73,6 +73,14 @@ def test_flujo_completo(cliente):
     assert [c["n"] for c in cliente.get(f"/api/proyectos/{pid}/corridas").json()] == [2, 1]
 
 
+def test_usar_plantilla(cliente):
+    pid = _crear(cliente)
+    cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "materiales: []\n"})
+    r = cliente.post(f"/api/proyectos/{pid}/entradas/materialidades.yaml/plantilla")
+    assert r.status_code == 200 and "entramado" in r.json()["texto"] and r.json()["errores"] == []
+    assert cliente.post(f"/api/proyectos/{pid}/entradas/proyecto.yaml/plantilla").status_code == 400
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

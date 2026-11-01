@@ -95,13 +95,15 @@ tipos_muro:
       soleras: true                      # solera inferior y superior
       refuerzo_vanos: true               # jambas, dintel, alféizar y pies derechos cortos
       # Cómo se construye en Revit:
-      #   familias -> cada pieza es un elemento de Revit (permite tablas de cantidades:
-      #               número de piezas y metros lineales). Más pesado.
-      #   solido   -> un solo elemento por muro con todas las piezas. Liviano.
+      #   piezas   -> (recomendado) cada pieza es un elemento propio creado por
+      #               cad2revit con la sección exacta de arriba. NO necesita familias
+      #               en la plantilla. Crea solo los parámetros "C2R Pieza",
+      #               "C2R Largo", "C2R Muro" y la tabla "cad2revit - Cubicación madera".
+      #   solido   -> un solo elemento por muro con todas las piezas (más liviano).
+      #   familias -> usa familias de la plantilla (ej. Timber-Column / Dimension Lumber);
+      #               requiere que estén cargadas. Agrega familia_vertical/familia_horizontal.
       revit:
-        modo: familias
-        familia_vertical:   {familia: "Timber-Column",    tipo: "2x3"}   # pies derechos, jambas
-        familia_horizontal: {familia: "Dimension Lumber", tipo: "2x3"}   # soleras, cadenetas, dinteles
+        modo: piezas
 
 # -----------------------------------------------------------------------------
 #  TIPOS DE LOSA / PISO  (capas de arriba hacia abajo)

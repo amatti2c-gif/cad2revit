@@ -250,6 +250,20 @@ async function guardarTodo() {
   for (const a of [...estado.sucio]) await guardarArchivo(a);
 }
 $("#btn-guardar").addEventListener("click", () => intentar(() => guardarArchivo()));
+$("#btn-plantilla").addEventListener("click", () => intentar(async () => {
+  const a = estado.archivo;
+  if (a === "proyecto.yaml") return toast("proyecto.yaml es propio de cada proyecto; no tiene plantilla", true);
+  if (!confirm(`¿Reemplazar ${a} por la versión más reciente de cad2revit?\n` +
+               "Tus cambios en este archivo se pierden (quedan guardados en las corridas del Historial).")) return;
+  const r = await api("POST", P(`/entradas/${a}/plantilla`));
+  estado.entradas[a] = r.texto;
+  estado.sucio.delete(a);
+  $("#ed-texto").value = r.texto;
+  $("#ed-estado").textContent = "actualizado ✓";
+  mostrarErroresEntradas(r.errores);
+  pintarListaArchivos();
+  toast(`${a} actualizado a la plantilla actual`);
+}));
 document.addEventListener("keydown", e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && $("#tab-lineamientos").classList.contains("activa")) {
     e.preventDefault();

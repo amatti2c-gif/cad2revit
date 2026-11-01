@@ -653,6 +653,7 @@
             "properties": {
               "modo": {
                 "enum": [
+                  "piezas",
                   "familias",
                   "solido"
                 ]
