@@ -8,11 +8,15 @@ un historial de corridas para iterar (notas, comparar, restaurar).
 
 Variables de entorno:
     CAD2REVIT_DATOS   carpeta donde se guardan proyectos (por defecto ./datos)
-    CAD2REVIT_CLAVE   si se define, la app pide esta contraseña (HTTP Basic)
+    APP_USERNAME / APP_PASSWORD
+                      usuario y clave de acceso (HTTP Basic). En Railway son
+                      obligatorias: si faltan, la app queda bloqueada (503) en
+                      vez de quedar abierta. En local, sin ellas, queda abierta.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import difflib
 import json
 import os
@@ -57,21 +61,37 @@ app = FastAPI(title="cad2revit", version=__version__)
 
 
 # ---------------------------------------------------------------- acceso
+def _credenciales() -> tuple[str, str]:
+    return os.environ.get("APP_USERNAME", ""), os.environ.get("APP_PASSWORD", "")
+
+
+def _en_servidor() -> bool:
+    """True cuando corre publicada (Railway define estas variables)."""
+    return any(os.environ.get(v) for v in ("RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME",
+                                           "RAILWAY_PROJECT_ID", "CAD2REVIT_EXIGIR_CLAVE"))
+
+
 @app.middleware("http")
-async def _clave(request: Request, call_next):
-    clave = os.environ.get("CAD2REVIT_CLAVE")
-    if clave and request.url.path != "/salud":
-        enc = request.headers.get("authorization", "")
-        ok = False
-        if enc.lower().startswith("basic "):
-            try:
-                _, _, pw = base64.b64decode(enc[6:]).decode("utf-8").partition(":")
-                ok = secrets.compare_digest(pw, clave)
-            except Exception:
-                ok = False
-        if not ok:
-            return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="cad2revit"'})
-    return await call_next(request)
+async def _autenticacion_basica(request: Request, call_next):
+    if request.url.path == "/salud":           # chequeo de salud de Railway
+        return await call_next(request)
+    usuario_ok, clave_ok = _credenciales()
+    if not usuario_ok or not clave_ok:
+        if _en_servidor():
+            return Response(status_code=503,
+                            content="Acceso bloqueado: faltan configurar APP_USERNAME y APP_PASSWORD.")
+        return await call_next(request)         # uso local sin clave
+    enc = request.headers.get("authorization", "")
+    if enc.lower().startswith("basic "):
+        try:
+            usuario, _, clave = base64.b64decode(enc[6:]).decode("utf-8").partition(":")
+            # se comparan bytes UTF-8: compare_digest no acepta str con tildes o ñ
+            if (secrets.compare_digest(usuario.encode("utf-8"), usuario_ok.encode("utf-8"))
+                    and secrets.compare_digest(clave.encode("utf-8"), clave_ok.encode("utf-8"))):
+                return await call_next(request)
+        except (binascii.Error, UnicodeDecodeError, ValueError):
+            pass
+    return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="cad2revit"'})
 
 
 @app.get("/salud")

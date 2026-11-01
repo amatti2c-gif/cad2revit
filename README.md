@@ -141,14 +141,23 @@ uvicorn app.servidor:app --reload
 Luego abre http://localhost:8000. Los proyectos se guardan en `./datos/` (configurable con
 `CAD2REVIT_DATOS`).
 
-### Publicarla en internet
+### Publicarla en internet (Railway)
 
-- **Docker:** `docker build -t cad2revit .` y luego
-  `docker run -p 8000:8000 -v cad2revit-datos:/datos -e CAD2REVIT_CLAVE=tu-clave cad2revit`.
-- **Render:** New → Blueprint → este repositorio (usa `render.yaml`, con un disco persistente
-  para los proyectos).
-- Define siempre `CAD2REVIT_CLAVE` al publicarla: la app pedirá esa contraseña. Cualquier
-  nombre de usuario sirve.
+Usa el mismo esquema que `monitoreo-financiero`: un Dockerfile, un `railway.toml` y un volumen
+persistente.
+
+1. En Railway: **New Project → Deploy from GitHub repo → `amatti2c-gif/cad2revit`**.
+2. En **Variables**, define `APP_USERNAME` y `APP_PASSWORD`. Son obligatorias: si faltan, la app
+   responde "Acceso bloqueado" en vez de quedar abierta.
+3. Revisa que exista el **volumen** montado en `/datos`. Lo crea `railway.toml`; si no aparece,
+   agrégalo con clic derecho en el servicio → *Attach volume* → `/datos`. Ahí se guardan
+   proyectos, planos e historial.
+4. En **Settings → Networking**, usa **Generate Domain** para obtener un link
+   `*.up.railway.app`, o **Custom Domain** para usar un subdominio propio
+   (por ejemplo `cad2revit.tudominio.cl`) agregando el registro CNAME que indica Railway.
+
+Cada push a `main` se publica automáticamente. Para usarla en local no hacen falta las
+variables: sin ellas, la app queda abierta.
 
 > El paso final a Revit sigue siendo local, porque Revit solo corre en Windows: descargas
 > `modelo.json` y usas el add-in. Para generar el `.rvt` en la nube habría que integrar

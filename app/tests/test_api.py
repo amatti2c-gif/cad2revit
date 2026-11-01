@@ -15,7 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 @pytest.fixture()
 def cliente(tmp_path, monkeypatch):
     monkeypatch.setenv("CAD2REVIT_DATOS", str(tmp_path))
-    monkeypatch.delenv("CAD2REVIT_CLAVE", raising=False)
+    for v in ("APP_USERNAME", "APP_PASSWORD", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME",
+              "RAILWAY_PROJECT_ID", "CAD2REVIT_EXIGIR_CLAVE"):
+        monkeypatch.delenv(v, raising=False)
     import app.servidor as srv
     importlib.reload(srv)
     return TestClient(srv.app)
@@ -98,13 +100,36 @@ def test_planos_y_seguridad(cliente):
     assert cliente.get("/api/proyectos/..%2F..%2Fetc/planos").status_code in (400, 404)
 
 
-def test_clave(tmp_path, monkeypatch):
+def _cliente_con(tmp_path, monkeypatch, **env):
     monkeypatch.setenv("CAD2REVIT_DATOS", str(tmp_path))
-    monkeypatch.setenv("CAD2REVIT_CLAVE", "secreta")
+    for v in ("APP_USERNAME", "APP_PASSWORD", "RAILWAY_ENVIRONMENT", "RAILWAY_ENVIRONMENT_NAME",
+              "RAILWAY_PROJECT_ID", "CAD2REVIT_EXIGIR_CLAVE"):
+        monkeypatch.delenv(v, raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
     import app.servidor as srv
     importlib.reload(srv)
-    c = TestClient(srv.app)
+    return TestClient(srv.app)
+
+
+def _basic(usuario, clave):
+    return {"Authorization": "Basic " + base64.b64encode(f"{usuario}:{clave}".encode()).decode()}
+
+
+def test_clave(tmp_path, monkeypatch):
+    c = _cliente_con(tmp_path, monkeypatch, APP_USERNAME="arquitecto", APP_PASSWORD="Ñandú-2026")
     assert c.get("/api/proyectos").status_code == 401
     assert c.get("/salud").status_code == 200
-    tok = base64.b64encode(b"yo:secreta").decode()
-    assert c.get("/api/proyectos", headers={"Authorization": f"Basic {tok}"}).status_code == 200
+    assert c.get("/api/proyectos", headers=_basic("arquitecto", "Ñandú-2026")).status_code == 200
+    assert c.get("/api/proyectos", headers=_basic("otro", "Ñandú-2026")).status_code == 401
+    assert c.get("/api/proyectos", headers=_basic("arquitecto", "x")).status_code == 401
+
+
+def test_railway_sin_credenciales_bloquea(tmp_path, monkeypatch):
+    c = _cliente_con(tmp_path, monkeypatch, RAILWAY_ENVIRONMENT="production")
+    assert c.get("/").status_code == 503
+    assert c.get("/salud").status_code == 200
+
+
+def test_local_sin_credenciales_abierto(tmp_path, monkeypatch):
+    assert _cliente_con(tmp_path, monkeypatch).get("/api/proyectos").status_code == 200

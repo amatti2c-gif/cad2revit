@@ -1,0 +1,15 @@
+# Despliegue en Railway (mismo esquema que monitoreo-financiero).
+# Variables a definir en Railway → servicio → Variables:
+#   APP_USERNAME, APP_PASSWORD   (obligatorias: sin ellas la app queda bloqueada)
+[build]
+builder = "dockerfile"
+
+[deploy]
+healthcheckPath = "/salud"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Proyectos, planos e historial de corridas
+[volumes]
+mountPath = "/datos"
