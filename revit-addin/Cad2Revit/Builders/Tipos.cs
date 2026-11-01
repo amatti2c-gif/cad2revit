@@ -219,51 +219,120 @@ namespace Cad2Revit
             return Activar(s);
         }
 
+        // ---------------------------------------------------------------- por material y forma
+        // Palabras con que se reconoce el material y la forma de una familia estándar de Revit
+        private static readonly Dictionary<string, string[]> ClaveMaterial = new()
+        {
+            ["madera"] = new[] { "timber", "wood", "lumber", "madera", "glulam", "lvl", "psl" },
+            ["acero"] = new[] { "steel", "acero", "shapes", "hss", "pipe", "tube", "channel", "angle", "uc-", "ub-",
+                                "universal", "ipe", "hea", "heb", "rhs", "shs", "chs", "upn" },
+            ["hormigon"] = new[] { "concrete", "hormig", "precast", "prefabric" },
+        };
+
+        private static readonly Dictionary<string, string[]> ClaveForma = new()
+        {
+            ["rectangular"] = new[] { "rectangular", "rect", "square", "rhs", "shs", "lumber", "timber" },
+            ["circular"] = new[] { "round", "circular", "cylind", "redond" },
+            ["C"] = new[] { "c shapes", "channel", "upn", "c-", "mc shapes" },
+            ["W"] = new[] { "w shapes", "wide flange", "uc-", "ub-", "ipe", "hea", "heb", "i-beam", "universal" },
+            ["L"] = new[] { "angle", "l shapes", "l-" },
+            ["tubo"] = new[] { "pipe", "chs", "round tube", "hss round", "tubo" },
+        };
+
+        /// <summary>Clase de un material de los lineamientos: madera, acero u hormigon.</summary>
+        private string ClaseMaterial(string material)
+        {
+            var c = (_m.Materiales.FirstOrDefault(x => x.Nombre == material)?.Clase ?? material ?? "").ToLowerInvariant();
+            if (c.Contains("mader") || c.Contains("wood")) return "madera";
+            if (c.Contains("metal") || c.Contains("acero") || c.Contains("steel")) return "acero";
+            if (c.Contains("hormig") || c.Contains("concret")) return "hormigon";
+            return null;
+        }
+
+        private static bool Contiene(FamilySymbol x, IEnumerable<string> claves)
+        {
+            var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
+            return claves.Any(k => n.Contains(k));
+        }
+
         /// <summary>
-        /// Para piezas de sección rectangular (pilares, vigas, entramado): si la familia indicada no
-        /// existe, se usa cualquier familia estándar de la categoría cuya sección sea editable
-        /// (prefiriendo las que calzan con el material) y luego se ajustan sus dimensiones.
+        /// Familia para un elemento de sección definida por la app (pilar, viga, pieza de entramado):
+        ///  1) la familia indicada (cargándola de la biblioteca si falta);
+        ///  2) si no, cualquier familia estándar del MISMO material y la MISMA forma, con sección
+        ///     editable; sus dimensiones se ajustan después;
+        ///  3) si no hay, el elemento queda en "faltantes" del informe. Nunca se cambia de material.
         /// </summary>
-        private FamilySymbol SimboloRectangular(BuiltInCategory cat, string familia, string tipo, string id,
-                                                string[] nombresB, string[] nombresH, params string[] preferidas)
+        private FamilySymbol SimboloPorMaterial(BuiltInCategory cat, string familia, string tipo, string id,
+                                                string material, string forma, string[] nombresB, string[] nombresH)
         {
             var s = string.IsNullOrEmpty(familia) ? null : BuscarSimbolo(cat, familia, tipo);
             if (s == null && !string.IsNullOrEmpty(familia) && CargarDesdeBiblioteca(familia)) s = BuscarSimbolo(cat, familia, tipo);
             if (s != null) return Activar(s);
 
+            var clase = ClaseMaterial(material);
+            forma ??= "rectangular";
+            if (clase == null)
+            {
+                _inf.Faltante(familia, tipo, cat.ToString(), id,
+                              $"no está disponible y el material '{material}' no tiene clase Madera, Metal u Hormigón en los lineamientos");
+                return null;
+            }
             bool Editable(FamilySymbol x, string[] nombres) => nombres.Any(n =>
             {
                 var p = x.LookupParameter(n);
                 return p != null && !p.IsReadOnly && p.StorageType == StorageType.Double;
             });
-            var candidatos = new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
-                .Cast<FamilySymbol>()
-                .Where(x => !NoRectangulares.Any(k => (x.FamilyName + " " + x.Name).ToLowerInvariant().Contains(k)))
-                .Where(x => Editable(x, nombresB) && Editable(x, nombresH)).ToList();
-            int Preferencia(FamilySymbol x)
-            {
-                var n = (x.FamilyName + " " + x.Name).ToLowerInvariant();
-                return preferidas.Any(k => n.Contains(k)) ? 0 : n.Contains("rectangular") ? 1 : 2;
-            }
-            var elegido = candidatos.OrderBy(Preferencia).ThenBy(x => x.FamilyName).FirstOrDefault();
+            bool Apta(FamilySymbol x) =>
+                Contiene(x, ClaveMaterial[clase])
+                && !ClaveMaterial.Where(kv => kv.Key != clase).Any(kv => Contiene(x, kv.Value) && !Contiene(x, ClaveMaterial[clase]))
+                && (forma == "rectangular" ? !Contiene(x, ClaveForma["circular"]) && !Contiene(x, ClaveForma["C"])
+                                              && !Contiene(x, ClaveForma["W"]) && !Contiene(x, ClaveForma["L"])
+                                           : Contiene(x, ClaveForma.TryGetValue(forma, out var kf) ? kf : new[] { forma.ToLowerInvariant() }))
+                && Editable(x, nombresB) && (nombresH == null || Editable(x, nombresH));
+            List<FamilySymbol> Candidatos() => new FilteredElementCollector(_doc).OfClass(typeof(FamilySymbol)).OfCategory(cat)
+                .Cast<FamilySymbol>().Where(Apta).OrderBy(x => x.FamilyName).ToList();
+
+            var elegido = Candidatos().FirstOrDefault();
+            if (elegido == null && CargarPorMaterial(cat, clase, forma)) elegido = Candidatos().FirstOrDefault();
             if (elegido == null)
             {
                 _inf.Faltante(familia, tipo, cat.ToString(), id,
-                              "no está disponible y no hay ninguna familia de esa categoría con sección editable");
+                              $"no está disponible y no hay ninguna familia estándar de {clase} con forma {forma} " +
+                              "en el proyecto ni en la biblioteca de Revit");
                 return null;
             }
-            var clave = $"{cat}|{familia}";
-            if (_avisosRectangular.Add(clave))
-                _inf.Advertencia($"'{familia}' no está disponible; se usa '{elegido.FamilyName}' con sus dimensiones " +
-                                 $"ajustadas (primer caso: {id}).");
+            if (_avisosRectangular.Add($"{cat}|{familia}|{clase}|{forma}"))
+                _inf.Advertencia($"'{familia}' no está disponible; se usa '{elegido.FamilyName}' ({clase}, {forma}) " +
+                                 $"con sus dimensiones ajustadas (primer caso: {id}).");
             return Activar(elegido);
         }
 
         private readonly HashSet<string> _avisosRectangular = new();
 
-        // Perfiles cuya forma no es un rectángulo macizo: nunca se usan como sustituto
-        private static readonly string[] NoRectangulares =
-            { "shapes", "hss", "pipe", "steel", "acero", "uc-", "ub-", "universal", "reference", "referencia", "channel", "angle", "joist", "truss", "pile" };
+        /// <summary>Busca en la biblioteca de Revit una familia de la categoría, material y forma pedidos.</summary>
+        private bool CargarPorMaterial(BuiltInCategory cat, string clase, string forma)
+        {
+            var carpetaCat = cat == BuiltInCategory.OST_StructuralColumns ? "column" : "framing";
+            foreach (var raiz in CarpetasFamilias())
+            {
+                IEnumerable<string> archivos;
+                try { archivos = System.IO.Directory.EnumerateFiles(raiz, "*.rfa", System.IO.SearchOption.AllDirectories).ToList(); }
+                catch { continue; }
+                foreach (var a in archivos)
+                {
+                    var n = a.ToLowerInvariant();
+                    if (!n.Contains(carpetaCat) || !ClaveMaterial[clase].Any(n.Contains)) continue;
+                    if (forma != "rectangular" && !(ClaveForma.TryGetValue(forma, out var kf) ? kf : new[] { forma }).Any(n.Contains)) continue;
+                    if (forma == "rectangular" && ClaveForma["circular"].Any(n.Contains)) continue;
+                    if (_doc.LoadFamily(a, out _))
+                    {
+                        _inf.Advertencia($"Familia de {clase} ({forma}) cargada automáticamente desde {a}");
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
 
         private readonly Dictionary<string, bool> _intentosCarga = new();
 

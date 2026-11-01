@@ -290,6 +290,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     if cfg.estructuracion.get("material_estructural"):
         usados_mat.add(cfg.estructuracion["material_estructural"])
     usados_mat |= {e["material"] for e in modelo["entramados"] if e.get("material")}
+    usados_mat |= {x["material"] for x in modelo["columnas"] + modelo["vigas"] if x.get("material")}
     modelo["materiales"] = [m for m in modelo["materiales"] if m["nombre"] in usados_mat]
     modelo["material_estructural"] = cfg.estructuracion.get("material_estructural")
     return json.loads(json.dumps(modelo))   # tuplas -> listas: el modelo es JSON puro

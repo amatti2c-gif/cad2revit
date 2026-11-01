@@ -109,6 +109,8 @@ def detectar_columnas(inserciones: list[Insercion], polilineas: list[list[Punto]
     for k, col in enumerate(out, 1):
         col["id"] = f"{prefijo}-C{k:03d}"
         col["familia"] = c.get("familia_revit")
+        col["material"] = c.get("material") or cfg.estructuracion.get("material_estructural")
+        col["forma"] = c.get("forma", "rectangular")
         col["parametro_b"] = c.get("parametro_b", "b")
         col["parametro_h"] = c.get("parametro_h", "h")
     return out
@@ -145,6 +147,8 @@ def generar_vigas(columnas: list[dict], muros: list[Muro], cfg, prefijo: str) ->
     for k, viga in enumerate(out, 1):
         viga["id"] = f"{prefijo}-B{k:03d}"
         viga["familia"] = v.get("familia_revit")
+        viga["material"] = v.get("material") or cfg.estructuracion.get("material_estructural")
+        viga["forma"] = v.get("forma", "rectangular")
         viga["parametro_b"] = v.get("parametro_b", "b")
         viga["parametro_h"] = v.get("parametro_h", "h")
     return out

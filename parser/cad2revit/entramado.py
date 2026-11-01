@@ -150,7 +150,7 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
         resumen[p["rol"]] = resumen.get(p["rol"], 0) + 1
     largo_total = sum(math.dist(p["inicio"], p["fin"]) for p in piezas)
     return {
-        "muro": muro.id, "material": conf.get("material"), "direccion": [round(u[0], 6), round(u[1], 6)],
+        "muro": muro.id, "material": conf.get("material"), "forma": "rectangular", "direccion": [round(u[0], 6), round(u[1], 6)],
         "seccion": {"b": b, "h": h}, "piezas": piezas, "resumen": resumen,
         "revit": conf.get("revit") or {},
         "metros_lineales": round(largo_total, 2),

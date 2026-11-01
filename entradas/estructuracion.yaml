@@ -26,7 +26,14 @@ muros_estructurales:
 # -----------------------------------------------------------------------------
 #  COLUMNAS / PILARES
 # -----------------------------------------------------------------------------
+#  Familias de Revit: el complemento usa la familia indicada; si no está, busca
+#  otra familia ESTÁNDAR del mismo material (clase del material en
+#  materialidades.yaml: Madera / Metal / Hormigón) y de la misma forma, y le
+#  ajusta las dimensiones. Nunca cambia de material.
+#  forma: rectangular | circular | C | W (doble T) | L | tubo
 columnas:
+  # material: Hormigón armado H30   # opcional; por defecto material_estructural
+  forma: rectangular
   # Sección por defecto si el CAD solo trae un símbolo (bloque) sin medidas.
   seccion_defecto: {b: 0.30, h: 0.30}
   # Familia y tipo de Revit (debe estar cargada en la plantilla del proyecto).
@@ -41,6 +48,8 @@ columnas:
 #  VIGAS / CADENAS
 # -----------------------------------------------------------------------------
 vigas:
+  # material: Hormigón armado H30   # opcional; por defecto material_estructural
+  forma: rectangular
   seccion_defecto: {b: 0.20, h: 0.50}
   # No viene en la plantilla de Revit 2027: el complemento la busca en la biblioteca
   # local de Revit y la carga sola; si no la encuentra, cárgala con Insertar → Cargar familia.

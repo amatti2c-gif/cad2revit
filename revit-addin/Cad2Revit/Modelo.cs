@@ -105,6 +105,8 @@ namespace Cad2Revit
 
     public class ColumnaDef
     {
+        public string Material { get; set; }
+        public string Forma { get; set; } = "rectangular";
         public string Id { get; set; }
         public string Nivel { get; set; }
         public string NivelSuperior { get; set; }
@@ -120,6 +122,8 @@ namespace Cad2Revit
 
     public class VigaDef
     {
+        public string Material { get; set; }
+        public string Forma { get; set; } = "rectangular";
         public string Id { get; set; }
         public string Nivel { get; set; }
         public double[] Inicio { get; set; }
@@ -152,6 +156,7 @@ namespace Cad2Revit
 
     public class EntramadoDef
     {
+        public string Forma { get; set; } = "rectangular";
         public string Muro { get; set; }
         public string Nivel { get; set; }
         public string Material { get; set; }

@@ -21,9 +21,9 @@ namespace Cad2Revit
                 {
                     var nivel = Nivel(c.Nivel) ?? throw new Exception($"nivel '{c.Nivel}' inexistente");
                     var sup = Nivel(c.NivelSuperior);
-                    var s = SimboloRectangular(BuiltInCategory.OST_StructuralColumns, c.Familia, null, c.Id,
-                        new[] { c.ParametroB }.Concat(NombresB).ToArray(), new[] { c.ParametroH }.Concat(NombresH).ToArray(),
-                        "concrete", "hormig");
+                    var s = SimboloPorMaterial(BuiltInCategory.OST_StructuralColumns, c.Familia, null, c.Id,
+                        c.Material ?? _m.MaterialEstructural, c.Forma,
+                        new[] { c.ParametroB }.Concat(NombresB).ToArray(), new[] { c.ParametroH }.Concat(NombresH).ToArray());
                     if (s == null) return;   // informado en "faltantes"
                     s = ConMedidas(s, $"{c.B * 100:0}x{c.H * 100:0}",
                         (null, new[] { c.ParametroB }.Concat(NombresB).ToArray(), c.B),
@@ -44,8 +44,9 @@ namespace Cad2Revit
                     if (Math.Abs(c.Rotacion) > 1e-6)
                         ElementTransformUtils.RotateElement(_doc, fi.Id, Line.CreateBound(p, p + XYZ.BasisZ),
                             c.Rotacion * Math.PI / 180.0);
-                    if (MaterialEstructural != ElementId.InvalidElementId)
-                        U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, MaterialEstructural);
+                    var matCol = IdMaterial(c.Material ?? _m.MaterialEstructural);
+                    if (matCol != ElementId.InvalidElementId)
+                        U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, matCol);
                     Marcar(fi, c.Id);
                     _columnas[c.Id] = fi;
                     _inf.Contar("Columnas");
@@ -61,9 +62,9 @@ namespace Cad2Revit
                 Intentar(v.Id, () =>
                 {
                     var nivel = Nivel(v.Nivel) ?? throw new Exception($"nivel '{v.Nivel}' inexistente");
-                    var s = SimboloRectangular(BuiltInCategory.OST_StructuralFraming, v.Familia, null, v.Id,
-                        new[] { v.ParametroB }.Concat(NombresB).ToArray(), new[] { v.ParametroH }.Concat(NombresH).ToArray(),
-                        "concrete", "hormig");
+                    var s = SimboloPorMaterial(BuiltInCategory.OST_StructuralFraming, v.Familia, null, v.Id,
+                        v.Material ?? _m.MaterialEstructural, v.Forma,
+                        new[] { v.ParametroB }.Concat(NombresB).ToArray(), new[] { v.ParametroH }.Concat(NombresH).ToArray());
                     if (s == null) return;   // informado en "faltantes"
                     s = ConMedidas(s, $"{v.B * 100:0}x{v.H * 100:0}",
                         (null, new[] { v.ParametroB }.Concat(NombresB).ToArray(), v.B),
@@ -71,8 +72,9 @@ namespace Cad2Revit
                     var z = nivel.Elevation;
                     var linea = Line.CreateBound(U.P(v.Inicio, z), U.P(v.Fin, z));
                     var fi = _doc.Create.NewFamilyInstance(linea, s, nivel, StructuralType.Beam);
-                    if (MaterialEstructural != ElementId.InvalidElementId)
-                        U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, MaterialEstructural);
+                    var matViga = IdMaterial(v.Material ?? _m.MaterialEstructural);
+                    if (matViga != ElementId.InvalidElementId)
+                        U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, matViga);
                     Marcar(fi, v.Id);
                     _inf.Contar("Vigas");
                 });

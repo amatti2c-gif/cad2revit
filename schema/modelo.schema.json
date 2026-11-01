@@ -447,6 +447,22 @@
           },
           "parametro_h": {
             "type": "string"
+          },
+          "material": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forma": {
+            "enum": [
+              "rectangular",
+              "circular",
+              "C",
+              "W",
+              "L",
+              "tubo"
+            ]
           }
         }
       }
@@ -496,6 +512,22 @@
           },
           "origen": {
             "type": "string"
+          },
+          "material": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "forma": {
+            "enum": [
+              "rectangular",
+              "circular",
+              "C",
+              "W",
+              "L",
+              "tubo"
+            ]
           }
         }
       }
@@ -664,6 +696,11 @@
                 ]
               }
             }
+          },
+          "forma": {
+            "enum": [
+              "rectangular"
+            ]
           }
         }
       }

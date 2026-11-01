@@ -35,11 +35,10 @@ namespace Cad2Revit
                 Intentar($"Familias del entramado {e.Muro}", () =>
                 {
                     var fv = e.Revit?.FamiliaVertical; var fh = e.Revit?.FamiliaHorizontal;
-                    var madera = new[] { "timber", "wood", "lumber", "madera", "glulam" };
-                    sv = SimboloRectangular(BuiltInCategory.OST_StructuralColumns, fv?.Familia, fv?.Tipo,
-                        $"{e.Muro} ({verticales.Count} piezas verticales)", NombresAnchoMadera, NombresAltoMadera, madera);
-                    sh = SimboloRectangular(BuiltInCategory.OST_StructuralFraming, fh?.Familia, fh?.Tipo,
-                        $"{e.Muro} ({horizontales.Count} piezas horizontales)", NombresAnchoMadera, NombresAltoMadera, madera);
+                    sv = SimboloPorMaterial(BuiltInCategory.OST_StructuralColumns, fv?.Familia, fv?.Tipo,
+                        $"{e.Muro} ({verticales.Count} piezas verticales)", e.Material, e.Forma, NombresAnchoMadera, NombresAltoMadera);
+                    sh = SimboloPorMaterial(BuiltInCategory.OST_StructuralFraming, fh?.Familia, fh?.Tipo,
+                        $"{e.Muro} ({horizontales.Count} piezas horizontales)", e.Material, e.Forma, NombresAnchoMadera, NombresAltoMadera);
                     // Columna: b a lo largo del muro, d en el espesor. Viga plana: b en el espesor, d vertical.
                     if (sv != null) sv = ConMedidas(sv, sufijo, (null, NombresAnchoMadera, b), (null, NombresAltoMadera, h));
                     if (sh != null) sh = ConMedidas(sh, sufijo + " plana", (null, NombresAnchoMadera, h), (null, NombresAltoMadera, b));
