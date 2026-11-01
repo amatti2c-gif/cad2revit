@@ -1,0 +1,115 @@
+# =============================================================================
+#  MATERIALIDADES  —  input del proyectista
+# =============================================================================
+#  Aquí defines:
+#    1. El catálogo de materiales que se crearán en Revit.
+#    2. Los tipos de muro, losa y cubierta (sus capas, de exterior a interior
+#       o de arriba hacia abajo).
+#    3. Las reglas para asignar un tipo a cada muro detectado en el CAD.
+#
+#  Unidades: metros. Colores: RGB 0-255.
+#  Funciones de capa válidas (equivalen a las de Revit):
+#    estructura | sustrato | aislacion | terminacion1 | terminacion2 | membrana
+#  Debe existir al menos una capa "estructura" (núcleo) por tipo.
+# =============================================================================
+
+materiales:
+  - nombre: Hormigón armado H30
+    clase: Hormigón              # clase de material en Revit
+    color: [190, 190, 190]
+  - nombre: Albañilería ladrillo cerámico
+    clase: Mampostería
+    color: [178, 90, 60]
+  - nombre: Estuco cemento
+    clase: Yeso
+    color: [230, 225, 215]
+  - nombre: Yeso cartón 15 mm
+    clase: Yeso
+    color: [245, 245, 245]
+  - nombre: Montante acero galvanizado
+    clase: Metal
+    color: [160, 165, 170]
+  - nombre: Lana mineral
+    clase: Aislamiento
+    color: [235, 210, 120]
+  - nombre: Poliestireno expandido
+    clase: Aislamiento
+    color: [250, 250, 250]
+  - nombre: Sobrelosa / mortero
+    clase: Hormigón
+    color: [200, 200, 195]
+  - nombre: Porcelanato
+    clase: Cerámica
+    color: [215, 205, 190]
+
+# -----------------------------------------------------------------------------
+#  TIPOS DE MURO
+# -----------------------------------------------------------------------------
+#  espesor_total se calcula sumando capas; el parser lo usa para reconocerlos.
+#  estructural: true -> el muro se marcará como estructural en Revit.
+tipos_muro:
+  - nombre: MH-20 Hormigón 20 + estuco
+    estructural: true
+    capas:
+      - {funcion: terminacion1, material: Estuco cemento,          espesor: 0.015}
+      - {funcion: estructura,   material: Hormigón armado H30,     espesor: 0.20}
+      - {funcion: terminacion2, material: Estuco cemento,          espesor: 0.015}
+
+  - nombre: MA-14 Albañilería 14 + estuco
+    estructural: true
+    capas:
+      - {funcion: terminacion1, material: Estuco cemento,               espesor: 0.015}
+      - {funcion: estructura,   material: Albañilería ladrillo cerámico, espesor: 0.14}
+      - {funcion: terminacion2, material: Estuco cemento,               espesor: 0.015}
+
+  - nombre: TB-10 Tabique metalcon 10
+    estructural: false
+    capas:
+      - {funcion: terminacion1, material: Yeso cartón 15 mm,          espesor: 0.015}
+      - {funcion: estructura,   material: Montante acero galvanizado, espesor: 0.07}
+      - {funcion: terminacion2, material: Yeso cartón 15 mm,          espesor: 0.015}
+
+# -----------------------------------------------------------------------------
+#  TIPOS DE LOSA / PISO  (capas de arriba hacia abajo)
+# -----------------------------------------------------------------------------
+tipos_losa:
+  - nombre: L-15 Losa HA 15 + porcelanato
+    estructural: true
+    capas:
+      - {funcion: terminacion1, material: Porcelanato,         espesor: 0.01}
+      - {funcion: sustrato,     material: Sobrelosa / mortero, espesor: 0.04}
+      - {funcion: estructura,   material: Hormigón armado H30, espesor: 0.15}
+
+  - nombre: L-15 Losa HA 15 (sin terminación)
+    estructural: true
+    capas:
+      - {funcion: estructura, material: Hormigón armado H30, espesor: 0.15}
+
+tipos_cubierta:
+  - nombre: C-15 Losa cubierta + aislación
+    capas:
+      - {funcion: aislacion,  material: Poliestireno expandido, espesor: 0.08}
+      - {funcion: estructura, material: Hormigón armado H30,    espesor: 0.15}
+
+# -----------------------------------------------------------------------------
+#  REGLAS DE ASIGNACIÓN DE MUROS
+# -----------------------------------------------------------------------------
+#  Se evalúan en orden; gana la PRIMERA regla que calce.
+#  Criterios disponibles (todos opcionales, se combinan con Y):
+#    capa_cad:       expresión regular sobre el nombre de la capa del CAD
+#    espesor_min / espesor_max: rango del espesor medido en planta (m)
+#  Medir en planta suele incluir estucos; usa rangos con holgura.
+reglas_muro:
+  - {capa_cad: "(?i)hormig|HA|MURO-HA", tipo: MH-20 Hormigón 20 + estuco}
+  - {capa_cad: "(?i)tabiq",             tipo: TB-10 Tabique metalcon 10}
+  - {espesor_min: 0.19, espesor_max: 0.26, tipo: MH-20 Hormigón 20 + estuco}
+  - {espesor_min: 0.13, espesor_max: 0.19, tipo: MA-14 Albañilería 14 + estuco}
+  - {espesor_min: 0.05, espesor_max: 0.13, tipo: TB-10 Tabique metalcon 10}
+
+# Tipo a usar si ninguna regla calza (si se omite, se crea un tipo genérico
+# con el espesor medido y se emite una advertencia).
+tipo_muro_por_defecto: MA-14 Albañilería 14 + estuco
+
+# Losa por defecto para entrepisos y cubierta
+tipo_losa_por_defecto: L-15 Losa HA 15 + porcelanato
+tipo_cubierta_por_defecto: C-15 Losa cubierta + aislación

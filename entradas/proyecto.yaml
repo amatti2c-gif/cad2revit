@@ -1,0 +1,29 @@
+# =============================================================================
+#  PROYECTO  —  qué archivos leer y cómo se relacionan
+# =============================================================================
+nombre: Proyecto ejemplo
+
+# Niveles. Si hay elevaciones, las cotas se leen de ahí y se usan los
+# nombres de abajo solo como respaldo. Cotas en metros.
+niveles:
+  - {nombre: N1, cota: 0.00}
+  - {nombre: N2, cota: 2.70}
+  - {nombre: Cubierta, cota: 5.40}
+
+# Una planta por nivel. Rutas relativas a este archivo.
+plantas:
+  - {nivel: N1, archivo: ../ejemplos/planta_n1.dxf}
+  - {nivel: N2, archivo: ../ejemplos/planta_n2.dxf}
+
+# Elevaciones/cortes (opcional): de aquí se leen las cotas de nivel.
+elevaciones:
+  - ../ejemplos/elevacion_norte.dxf
+
+# Detalles (opcional): no se modelan. Úsalos para completar materialidades.yaml.
+detalles: []
+
+# Archivos de lineamientos (normalmente no hace falta tocar esto)
+materialidades: materialidades.yaml
+estructuracion: estructuracion.yaml
+nivel_detalle: nivel_detalle.yaml
+capas_cad: capas_cad.yaml

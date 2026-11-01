@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>cad2revit</Name>
+    <Assembly>Cad2Revit\Cad2Revit.dll</Assembly>
+    <FullClassName>Cad2Revit.App</FullClassName>
+    <ClientId>6f1d2c3a-8b4e-4a7f-9c21-5e0d3b7a9f10</ClientId>
+    <VendorId>CAD2</VendorId>
+    <VendorDescription>cad2revit - planos 2D a modelo BIM</VendorDescription>
+  </AddIn>
+</RevitAddIns>

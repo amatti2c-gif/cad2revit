@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/amatti2c-gif/cad2revit/schema/modelo.schema.json",
+  "title": "Modelo intermedio cad2revit",
+  "description": "Contrato entre el parser (Python) y el add-in de Revit (C#). Unidades: metros; ángulos en grados.",
+  "type": "object",
+  "required": ["version", "unidades", "lod", "materiales", "niveles", "tipos_muro", "tipos_losa",
+               "muros", "aberturas", "losas", "columnas", "vigas", "fundaciones", "recintos", "advertencias"],
+  "$defs": {
+    "punto": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "capa": {
+      "type": "object",
+      "required": ["funcion", "espesor"],
+      "properties": {
+        "funcion": {"enum": ["estructura", "sustrato", "aislacion", "terminacion1", "terminacion2", "membrana"]},
+        "material": {"type": ["string", "null"]},
+        "espesor": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "tipo": {
+      "type": "object",
+      "required": ["nombre", "capas"],
+      "properties": {
+        "nombre": {"type": "string"},
+        "estructural": {"type": "boolean"},
+        "capas": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/capa"}}
+      }
+    }
+  },
+  "properties": {
+    "version": {"type": "string"},
+    "unidades": {"const": "m"},
+    "proyecto": {"type": "string"},
+    "sistema_estructural": {"type": ["string", "null"]},
+    "material_estructural": {"type": ["string", "null"]},
+    "lod": {
+      "type": "object",
+      "required": ["preset", "muros", "aberturas"],
+      "properties": {
+        "preset": {"enum": [100, 200, 300, 350]},
+        "muros": {"enum": ["generico", "tipo", "compuesto"]},
+        "aberturas": {"enum": ["ninguna", "hueco", "familia"]}
+      }
+    },
+    "materiales": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["nombre"],
+        "properties": {
+          "nombre": {"type": "string"},
+          "clase": {"type": "string"},
+          "color": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3}
+        }
+      }
+    },
+    "niveles": {
+      "type": "array", "minItems": 1,
+      "items": {"type": "object", "required": ["nombre", "cota"],
+                "properties": {"nombre": {"type": "string"}, "cota": {"type": "number"}}}
+    },
+    "ejes": {
+      "type": "array",
+      "items": {"type": "object", "required": ["nombre", "inicio", "fin"],
+                "properties": {"nombre": {"type": "string"}, "inicio": {"$ref": "#/$defs/punto"}, "fin": {"$ref": "#/$defs/punto"}}}
+    },
+    "tipos_muro": {"type": "array", "items": {"$ref": "#/$defs/tipo"}},
+    "tipos_losa": {"type": "array", "items": {"$ref": "#/$defs/tipo"}},
+    "muros": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "nivel", "inicio", "fin", "espesor", "tipo", "estructural"],
+        "properties": {
+          "id": {"type": "string"},
+          "nivel": {"type": "string"},
+          "nivel_superior": {"type": ["string", "null"]},
+          "altura": {"type": "number"},
+          "inicio": {"$ref": "#/$defs/punto"},
+          "fin": {"$ref": "#/$defs/punto"},
+          "espesor": {"type": "number"},
+          "tipo": {"type": "string"},
+          "estructural": {"type": "boolean"},
+          "perimetral": {"type": "boolean"},
+          "capa_cad": {"type": "string"}
+        }
+      }
+    },
+    "aberturas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "muro", "categoria", "modo", "centro", "ancho", "alto", "antepecho"],
+        "properties": {
+          "id": {"type": "string"},
+          "muro": {"type": "string"},
+          "categoria": {"enum": ["puerta", "ventana"]},
+          "modo": {"enum": ["hueco", "familia"]},
+          "familia": {"type": ["string", "null"]},
+          "tipo": {"type": ["string", "null"]},
+          "bloque_cad": {"type": "string"},
+          "centro": {"$ref": "#/$defs/punto"},
+          "ancho": {"type": "number"},
+          "alto": {"type": "number"},
+          "antepecho": {"type": "number"}
+        }
+      }
+    },
+    "losas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "nivel", "tipo", "contorno"],
+        "properties": {
+          "id": {"type": "string"},
+          "nivel": {"type": "string"},
+          "tipo": {"type": "string"},
+          "cubierta": {"type": "boolean"},
+          "terminacion": {"type": "boolean"},
+          "desfase": {"type": "number"},
+          "contorno": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/punto"}}
+        }
+      }
+    },
+    "cielos": {
+      "type": "array",
+      "items": {"type": "object", "required": ["nivel", "altura", "contorno"],
+                "properties": {"nivel": {"type": "string"}, "altura": {"type": "number"},
+                               "contorno": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/punto"}}}}
+    },
+    "columnas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "nivel", "centro", "b", "h"],
+        "properties": {
+          "id": {"type": "string"}, "nivel": {"type": "string"},
+          "nivel_superior": {"type": ["string", "null"]}, "altura": {"type": "number"},
+          "centro": {"$ref": "#/$defs/punto"}, "b": {"type": "number"}, "h": {"type": "number"},
+          "rotacion": {"type": "number"}, "familia": {"type": ["string", "null"]},
+          "parametro_b": {"type": "string"}, "parametro_h": {"type": "string"}
+        }
+      }
+    },
+    "vigas": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "nivel", "inicio", "fin", "b", "h"],
+        "properties": {
+          "id": {"type": "string"}, "nivel": {"type": "string"},
+          "inicio": {"$ref": "#/$defs/punto"}, "fin": {"$ref": "#/$defs/punto"},
+          "b": {"type": "number"}, "h": {"type": "number"}, "familia": {"type": ["string", "null"]},
+          "parametro_b": {"type": "string"}, "parametro_h": {"type": "string"}, "origen": {"type": "string"}
+        }
+      }
+    },
+    "fundaciones": {
+      "type": "object",
+      "required": ["corridas", "aisladas"],
+      "properties": {
+        "corridas": {"type": "array", "items": {"type": "object", "required": ["muro", "ancho", "alto"]}},
+        "aisladas": {"type": "array", "items": {"type": "object", "required": ["columna", "centro", "b", "l", "h"]}}
+      }
+    },
+    "recintos": {
+      "type": "array",
+      "items": {"type": "object", "required": ["nivel", "nombre", "punto"],
+                "properties": {"nivel": {"type": "string"}, "nombre": {"type": "string"}, "punto": {"$ref": "#/$defs/punto"}}}
+    },
+    "advertencias": {"type": "array", "items": {"type": "string"}}
+  }
+}

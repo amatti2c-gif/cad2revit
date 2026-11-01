@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Compilar:   dotnet build -c Release                      (Revit 2025, por defecto)
+                dotnet build -c Release -p:RevitVersion=2026
+                dotnet build -c Release -p:RevitVersion=2024  (usa .NET Framework 4.8)
+    Si Revit no está en la ruta estándar: -p:RevitDir="D:\Autodesk\Revit 2025\"
+  -->
+  <PropertyGroup>
+    <RevitVersion Condition="'$(RevitVersion)' == ''">2025</RevitVersion>
+    <RevitDir Condition="'$(RevitDir)' == ''">C:\Program Files\Autodesk\Revit $(RevitVersion)\</RevitDir>
+    <TargetFramework Condition="'$(RevitVersion)' &gt;= '2025'">net8.0-windows</TargetFramework>
+    <TargetFramework Condition="'$(RevitVersion)' &lt; '2025'">net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Cad2Revit</AssemblyName>
+    <RootNamespace>Cad2Revit</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <AddinDir>$(AppData)\Autodesk\Revit\Addins\$(RevitVersion)\</AddinDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="RevitAPI">
+      <HintPath>$(RevitDir)RevitAPI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RevitAPIUI">
+      <HintPath>$(RevitDir)RevitAPIUI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Cad2Revit.addin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Instala el add-in en la carpeta de Revit del usuario tras compilar -->
+  <Target Name="InstalarAddin" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <MakeDir Directories="$(AddinDir)Cad2Revit" />
+    <ItemGroup>
+      <Salida Include="$(OutDir)*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(Salida)" DestinationFolder="$(AddinDir)Cad2Revit" />
+    <Copy SourceFiles="Cad2Revit.addin" DestinationFolder="$(AddinDir)" />
+  </Target>
+</Project>

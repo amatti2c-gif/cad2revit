@@ -1,0 +1,52 @@
+# =============================================================================
+#  NIVEL DE DETALLE DEL MODELO 3D  —  input del proyectista
+# =============================================================================
+#  Define HASTA DÓNDE llega el modelo. Eliges un "preset" (LOD) y luego
+#  ajustas elemento por elemento con "ajustes".
+#
+#  Presets:
+#   100  Masas: muros genéricos por espesor, losas simples, niveles.
+#        Sin aberturas, sin estructura.
+#   200  Muros con tipo y material de núcleo, aberturas como huecos o familias
+#        genéricas, columnas, losas con espesor.
+#   300  Muros y losas compuestos por capas, puertas/ventanas con su familia y
+#        tipo, columnas, vigas, fundaciones, recintos.
+#   350  Todo lo anterior + terminaciones de piso/cielo como elementos
+#        separados y uniones muro-losa resueltas.
+#
+#  Lo que NUNCA se modela automáticamente (queda fuera de alcance):
+#   armaduras, uniones metálicas, instalaciones (MEP), mobiliario, detalles
+#   constructivos 2D (estos se usan solo como referencia de materialidad).
+# =============================================================================
+
+preset: 300
+
+# Cada clave puede ponerse en true/false (o el valor indicado) para pisar
+# lo que dice el preset. Borra o comenta las que no quieras cambiar.
+ajustes:
+  # --- Arquitectura -----------------------------------------------------------
+  # muros:          generico | tipo | compuesto
+  # aberturas:      ninguna | hueco | familia
+  # losas:          true/false
+  # cubierta:       true/false
+  # recintos:       true/false        (Rooms con nombre leído del CAD)
+  # terminaciones:  true/false        (pisos/cielos como capas separadas)
+  # cielos:         true/false
+  # escaleras:      true/false        (pendiente: se marca su ubicación)
+
+  # --- Estructura -------------------------------------------------------------
+  # columnas:       true/false
+  # vigas:          true/false
+  # fundaciones:    true/false
+  # ejes:           true/false
+
+  # Ejemplo: modelo LOD 300 pero sin fundaciones
+  fundaciones: false
+
+# Altura de cielo (desde el nivel) cuando cielos = true
+altura_cielo: 2.40
+
+# Familias de puertas/ventanas cuando aberturas = familia y el bloque CAD no
+# tiene una correspondencia en capas_cad.yaml
+familia_puerta_generica: {familia: "M_Single-Flush", tipo: "0915 x 2134mm"}
+familia_ventana_generica: {familia: "M_Fixed", tipo: "0915 x 1220mm"}

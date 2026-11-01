@@ -1,0 +1,44 @@
+# =============================================================================
+#  CORRESPONDENCIA CAD -> REVIT  —  input del proyectista
+# =============================================================================
+#  Las capas se describen con expresiones regulares (sin distinguir mayúsculas
+#  si empiezas con (?i)). Adapta esto al estándar de capas de tu oficina.
+# =============================================================================
+
+capas:
+  muros:      "(?i)^(A-)?MUR|WALL|TABIQ"
+  puertas:    "(?i)PUERTA|DOOR"
+  ventanas:   "(?i)VENTANA|WINDOW|VENT"
+  columnas:   "(?i)COLUMN|PILAR|S-COL"
+  losas:      "(?i)LOSA|SLAB"
+  ejes:       "(?i)EJE|GRID"
+  recintos:   "(?i)RECINTO|ROOM|NOMBRE"
+  niveles:    "(?i)NIVEL|NPT|LEVEL"     # en elevaciones/cortes
+
+# Reconocimiento geométrico de muros (líneas paralelas)
+deteccion_muros:
+  espesor_min: 0.05
+  espesor_max: 0.40
+  largo_min: 0.20                # descarta trazos más cortos
+  tolerancia_angulo_grados: 1.0
+  vano_max: 3.0                  # une tramos colineales separados por vanos
+                                 # de hasta este largo (puertas/ventanas)
+
+# Unidad del dibujo: m | cm | mm  (auto = lee $INSUNITS del DXF)
+unidades: auto
+
+# Texto de nivel en elevaciones. El grupo 1 debe capturar la cota.
+patron_nivel: "(?i)(?:N\\.?P\\.?T\\.?|NIVEL|N\\.?)\\s*([+-]?\\d+(?:[.,]\\d+)?)"
+
+# -----------------------------------------------------------------------------
+#  BLOQUES -> FAMILIAS
+# -----------------------------------------------------------------------------
+#  Se evalúan en orden. "bloque" es expresión regular sobre el nombre del
+#  bloque. ancho/alto/antepecho en metros; si ancho se omite, se mide del
+#  bloque en planta.
+bloques:
+  - {bloque: "(?i)P(UERTA)?[-_]?90",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0915 x 2134mm", ancho: 0.90, alto: 2.10}
+  - {bloque: "(?i)P(UERTA)?[-_]?80",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0813 x 2134mm", ancho: 0.80, alto: 2.10}
+  - {bloque: "(?i)P(UERTA)?[-_]?70",  categoria: puerta,  familia: "M_Single-Flush", tipo: "0762 x 2134mm", ancho: 0.70, alto: 2.10}
+  - {bloque: "(?i)V(ENTANA)?[-_]?\\d+", categoria: ventana, familia: "M_Fixed",       tipo: "0915 x 1220mm", alto: 1.20, antepecho: 0.90}
+  - {bloque: "(?i)COL|PILAR",          categoria: columna}

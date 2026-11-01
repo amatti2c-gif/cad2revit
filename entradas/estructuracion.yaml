@@ -1,0 +1,88 @@
+# =============================================================================
+#  LINEAMIENTOS DE ESTRUCTURACIÓN  —  input del proyectista
+# =============================================================================
+#  Define cómo se interpreta y completa la estructura del edificio.
+#  Unidades: metros.
+# =============================================================================
+
+# Sistema principal. Valores: hormigon_armado | albanileria_confinada |
+#                             albanileria_armada | acero | madera | mixto
+sistema: hormigon_armado
+
+# Material que se asigna a elementos estructurales generados (columnas, vigas,
+# fundaciones). Debe existir en materialidades.yaml.
+material_estructural: Hormigón armado H30
+
+# -----------------------------------------------------------------------------
+#  MUROS ESTRUCTURALES
+# -----------------------------------------------------------------------------
+#  Un muro es estructural si su TIPO lo es (materialidades.yaml) o si cumple
+#  alguno de estos criterios adicionales:
+muros_estructurales:
+  espesor_minimo: 0.14          # muros >= este espesor se consideran estructurales
+  capas_cad: "(?i)estruct|MURO-HA"
+  perimetrales: true            # los muros del contorno exterior son estructurales
+
+# -----------------------------------------------------------------------------
+#  COLUMNAS / PILARES
+# -----------------------------------------------------------------------------
+columnas:
+  # Sección por defecto si el CAD solo trae un símbolo (bloque) sin medidas.
+  seccion_defecto: {b: 0.30, h: 0.30}
+  # Familia y tipo de Revit (debe estar cargada en la plantilla del proyecto).
+  familia_revit: "M_Concrete-Rectangular-Column"
+  # Nombres de los parámetros de sección dentro de esa familia.
+  parametro_b: b
+  parametro_h: h
+  # Se prolongan desde el nivel de la planta hasta el nivel siguiente.
+  continuas_entre_niveles: true
+
+# -----------------------------------------------------------------------------
+#  VIGAS / CADENAS
+# -----------------------------------------------------------------------------
+vigas:
+  seccion_defecto: {b: 0.20, h: 0.50}
+  familia_revit: "M_Concrete-Rectangular Beam"
+  parametro_b: b
+  parametro_h: h
+  # Generación automática:
+  sobre_muros_estructurales: false   # cadena/viga sobre cada muro estructural
+                                     #   (típico en albañilería confinada)
+  entre_columnas_alineadas: true     # une columnas alineadas a eje
+  luz_maxima: 8.0                    # no generar vigas más largas que esto
+  tolerancia_alineacion: 0.10
+
+# -----------------------------------------------------------------------------
+#  LOSAS
+# -----------------------------------------------------------------------------
+losas:
+  # contorno: "capa"   -> usa polilíneas cerradas de la capa de losa del CAD
+  #           "muros"  -> calcula el contorno exterior de los muros
+  #           "auto"   -> capa si existe, si no muros
+  contorno: auto
+  # La losa se apoya en: cara_exterior | eje | cara_interior de los muros perim.
+  borde_en: cara_exterior
+  generar_cubierta: true             # losa/cubierta sobre el último nivel
+
+# -----------------------------------------------------------------------------
+#  FUNDACIONES
+# -----------------------------------------------------------------------------
+fundaciones:
+  # Zapata corrida bajo muros estructurales
+  corridas_bajo_muros: true
+  ancho_corrida: 0.60
+  alto_corrida: 0.40
+  # Zapata aislada bajo columnas
+  aisladas_bajo_columnas: true
+  zapata_aislada: {b: 1.20, l: 1.20, h: 0.50}
+  familia_zapata_revit: "M_Footing-Rectangular"
+  # Cota de sello de fundación respecto del nivel más bajo
+  profundidad_sello: -1.20
+
+# -----------------------------------------------------------------------------
+#  EJES
+# -----------------------------------------------------------------------------
+ejes:
+  leer_del_cad: true                 # líneas de la capa de ejes -> Grid de Revit
+  nomenclatura_x: numeros            # numeros | letras
+  nomenclatura_y: letras

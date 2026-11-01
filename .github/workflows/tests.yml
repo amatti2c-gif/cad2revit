@@ -1,0 +1,16 @@
+name: tests
+on: [push, pull_request]
+jobs:
+  parser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e "parser[dev]"
+      - run: pytest -q parser
+      - name: Flujo de ejemplo
+        run: |
+          python ejemplos/generar_ejemplo.py
+          python -m cad2revit entradas/proyecto.yaml -o modelo.json --validar

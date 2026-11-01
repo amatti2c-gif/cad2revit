@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# .NET
+bin/
+obj/
+*.user
+.vs/
+
+# Salidas
+modelo.json
+*.informe.txt
+ejemplos/*.dxf
