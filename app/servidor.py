@@ -648,7 +648,7 @@ def guardar_legos(pid: str, datos: Legos):
     py = d / "entradas" / "proyecto.yaml"
     texto = py.read_text(encoding="utf-8")
     texto = re.sub(r"^# Legos elegidos.*\n?", "", texto, flags=re.M)
-    texto = re.sub(r"^legos:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
+    texto = re.sub(r"^legos:.*?(?=^[^\s-]|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
     bloque = {"muros": {k: v for k, v in datos.muros.items() if v}}
     if any(datos.marcos.values()):
         bloque["marcos"] = {k: v for k, v in datos.marcos.items() if v}
@@ -687,7 +687,7 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
     py = d / "entradas" / "proyecto.yaml"
     texto = py.read_text(encoding="utf-8")
     texto = re.sub(r"^# Tipologías elegidas por tramo.*\n?", "", texto, flags=re.M)
-    texto = re.sub(r"^tramos:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
+    texto = re.sub(r"^tramos:.*?(?=^[^\s-]|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
     elegidas = {k: v for k, v in sorted(datos.elecciones.items()) if v != "auto"}
     if elegidas:
         texto += "\n# Tipologías elegidas por tramo de eje (se editan en la pestaña Estructuración de la app)\n"
@@ -700,18 +700,64 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
 def _reemplazar_bloque(texto: str, clave: str, valor) -> str:
     """Reemplaza (en su lugar) el bloque de primer nivel `clave:` de un YAML, conservando el resto."""
     nuevo = yaml.safe_dump({clave: valor}, allow_unicode=True, sort_keys=False, default_flow_style=None)
-    patron = re.compile(rf"^{re.escape(clave)}:.*?(?=^\S|\Z)", flags=re.M | re.S)
+    patron = re.compile(rf"^{re.escape(clave)}:.*?(?=^[^\s-]|\Z)", flags=re.M | re.S)
     if patron.search(texto):
         return patron.sub(lambda _m: nuevo + "\n", texto, count=1)
     return texto.rstrip() + "\n\n" + nuevo
 
 
-def _uso_de_planos(py: dict) -> dict[str, str]:
+_CACHE_VISTAS: dict[tuple, list[dict]] = {}
+
+
+def _vistas_de(d: Path, nombre: str) -> list[dict]:
+    """Vistas (planta, fachadas, cortes…) dibujadas lado a lado dentro de un plano."""
+    from cad2revit import vistas as vistas_mod
+    from cad2revit.aberturas import clasificar_inserciones
+    f = d / "planos" / nombre
+    if not f.exists():
+        return []
+    st = f.stat()
+    try:
+        cfg = cargar(d / "entradas" / "proyecto.yaml")
+    except Exception:
+        cfg = None
+    clave = (str(f), st.st_size, st.st_mtime_ns, json.dumps((cfg.proyecto.get("capas") if cfg else None), sort_keys=True))
+    if clave not in _CACHE_VISTAS:
+        dib = leer(str(f))
+        if cfg:
+            es_abertura = lambda i: bool(clasificar_inserciones([i], cfg)[0])  # noqa: E731
+            patron_nivel, patron_muros, det = cfg.capas_cad.get("patron_nivel"), cfg.capa("muros"), cfg.deteccion
+        else:
+            es_abertura, patron_nivel, patron_muros, det = None, None, None, None
+        _CACHE_VISTAS[clave] = vistas_mod.detectar(dib, es_abertura, patron_nivel, patron_muros, det)
+    return _CACHE_VISTAS[clave]
+
+
+def _k_de_caja(vistas: list[dict], caja) -> int | None:
+    for v in vistas:
+        if all(abs(a - b) <= 0.05 for a, b in zip(v["caja"], caja)):
+            return v["k"]
+    return None
+
+
+def _uso_de_planos(py: dict, d: Path | None = None) -> dict[str, str]:
+    """archivo -> uso del plano completo; si se usan vistas sueltas: archivo -> "vistas" y archivo#k -> uso."""
+    from cad2revit.vistas import archivo_de, zonas_de
     uso = {}
-    for p in py.get("plantas") or []:
-        uso[Path(p["archivo"]).name] = f"planta:{p['nivel']}"
-    for e in py.get("elevaciones") or []:
-        uso[Path(e).name] = "elevacion"
+    entradas = [(p, f"planta:{p['nivel']}") for p in py.get("plantas") or []] + \
+               [(e, "elevacion") for e in py.get("elevaciones") or []]
+    for e, u in entradas:
+        nombre = Path(archivo_de(e)).name
+        zonas = zonas_de(e)
+        if not zonas:
+            uso[nombre] = u
+            continue
+        uso[nombre] = "vistas"
+        vistas = _vistas_de(d, nombre) if d else []
+        for z in zonas:
+            k = _k_de_caja(vistas, z)
+            if k is not None:
+                uso[f"{nombre}#{k}"] = u
     return uso
 
 
@@ -786,7 +832,7 @@ def guardar_capas(pid: str, datos: CapasCategoria):
     if propias:
         texto = _reemplazar_bloque(texto, "capas", propias)
     else:
-        texto = re.sub(r"^capas:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S)
+        texto = re.sub(r"^capas:.*?(?=^[^\s-]|\Z)", "", texto, flags=re.M | re.S)
     py.write_text(texto, encoding="utf-8")
     return {"guardado": True, "errores": _validar_entradas(d)}
 
@@ -798,14 +844,47 @@ class Nivel(BaseModel):
 
 class Distribucion(BaseModel):
     niveles: list[Nivel]
-    usos: dict[str, str]          # archivo.dxf -> "planta:N1" | "elevacion" | "no"
+    usos: dict[str, str]          # archivo.dxf o archivo.dxf#k (vista k) -> "planta:N1" | "elevacion" | "no"
 
 
 @app.get("/api/proyectos/{pid}/distribucion")
 def leer_distribucion(pid: str):
     d = _proyecto(pid)
     py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
-    return {"niveles": py.get("niveles") or [], "usos": _uso_de_planos(py)}
+    return {"niveles": py.get("niveles") or [], "usos": _uso_de_planos(py, d)}
+
+
+def _plantas_y_elevaciones(d: Path, usos: dict[str, str], nombres: list[str]) -> tuple[list, list]:
+    """De los usos (por plano o por vista) a los bloques plantas/elevaciones de proyecto.yaml."""
+    existentes = {f.name for f in (d / "planos").glob("*.dxf")}
+    con_vistas = {k.split("#")[0] for k in usos if "#" in k}
+    plantas, elevaciones, ocupados = {}, [], {}
+    for clave, uso in sorted(usos.items()):
+        archivo, _, k = clave.partition("#")
+        if archivo not in existentes or uso in ("", "no", "vistas") or (not k and archivo in con_vistas):
+            continue
+        caja = None
+        if k:
+            vistas = _vistas_de(d, archivo)
+            v = next((x for x in vistas if str(x["k"]) == k), None)
+            if v is None:
+                continue
+            caja = v["caja"]
+        if uso == "elevacion":
+            elevaciones.append({"archivo": f"../planos/{archivo}", "zona": caja} if caja else f"../planos/{archivo}")
+        elif uso.startswith("planta:") and uso[7:] in nombres:
+            nivel = uso[7:]
+            if ocupados.get(nivel, archivo) != archivo:
+                raise HTTPException(400, f"El nivel {nivel} tiene dos plantas ({ocupados[nivel]} y {archivo}); elige una")
+            ocupados[nivel] = archivo
+            p = plantas.setdefault(nivel, {"nivel": nivel, "archivo": f"../planos/{archivo}"})
+            if caja:
+                p.setdefault("zonas", []).append(caja)
+            elif "zonas" in p:
+                raise HTTPException(400, f"{archivo}: elige vistas sueltas o el plano completo, no ambos")
+        else:
+            raise HTTPException(400, f"Uso no válido para {clave}: {uso}")
+    return list(plantas.values()), elevaciones
 
 
 @app.put("/api/proyectos/{pid}/distribucion")
@@ -815,21 +894,7 @@ def guardar_distribucion(pid: str, datos: Distribucion):
     nombres = [n.nombre.strip() for n in datos.niveles]
     if not nombres or any(not n for n in nombres) or len(set(nombres)) != len(nombres):
         raise HTTPException(400, "Los niveles necesitan nombres distintos y no vacíos (al menos uno)")
-    existentes = {f.name for f in (d / "planos").glob("*.dxf")}
-    plantas, elevaciones, ocupados = [], [], {}
-    for archivo, uso in sorted(datos.usos.items()):
-        if archivo not in existentes or uso in ("", "no"):
-            continue
-        if uso == "elevacion":
-            elevaciones.append(f"../planos/{archivo}")
-        elif uso.startswith("planta:") and uso[7:] in nombres:
-            nivel = uso[7:]
-            if nivel in ocupados:
-                raise HTTPException(400, f"El nivel {nivel} tiene dos plantas ({ocupados[nivel]} y {archivo}); elige una")
-            ocupados[nivel] = archivo
-            plantas.append({"nivel": nivel, "archivo": f"../planos/{archivo}"})
-        else:
-            raise HTTPException(400, f"Uso no válido para {archivo}: {uso}")
+    plantas, elevaciones = _plantas_y_elevaciones(d, datos.usos, nombres)
     plantas.sort(key=lambda p: nombres.index(p["nivel"]))
     niveles = sorted(({"nombre": n.nombre.strip(), "cota": round(n.cota, 3)} for n in datos.niveles), key=lambda n: n["cota"])
     py = d / "entradas" / "proyecto.yaml"
@@ -845,7 +910,7 @@ def guardar_distribucion(pid: str, datos: Distribucion):
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):
     d = _proyecto(pid)
-    uso = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))
+    uso = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"), d)
     patron_nivel = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
     out = []
     for f in sorted((d / "planos").glob("*.dxf")):
@@ -863,6 +928,7 @@ def listar_planos(pid: str):
                     "desde_dwg": original.name if original.exists() else None,
                     "uso": uso.get(f.name, "no"),
                     "ejemplo": f.name in PLANOS_EJEMPLO,
+                    "vistas": _vistas_con_uso(d, f.name, uso) if not err else [],
                     "parece_elevacion": not err and _parece_elevacion(dib, patron_nivel)})
     return out
 
@@ -903,10 +969,20 @@ async def subir_planos(pid: str, archivos: list[UploadFile] = File(...)):
     return {"guardados": guardados, **_acomodar_planos(d, guardados)}
 
 
+def _vistas_con_uso(d: Path, nombre: str, uso: dict) -> list[dict]:
+    """Vistas de un plano con su uso actual (solo si el plano tiene más de una)."""
+    vistas = _vistas_de(d, nombre)
+    if len(vistas) < 2:
+        return []
+    entero = uso.get(nombre, "no")
+    return [dict(v, uso=uso.get(f"{nombre}#{v['k']}", "no" if entero == "vistas" else entero)) for v in vistas]
+
+
 PLANOS_EJEMPLO = {"planta_n1.dxf", "planta_n2.dxf", "elevacion_norte.dxf"}
 
 
 def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
+    from cad2revit.vistas import archivo_de
     """Al subir planos propios: se quitan los de ejemplo y cada plano nuevo queda asignado solo
     (elevación si tiene textos de nivel; si no, planta del primer nivel libre). Se cambia en la tabla."""
     quitados = []
@@ -919,22 +995,33 @@ def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
     datos = _leer_yaml_seguro(py)
     existe = {f.name for f in (d / "planos").glob("*.dxf")}
     plantas = [x for x in datos.get("plantas") or [] if Path(x["archivo"]).name in existe]
-    elevaciones = [x for x in datos.get("elevaciones") or [] if Path(x).name in existe]
+    elevaciones = [x for x in datos.get("elevaciones") or [] if Path(archivo_de(x)).name in existe]
     niveles = sorted(datos.get("niveles") or [], key=lambda n: n.get("cota", 0))
     candidatos = [n["nombre"] for n in (niveles[:-1] if len(niveles) > 1 else niveles)]
     patron = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
-    usados = {Path(x["archivo"]).name for x in plantas} | {Path(x).name for x in elevaciones}
+    usados = {Path(x["archivo"]).name for x in plantas} | {Path(archivo_de(x)).name for x in elevaciones}
     asignados = {}
     for n in sorted(set(nuevos) & existe - usados):
         try:
             dib = leer(str(d / "planos" / n))
         except Exception:
             continue
+        libres = [c for c in candidatos if c not in {x["nivel"] for x in plantas}]
+        vistas = _vistas_de(d, n)
+        if len(vistas) > 1:
+            # varias vistas en el mismo plano: la planta sugerida va al primer nivel libre, el resto según sugerencia
+            zonas = [v["caja"] for v in vistas if v["sugerido"] == "planta"]
+            if zonas and libres:
+                plantas.append({"nivel": libres[0], "archivo": f"../planos/{n}", "zonas": zonas})
+                asignados[n] = f"planta:{libres[0]} ({len(zonas)} vista{'s' if len(zonas) > 1 else ''})"
+            for v in vistas:
+                if v["sugerido"] == "elevacion":
+                    elevaciones.append({"archivo": f"../planos/{n}", "zona": v["caja"]})
+            continue
         if _parece_elevacion(dib, patron):
             elevaciones.append(f"../planos/{n}")
             asignados[n] = "elevacion"
             continue
-        libres = [c for c in candidatos if c not in {x["nivel"] for x in plantas}]
         if libres:
             plantas.append({"nivel": libres[0], "archivo": f"../planos/{n}"})
             asignados[n] = f"planta:{libres[0]}"
@@ -1020,7 +1107,7 @@ def ejecutar(pid: str, datos: NuevaCorrida):
                "conteos": None, "lod": None, "errores_esquema": []}
     try:
         modelo = construir_modelo(cargar(d / "entradas" / "proyecto.yaml"))
-        usados = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))
+        usados = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))       # sin d: solo nombres
         sin_usar = sorted(f.name for f in (d / "planos").glob("*.dxf") if f.name not in usados)
         if sin_usar:
             modelo["advertencias"].insert(0, "Planos subidos que NO se usan en esta corrida (asígnalos a un nivel en la "

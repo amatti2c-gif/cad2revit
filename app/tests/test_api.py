@@ -369,3 +369,50 @@ def test_pagina_con_scripts_versionados(cliente):
     assert cliente.get(f"/v/{m.group(1)}/vista3d.js").status_code == 200        # import relativo
     assert cliente.get("/v/vieja/app.js").headers["cache-control"] == "no-store"
     assert cliente.get("/v/x/..%2Fservidor.py").status_code in (400, 404)
+
+
+def _plano_combinado(origen_planta, origen_fachada, destino, dx=80.0):
+    """Planta y fachada dibujadas lado a lado en el mismo DXF (como suele venir de ArchiCAD)."""
+    import ezdxf
+    from ezdxf.addons import Importer
+    doc = ezdxf.readfile(origen_planta)
+    fach = ezdxf.readfile(origen_fachada)
+    imp = Importer(fach, doc)
+    antes = set(e.dxf.handle for e in doc.modelspace())
+    imp.import_modelspace()
+    imp.finalize()
+    for e in doc.modelspace():
+        if e.dxf.handle not in antes:
+            e.translate(dx, 0, 0)
+    doc.saveas(destino)
+
+
+def test_plano_con_planta_y_fachada(cliente, tmp_path):
+    pid = _crear(cliente)
+    base = tmp_path / "proyectos" / pid / "planos"
+    _plano_combinado(base / "planta_n1.dxf", base / "elevacion_norte.dxf", tmp_path / "Todo junto.dxf")
+    r = cliente.post(f"/api/proyectos/{pid}/planos",
+                     files=[("archivos", ("Todo junto.dxf", (tmp_path / "Todo junto.dxf").read_bytes()))]).json()
+    assert r["asignados"]["Todo junto.dxf"].startswith("planta:N1")
+    plano = cliente.get(f"/api/proyectos/{pid}/planos").json()[0]
+    assert plano["uso"] == "vistas" and len(plano["vistas"]) == 2
+    v = {x["sugerido"]: x for x in plano["vistas"]}
+    assert v["planta"]["uso"] == "planta:N1" and v["elevacion"]["uso"] == "elevacion"
+    assert v["planta"]["caja"][2] < v["elevacion"]["caja"][0]          # la fachada está a la derecha
+    r1 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r1["ok"] and not r1.get("planos_sin_usar")
+    muros_vista = r1["conteos"]["muros"]
+    # usar el plano completo como planta: la fachada agrega "muros" falsos
+    d = cliente.get(f"/api/proyectos/{pid}/distribucion").json()
+    cliente.put(f"/api/proyectos/{pid}/distribucion", json={"niveles": d["niveles"], "usos": {"Todo junto.dxf": "planta:N1"}})
+    assert cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["uso"] == "planta:N1"
+    r2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r2["conteos"]["muros"] >= muros_vista
+    # volver a elegir por vista desde la app
+    k_pl, k_el = v["planta"]["k"], v["elevacion"]["k"]
+    r = cliente.put(f"/api/proyectos/{pid}/distribucion", json={"niveles": d["niveles"], "usos": {
+        f"Todo junto.dxf#{k_pl}": "planta:N1", f"Todo junto.dxf#{k_el}": "no"}})
+    assert r.status_code == 200, r.text
+    vistas = {x["k"]: x["uso"] for x in cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["vistas"]}
+    assert vistas == {k_pl: "planta:N1", k_el: "no"}
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["muros"] == muros_vista

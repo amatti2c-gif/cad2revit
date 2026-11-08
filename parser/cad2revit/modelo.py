@@ -15,6 +15,7 @@ from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
 from . import ejes as ejes_mod
+from . import vistas as vistas_mod
 from . import marcos as marcos_mod
 from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
@@ -96,7 +97,7 @@ def _nombres_ejes(n: int, estilo: str) -> list[str]:
 # ---------------------------------------------------------------- principal
 def _verificar_archivos(cfg: Configuracion) -> None:
     faltan = [r for r in [p["archivo"] for p in cfg.proyecto.get("plantas") or []]
-              + list(cfg.proyecto.get("elevaciones") or []) if not cfg.ruta(r).exists()]
+              + [vistas_mod.archivo_de(e) for e in cfg.proyecto.get("elevaciones") or []] if not cfg.ruta(r).exists()]
     if faltan:
         raise ErrorConfiguracion("No se encuentran estos planos (revisa proyecto.yaml):\n  - " + "\n  - ".join(faltan))
 
@@ -109,7 +110,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
     det = cfg.deteccion
 
     # Niveles
-    elevaciones = [leer(cfg.ruta(r), unidades) for r in cfg.proyecto.get("elevaciones") or []]
+    elevaciones = [vistas_mod.recortar(leer(cfg.ruta(vistas_mod.archivo_de(e)), unidades), vistas_mod.zonas_de(e))
+                   for e in cfg.proyecto.get("elevaciones") or []]
     cotas = leer_cotas(elevaciones, cfg.capas_cad.get("patron_nivel", r"([+-]?\d+[.,]\d+)"), cfg.capa("niveles"))
     niveles = ajustar_niveles(cfg.proyecto["niveles"], cotas, adv)
     orden = [n["nombre"] for n in niveles]
@@ -146,7 +148,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         nivel = planta["nivel"]
         sup = siguiente(nivel)
         pref = nivel
-        dib = leer(cfg.ruta(planta["archivo"]), unidades)
+        dib = vistas_mod.recortar(leer(cfg.ruta(planta["archivo"]), unidades), vistas_mod.zonas_de(planta))
 
         # 1) Aberturas/columnas (se clasifican antes para ayudar a unir muros)
         abert_ins, col_ins = clasificar_inserciones(dib.inserciones, cfg)

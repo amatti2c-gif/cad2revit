@@ -225,3 +225,12 @@ legend { padding: 0 4px; }
   border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 :root[data-theme="dark"] .sugerencia { background: #3b2a0a; color: #fcd34d; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .sugerencia { background: #3b2a0a; color: #fcd34d; } }
+
+.aviso-vistas { font-size: 13px; max-width: 260px; }
+.fila-vistas > td { background: var(--fondo); }
+.vistas { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.tarjeta-vista { border: 1px solid var(--borde); border-radius: 10px; padding: 8px; background: var(--superficie);
+  display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.tarjeta-vista.usada { border-color: var(--acento); box-shadow: 0 0 0 1px var(--acento); }
+.tarjeta-vista select { width: 100%; }
+.mini-vista { width: 100%; height: 140px; color: var(--texto); background: var(--fondo); border-radius: 6px; }

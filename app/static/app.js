@@ -218,12 +218,17 @@ async function cargarPlanos() {
     tb.replaceChildren(h("tr", {}, h("td", { colspan: 5, class: "tenue" }, "Sin planos todavía.")));
     return;
   }
-  tb.replaceChildren(...planos.map(pl => h("tr", {},
+  tb.replaceChildren(...planos.flatMap(pl => [h("tr", {},
     h("td", {}, h("strong", {}, pl.nombre), pl.ejemplo ? h("span", { class: "chip", style: "margin-left:6px" }, "ejemplo") : null,
       h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB` +
         (pl.desde_dwg ? ` · convertido desde ${pl.desde_dwg}` : "")),
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
-    h("td", {}, (() => {
+    h("td", {}, pl.vistas.length ? h("div", { class: "aviso-vistas" },
+      h("strong", {}, `Este plano trae ${pl.vistas.length} vistas`),
+      " (planta, fachadas, cortes…) dibujadas lado a lado. Elige abajo para qué se usa cada una.",
+      h("div", {}, h("button", { class: "sec", style: "margin-top:6px", onclick: () => intentar(() =>
+        guardarVistas(pl, Object.fromEntries(pl.vistas.map(v => [v.k, sugerenciaVista(v)])), "Vistas según la sugerencia"))
+      }, "Usar la sugerencia"))) : (() => {
       const sel = h("select", {},
         h("option", { value: "no", selected: pl.uso === "no" }, "No usar"),
         ...dist.niveles.map(n => h("option", { value: `planta:${n.nombre}`, selected: pl.uso === `planta:${n.nombre}` }, `Planta de ${n.nombre}`)),
@@ -248,7 +253,57 @@ async function cargarPlanos() {
         delete estado.cadCache[pl.nombre];
         await cargarPlanos();
       }) }, "Eliminar"))),
-  )));
+  ), filaVistas(pl)].filter(Boolean)));
+}
+
+// ---- vistas dentro de un plano (planta y fachadas lado a lado)
+function sugerenciaVista(v) {
+  if (v.sugerido === "planta") return `planta:${dist.niveles[0]?.nombre ?? "N1"}`;
+  return v.sugerido === "elevacion" ? "elevacion" : "no";
+}
+
+async function guardarVistas(pl, nuevos, nota) {
+  delete dist.usos[pl.nombre];
+  for (const v of pl.vistas) dist.usos[`${pl.nombre}#${v.k}`] = nuevos[v.k] ?? v.uso;
+  // un nivel tiene planta de un solo plano: si otro plano la tenía, pasa a "No usar"
+  const plantas = new Set(Object.values(nuevos).filter(u => u.startsWith("planta:")));
+  for (const [k, u] of Object.entries(dist.usos))
+    if (plantas.has(u) && k.split("#")[0] !== pl.nombre) dist.usos[k] = "no";
+  await guardarDistribucion(nota);
+}
+
+const NOMBRE_SUGERENCIA = { planta: "planta", elevacion: "elevación", no: "no usar" };
+
+function filaVistas(pl) {
+  if (!pl.vistas.length) return null;
+  const tarjetas = pl.vistas.map(v => {
+    const svg = s("svg", { class: "mini-vista" });
+    geometriaCAD(pl.nombre).then(g => {
+      const [x0, y0, x1, y1] = v.caja, m = 0.5;
+      const d = [];
+      for (const [a, b, c, e] of g.segmentos) {
+        const mx = (a + c) / 2, my = (b + e) / 2;
+        if (mx >= x0 - m && mx <= x1 + m && my >= y0 - m && my <= y1 + m) d.push(`M${a} ${b}L${c} ${e}`);
+      }
+      const raiz = s("g", { transform: "scale(1,-1)" });
+      raiz.append(s("path", { d: d.join(""), stroke: "currentColor", "stroke-width": 1, fill: "none", "vector-effect": "non-scaling-stroke" }));
+      svg.replaceChildren(raiz);
+      encuadrar(svg, [[x0, y0], [x1, y1]]);
+    }).catch(() => {});
+    const sel = h("select", {},
+      h("option", { value: "no", selected: v.uso === "no" }, "No usar"),
+      ...dist.niveles.map(n => h("option", { value: `planta:${n.nombre}`, selected: v.uso === `planta:${n.nombre}` }, `Planta de ${n.nombre}`)),
+      h("option", { value: "elevacion", selected: v.uso === "elevacion" }, "Elevación / corte"));
+    sel.addEventListener("change", () => intentar(() =>
+      guardarVistas(pl, { [v.k]: sel.value }, `Vista ${v.k + 1}: ${sel.options[sel.selectedIndex].text}`)));
+    const datos = [`${v.ancho} × ${v.alto} m`, v.aberturas ? `${v.aberturas} puertas/ventanas` : null,
+      v.muros_m ? `${v.muros_m} m de muros` : null, v.textos_nivel ? `${v.textos_nivel} cotas de nivel` : null].filter(Boolean);
+    return h("div", { class: "tarjeta-vista" + (v.uso !== "no" ? " usada" : "") }, svg,
+      h("div", {}, h("strong", {}, `Vista ${v.k + 1}`), " ",
+        h("span", { class: "tenue" }, `parece ${NOMBRE_SUGERENCIA[v.sugerido]}`)),
+      h("div", { class: "tenue" }, datos.join(" · ")), sel);
+  });
+  return h("tr", { class: "fila-vistas" }, h("td", { colspan: 5 }, h("div", { class: "vistas" }, tarjetas)));
 }
 
 async function subir(files) {
