@@ -15,6 +15,7 @@ from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
 from . import ejes as ejes_mod
+from . import aberturas as aberturas_mod
 from . import cortes as cortes_mod
 from . import vistas as vistas_mod
 from . import marcos as marcos_mod
@@ -248,6 +249,12 @@ def construir_modelo(cfg: Configuracion) -> dict:
 
         # 1) Aberturas/columnas (se clasifican antes para ayudar a unir muros)
         abert_ins, col_ins = clasificar_inserciones(dib.inserciones, cfg)
+        # puertas dibujadas como arco suelto (sin bloque): solo si el plano no trae bloques de puerta
+        if not any(r.get("categoria") == "puerta" for _, r in abert_ins):
+            arcos = aberturas_mod.puertas_de_arcos(dib.arcos)
+            if arcos:
+                abert_ins += arcos
+                adv.append(f"{nivel}: {len(arcos)} puertas leídas de los arcos de abatimiento (el plano no trae bloques de puerta)")
         puntos_vano = [i.punto for i, _ in abert_ins]
 
         # 2) Muros
@@ -261,6 +268,17 @@ def construir_modelo(cfg: Configuracion) -> dict:
                            + ", ".join(f"{c} ({m} m)" for c, m in sug)
                            + " (puedes cambiarlas en Planos → Capas de tu plano)")
         muros = detectar_muros(segs_muro, det, puntos_vano, pref)
+        # ventanas sin bloque: vano en el muro + rótulo de medidas cerca ("Anc:120 H:150 Ant:100")
+        if not any(r.get("categoria") == "ventana" for _, r in abert_ins):
+            rotulos = aberturas_mod.rotulos_ventana(dib.textos)
+            if rotulos:
+                vent = aberturas_mod.ventanas_en_vanos(muros, rotulos, puntos_vano)
+                if vent:
+                    abert_ins += vent
+                    puntos_vano += [i.punto for i, _ in vent]
+                    muros = detectar_muros(segs_muro, det, puntos_vano, pref)     # el muro continúa sobre la ventana
+                    adv.append(f"{nivel}: {len(vent)} ventanas leídas de los rótulos de medidas "
+                               f"({len(rotulos)} rótulos en el plano)")
         if not muros:
             adv.append(f"{planta['archivo']}: no se detectaron muros (¿capas correctas en capas_cad.yaml?)")
         for m in muros:

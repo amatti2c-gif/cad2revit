@@ -49,6 +49,16 @@ class Texto:
 
 
 @dataclass
+class Arco:
+    """Arco suelto del dibujo (p. ej. el abatimiento de una puerta): centro, radio y sus dos extremos."""
+    centro: Punto
+    radio: float
+    p0: Punto
+    p1: Punto
+    capa: str
+
+
+@dataclass
 class DibujoCAD:
     archivo: str
     factor: float
@@ -56,6 +66,7 @@ class DibujoCAD:
     polilineas_cerradas: list[tuple[list[Punto], str]] = field(default_factory=list)
     inserciones: list[Insercion] = field(default_factory=list)
     textos: list[Texto] = field(default_factory=list)
+    arcos: list[Arco] = field(default_factory=list)
 
     def segmentos_en(self, patron: re.Pattern | None) -> list[Segmento]:
         return [s for s in self.segmentos if patron and patron.search(s.capa)]
@@ -89,7 +100,7 @@ def _factor(doc, unidades: str) -> float:
 #   <carpeta>/.cad2revit/<archivo>.<unidades>.geo.json.gz
 # Las lecturas siguientes usan ese archivo (mucho más chico y rápido que el DXF) mientras
 # el plano no cambie (mismo tamaño y fecha) y la versión del formato sea la misma.
-FORMATO_INTERNO = 1
+FORMATO_INTERNO = 2          # 2: se agregan los arcos sueltos (puertas)
 
 
 def _ruta_cache(archivo: str, unidades: str):
@@ -111,6 +122,7 @@ def _a_dict(d: "DibujoCAD") -> dict:
         "polilineas": [[p, c] for p, c in d.polilineas_cerradas],
         "inserciones": [[i.nombre, i.capa, i.punto, i.rotacion, i.extremos, i.esquinas, i.atributos] for i in d.inserciones],
         "textos": [[t.texto, t.capa, t.punto] for t in d.textos],
+        "arcos": [[a.centro, a.radio, a.p0, a.p1, a.capa] for a in d.arcos],
     }
 
 
@@ -122,6 +134,7 @@ def _de_dict(archivo: str, x: dict) -> "DibujoCAD":
     d.inserciones = [Insercion(n, c, tp(p), r, (tp(e[0]), tp(e[1])) if e else None, [tp(q) for q in esq], at or {})
                      for n, c, p, r, e, esq, at in x["inserciones"]]
     d.textos = [Texto(t, c, tp(p)) for t, c, p in x["textos"]]
+    d.arcos = [Arco(tp(c), r, tp(a), tp(b), capa) for c, r, a, b, capa in x.get("arcos", [])]
     return d
 
 
@@ -215,6 +228,13 @@ def _leer_dxf(archivo: str, unidades: str = "auto") -> DibujoCAD:
                 nombre=e.dxf.name, capa=capa, punto=pt(e.dxf.insert),
                 rotacion=float(e.dxf.get("rotation", 0.0)), extremos=extremos,
                 esquinas=esquinas, atributos=atributos))
+        elif t == "ARC":
+            try:
+                p0, p1 = list(e.vertices([e.dxf.start_angle, e.dxf.end_angle]))     # en coordenadas del mundo
+                c = e.ocs().to_wcs(e.dxf.center)
+                dib.arcos.append(Arco(pt(c), round(e.dxf.radius * k, 6), pt(p0), pt(p1), capa))
+            except Exception:
+                pass
         elif t in ("TEXT", "MTEXT"):
             texto = e.plain_text() if t == "MTEXT" else e.dxf.text
             ins = e.dxf.insert

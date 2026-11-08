@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import re
 
+from . import aberturas as aberturas_mod
 from . import cortes as cortes_mod
 from .dxf_reader import DibujoCAD
 from .niveles import cota_en_texto
@@ -135,7 +136,7 @@ def detectar(dib: DibujoCAD, es_abertura=None, patron_nivel: str | None = None,
     grupos: dict[tuple[int, int], dict] = {}
     for s, c in zip(segs, celda_seg):
         r = raiz(c)
-        gr = grupos.setdefault(r, {"segs": [], "ins": [], "txt": []})
+        gr = grupos.setdefault(r, {"segs": [], "ins": [], "txt": [], "arc": []})
         gr["segs"].append(s)
 
     # textos y bloques: a la vista cuya caja los contiene (o la más cercana a menos de una celda)
@@ -161,6 +162,10 @@ def detectar(dib: DibujoCAD, es_abertura=None, patron_nivel: str | None = None,
         gr = grupo_de(t.punto)
         if gr is not None:
             gr["txt"].append(t)
+    for a in dib.arcos:
+        gr = grupo_de(a.centro)
+        if gr is not None:
+            gr["arc"].append(a)
 
     det = det or {"espesor_min": 0.05, "espesor_max": 0.40, "largo_min": 0.20}
     rx_nivel = re.compile(patron_nivel) if patron_nivel else None
@@ -181,6 +186,8 @@ def detectar(dib: DibujoCAD, es_abertura=None, patron_nivel: str | None = None,
         de_muros = [s for s in gr["segs"] if patron_muros and patron_muros.search(s.capa)] or gr["segs"]
         muros_m = sum(p for p, _ in largo_pareado_por_capa(de_muros, det).values()) / 2
         aberturas = sum(1 for i in gr["ins"] if es_abertura and es_abertura(i))
+        # sin bloques: arcos de abatimiento de puertas y rótulos de medidas de ventana
+        aberturas += len(aberturas_mod.puertas_de_arcos(gr["arc"])) + len(aberturas_mod.rotulos_ventana(gr["txt"]))
         vistas.append({"caja": caja, "ancho": round(caja[2] - caja[0], 1), "alto": round(caja[3] - caja[1], 1),
                        "lineas": len(gr["segs"]), "muros_m": round(float(muros_m), 1), "aberturas": aberturas,
                        "textos_nivel": textos_nivel, "marcas_nivel": marcas, "linea_suelo": suelo,
@@ -264,6 +271,7 @@ def recortar(dib: DibujoCAD, cajas: list[list[float]], margen: float = 0.5) -> D
         polilineas_cerradas=[(p, capa) for p, capa in dib.polilineas_cerradas if p and dentro(p[0])],
         inserciones=[i for i in dib.inserciones if dentro(i.punto)],
         textos=[t for t in dib.textos if dentro(t.punto)],
+        arcos=[a for a in dib.arcos if dentro(a.centro)],
     )
 
 

@@ -444,3 +444,37 @@ def test_cortes_fachadas_y_techo_de_un_edificio(proyecto, tmp_path):
     losa = next(l for l in modelo["losas"] if l["cubierta"])
     assert losa["pendiente"] == cub["pendiente"] and losa["nivel"] == "Cubierta"
     assert len(modelo["muros"]) == 4
+
+
+def test_puertas_por_arco_y_ventanas_por_rotulo(proyecto, tmp_path):
+    """Plano sin bloques (como los de ArchiCAD): la puerta es un arco de abatimiento y la ventana un
+    rótulo de medidas frente a un muro dibujado de corrido."""
+    import ezdxf
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 6
+    m = doc.modelspace()
+    L = lambda a, b: m.add_line(a, b, dxfattribs={"layer": "M"})    # noqa: E731
+    # muro inferior (20 cm) con vano de puerta entre x=3 y x=3,9
+    L((0, 0), (3, 0)); L((0, 0.2), (3, 0.2)); L((3.9, 0), (10, 0)); L((3.9, 0.2), (10, 0.2))
+    L((3, 0), (3, 0.2)); L((3.9, 0), (3.9, 0.2))
+    # demás muros, de corrido
+    L((0, 6), (10, 6)); L((0.2, 5.8), (9.8, 5.8)); L((0, 0), (0, 6)); L((0.2, 0.2), (0.2, 5.8))
+    L((10, 0), (10, 6)); L((9.8, 0.2), (9.8, 5.8))
+    m.add_arc((3, 0.2), 0.9, 0, 90, dxfattribs={"layer": "PUERTAS"})          # hoja de 90 cm
+    m.add_mtext("VP\\PAnt:100\\PAnc:120\\PH:150", dxfattribs={"insert": (6.5, 7.0), "char_height": 0.2})
+    ruta = tmp_path / "sin_bloques.dxf"
+    doc.saveas(ruta)
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["M"]}
+    py["niveles"] = [{"nombre": "N1", "cota": 0.0}, {"nombre": "Cubierta", "cota": 2.6}]
+    py["plantas"] = [{"nivel": "N1", "archivo": str(ruta)}]
+    py["elevaciones"] = []
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    puertas = [a for a in modelo["aberturas"] if a["categoria"] == "puerta"]
+    ventanas = [a for a in modelo["aberturas"] if a["categoria"] == "ventana"]
+    assert len(puertas) == 1 and abs(puertas[0]["ancho"] - 0.9) < 0.02 and abs(puertas[0]["centro"][0] - 3.45) < 0.05
+    assert len(ventanas) == 1
+    v = ventanas[0]
+    assert (v["ancho"], v["alto"], v["antepecho"]) == (1.2, 1.5, 1.0) and abs(v["centro"][1] - 5.9) < 0.05
+    # el muro inferior queda continuo sobre la puerta (un solo muro aloja la puerta)
+    assert len([w for w in modelo["muros"] if abs(w["inicio"][1] - 0.1) < 0.02 and abs(w["fin"][1] - 0.1) < 0.02]) == 1
