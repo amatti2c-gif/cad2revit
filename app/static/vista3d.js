@@ -107,6 +107,10 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
   const mLosa = mat("#cbd5e1"), mTerm = mat("#e7d8c3"), mCub = mat("#94a3b8");
   for (const l of modelo.losas) {
     if (!ver(l.nivel)) continue;
+    if (l.cubierta && l.pendiente > 0 && (l.bordes_pendiente || []).length) {
+      techoInclinado(grupo, l, cota[l.nivel], mat("#b45309"), mat("#e7e5e4"));
+      continue;
+    }
     const e = espesorTipo[l.tipo] || 0.15;
     const forma = new THREE.Shape(l.contorno.map(([x, y]) => new THREE.Vector2(x, y)));
     const geo = new THREE.ExtrudeGeometry(forma, { depth: e, bevelEnabled: false });
@@ -182,5 +186,78 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
       ctx.camara.updateProjectionMatrix();
     }
     ctx.clave = clave;
+  }
+}
+
+
+/** Cubierta inclinada como la hace Revit (techo por contorno): cada borde con pendiente define un plano
+ *  que sube hacia adentro; el techo es el más bajo de esos planos. Los bordes sin pendiente son frontones. */
+function techoInclinado(grupo, l, z0, mTecho, mFronton) {
+  let pts = l.contorno.map(p => [p[0], p[1]]);
+  const n = pts.length;
+  let bordes = l.bordes_pendiente.slice();
+  const area = pts.reduce((a, p, i) => { const q = pts[(i + 1) % n]; return a + p[0] * q[1] - q[0] * p[1]; }, 0);
+  if (area < 0) {                      // dejar el contorno antihorario (el interior queda a la izquierda)
+    pts = pts.slice().reverse();
+    bordes = bordes.map(i => (i === n - 1 ? n - 1 : n - 2 - i));
+  }
+  const t = Math.tan(l.pendiente * Math.PI / 180);
+  const planos = bordes.map(i => {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;      // normal hacia el interior
+    // h(p) = c0 + cx*x + cy*y
+    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t };
+  });
+  const h = (pl, p) => pl.c0 + pl.cx * p[0] + pl.cy * p[1];
+  const altura = p => Math.max(0, Math.min(...planos.map(pl => h(pl, p))));
+  const recortar = (poli, f) => {      // Sutherland–Hodgman: deja la parte con f(p) <= 0
+    const out = [];
+    for (let i = 0; i < poli.length; i++) {
+      const p = poli[i], q = poli[(i + 1) % poli.length], fp = f(p), fq = f(q);
+      if (fp <= 1e-9) out.push(p);
+      if ((fp < -1e-9 && fq > 1e-9) || (fp > 1e-9 && fq < -1e-9)) {
+        const k = fp / (fp - fq);
+        out.push([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k]);
+      }
+    }
+    return out;
+  };
+  const pos = [];
+  const tri = (a, b, c) => pos.push(...a, ...b, ...c);
+  const P3 = (p, z) => [p[0], z, -p[1]];
+  planos.forEach((pl, i) => {
+    let cara = pts;
+    planos.forEach((otro, k) => {
+      if (k !== i) cara = recortar(cara, p => h(pl, p) - h(otro, p));
+    });
+    if (cara.length < 3) return;
+    const idx = THREE.ShapeUtils.triangulateShape(cara.map(p => new THREE.Vector2(p[0], p[1])), []);
+    for (const [a, b, c] of idx) tri(P3(cara[a], z0 + h(pl, cara[a])), P3(cara[b], z0 + h(pl, cara[b])), P3(cara[c], z0 + h(pl, cara[c])));
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  const mt = mTecho.clone(); mt.side = THREE.DoubleSide;
+  grupo.add(new THREE.Mesh(geo, mt));
+  // frontones: bajo los bordes sin pendiente, el muro sube hasta el techo
+  const fpos = [];
+  for (let i = 0; i < n; i++) {
+    if (bordes.includes(i)) continue;
+    const a = pts[i], b = pts[(i + 1) % n], m = 24;
+    for (let k = 0; k < m; k++) {
+      const p = [a[0] + (b[0] - a[0]) * k / m, a[1] + (b[1] - a[1]) * k / m];
+      const q = [a[0] + (b[0] - a[0]) * (k + 1) / m, a[1] + (b[1] - a[1]) * (k + 1) / m];
+      const hp = altura(p), hq = altura(q);
+      if (hp < 1e-3 && hq < 1e-3) continue;
+      fpos.push(...P3(p, z0), ...P3(q, z0), ...P3(q, z0 + hq), ...P3(p, z0), ...P3(q, z0 + hq), ...P3(p, z0 + hp));
+    }
+  }
+  if (fpos.length) {
+    const g2 = new THREE.BufferGeometry();
+    g2.setAttribute("position", new THREE.Float32BufferAttribute(fpos, 3));
+    g2.computeVertexNormals();
+    const mf = mFronton.clone(); mf.side = THREE.DoubleSide;
+    grupo.add(new THREE.Mesh(g2, mf));
   }
 }

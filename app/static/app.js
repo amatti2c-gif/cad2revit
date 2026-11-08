@@ -225,8 +225,8 @@ async function cargarPlanos() {
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
     h("td", {}, pl.vistas.length ? h("div", { class: "aviso-vistas" },
       h("strong", {}, `Este plano trae ${pl.vistas.length} vistas`),
-      " (planta, fachadas, cortes…) de un mismo edificio. Solo la planta genera el modelo 3D; las fachadas y cortes " +
-      "no crean estructura (si tienen cotas de nivel, se usan para las alturas).",
+      " de un mismo edificio. La planta genera los muros; los cortes y fachadas dan las alturas (niveles, alero, " +
+      "cumbrera y pendiente) y la planta de techo da la forma de la cubierta. Ninguno crea estructura aparte.",
       h("div", {}, h("button", { class: "sec", style: "margin-top:6px", onclick: () => intentar(() =>
         guardarVistas(pl, Object.fromEntries(pl.vistas.map(v => [v.k, sugerenciaVista(v)])), "Vistas según la sugerencia"))
       }, "Usar la sugerencia"))) : (() => {
@@ -260,7 +260,7 @@ async function cargarPlanos() {
 // ---- vistas dentro de un plano (planta y fachadas lado a lado)
 function sugerenciaVista(v) {
   if (v.sugerido === "planta") return `planta:${dist.niveles[0]?.nombre ?? "N1"}`;
-  return v.sugerido === "elevacion" ? "elevacion" : "no";
+  return ["elevacion", "techo"].includes(v.sugerido) ? v.sugerido : "no";
 }
 
 async function guardarVistas(pl, nuevos, nota) {
@@ -273,7 +273,7 @@ async function guardarVistas(pl, nuevos, nota) {
   await guardarDistribucion(nota);
 }
 
-const NOMBRE_SUGERENCIA = { planta: "planta", elevacion: "elevación", no: "no usar" };
+const NOMBRE_SUGERENCIA = { planta: "planta", elevacion: "corte o fachada", techo: "planta de techo", no: "no usar" };
 
 function filaVistas(pl) {
   if (!pl.vistas.length) return null;
@@ -294,13 +294,14 @@ function filaVistas(pl) {
     const sel = h("select", {},
       h("option", { value: "no", selected: v.uso === "no" }, "No usar"),
       ...dist.niveles.map(n => h("option", { value: `planta:${n.nombre}`, selected: v.uso === `planta:${n.nombre}` }, `Planta de ${n.nombre}`)),
-      h("option", { value: "elevacion", selected: v.uso === "elevacion" }, "Elevación / corte"));
+      h("option", { value: "elevacion", selected: v.uso === "elevacion" }, "Corte / fachada (alturas)"),
+      h("option", { value: "techo", selected: v.uso === "techo" }, "Planta de techo (cubierta)"));
     sel.addEventListener("change", () => intentar(() =>
       guardarVistas(pl, { [v.k]: sel.value }, `Vista ${v.k + 1}: ${sel.options[sel.selectedIndex].text}`)));
     const datos = [`${v.ancho} × ${v.alto} m`, v.aberturas ? `${v.aberturas} puertas/ventanas` : null,
       v.muros_m ? `${v.muros_m} m de muros` : null, v.textos_nivel ? `${v.textos_nivel} cotas de nivel` : null].filter(Boolean);
     return h("div", { class: "tarjeta-vista" + (v.uso !== "no" ? " usada" : "") }, svg,
-      h("div", {}, h("strong", {}, `Vista ${v.k + 1}`), " ",
+      h("div", {}, h("strong", {}, v.titulo ? `${v.k + 1} · ${v.titulo}` : `Vista ${v.k + 1}`), " ",
         h("span", { class: "tenue" }, `parece ${v.tipo ?? NOMBRE_SUGERENCIA[v.sugerido]}`)),
       h("div", { class: "tenue" }, datos.join(" · ")), sel);
   });

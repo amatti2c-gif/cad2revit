@@ -15,6 +15,7 @@ from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
 from . import ejes as ejes_mod
+from . import cortes as cortes_mod
 from . import vistas as vistas_mod
 from . import marcos as marcos_mod
 from . import tramos as tramos_mod
@@ -94,10 +95,70 @@ def _nombres_ejes(n: int, estilo: str) -> list[str]:
     return [str(i + 1) for i in range(n)]
 
 
+def _caja(dib: DibujoCAD) -> list[float] | None:
+    if not dib.segmentos:
+        return None
+    xs = [p[0] for s in dib.segmentos for p in (s.a, s.b)]
+    ys = [p[1] for s in dib.segmentos for p in (s.a, s.b)]
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _alero_de_cortes(vistas_altura: list[dict]) -> float | None:
+    """Altura de alero: de las vistas que muestran la pendiente (cortes/fachadas transversales a la cumbrera);
+    una fachada paralela a la cumbrera muestra la cumbrera arriba y no sirve para el alero."""
+    inclinadas = [v for v in vistas_altura if v.get("pendiente", 0) >= 3]
+    aleros = sorted(v["alero"] for v in (inclinadas or vistas_altura) if v.get("alero"))
+    return round(aleros[len(aleros) // 2], 2) if aleros else None
+
+
+def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> dict:
+    """Forma de la cubierta: contorno de la planta de techo (alineado con la planta) o de la planta,
+    pendiente desde cortes/fachadas y cumbrera desde la planta de techo o desde el corte más inclinado."""
+    pendiente = max((v["pendiente"] for v in vistas_altura), default=0.0)
+    cont = [list(p) for p in contorno]
+    cumbreras, limatones = [], 0
+    if techo_cad:
+        # la planta de techo está dibujada en otro lugar: se centra sobre la planta (contorno + aleros)
+        cx = lambda pts: ((min(p[0] for p in pts) + max(p[0] for p in pts)) / 2,  # noqa: E731
+                          (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2)
+        (ax, ay), (bx, by) = cx(techo_cad["contorno"]), cx(contorno)
+        dx, dy = bx - ax, by - ay
+        cont = [[round(x + dx, 3), round(y + dy, 3)] for x, y in techo_cad["contorno"]]
+        cumbreras = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad["cumbreras"]]
+        limatones = techo_cad["limatones"]
+    # cortes marcados en la planta: letra -> línea de corte
+    letras = {v["letra"] for v in vistas_altura if v.get("letra")}
+    lineas = cortes_mod.marcas_corte(dib_planta, letras) if letras else {}
+    for v in vistas_altura:
+        linea = lineas.get(v.get("letra"))
+        modelo["cortes"].append(dict(titulo=v["titulo"], tipo=v["tipo"], letra=v.get("letra"),
+                                     linea=[list(linea[0]), list(linea[1])] if linea else None,
+                                     alero=v["alero"], cumbrera=v["cumbrera"], pendiente=v["pendiente"]))
+        if v.get("letra") and not linea:
+            adv.append(f"{v['titulo']}: no se encontró la marca de corte {v['letra']} en la planta")
+    dir_cumbrera = None
+    inclinados = [v for v in vistas_altura if v.get("letra") in lineas and v["pendiente"] >= 3]
+    if inclinados and not cumbreras:
+        a, b = lineas[max(inclinados, key=lambda v: v["pendiente"])["letra"]]
+        dir_cumbrera = (-(b[1] - a[1]), b[0] - a[0])        # la cumbrera es perpendicular al corte
+    forma = cortes_mod.cubierta(cont, cumbreras, limatones, pendiente, dir_cumbrera)
+    if forma["forma"] != "plana" and not forma["bordes_pendiente"]:
+        adv.append("Cubierta: no se pudo saber qué bordes llevan pendiente; se deja plana")
+        forma = {"forma": "plana", "bordes_pendiente": []}
+    if vistas_altura:
+        adv.append(f"Cubierta {forma['forma']}" + (f", pendiente {pendiente}°" if forma["forma"] != "plana" else "")
+                   + f" (de {len(vistas_altura)} cortes/fachadas" + (" y la planta de techo)" if techo_cad else ")"))
+    return {"forma": forma["forma"], "contorno": cont, "pendiente": pendiente if forma["forma"] != "plana" else 0.0,
+            "bordes_pendiente": forma["bordes_pendiente"],
+            "cumbreras": [[list(a), list(b)] for a, b in cumbreras], "aleros_de_planta_de_techo": bool(techo_cad)}
+
+
 # ---------------------------------------------------------------- principal
 def _verificar_archivos(cfg: Configuracion) -> None:
     faltan = [r for r in [p["archivo"] for p in cfg.proyecto.get("plantas") or []]
-              + [vistas_mod.archivo_de(e) for e in cfg.proyecto.get("elevaciones") or []] if not cfg.ruta(r).exists()]
+              + [vistas_mod.archivo_de(e) for e in cfg.proyecto.get("elevaciones") or []]
+              + ([vistas_mod.archivo_de(cfg.proyecto["techo"])] if cfg.proyecto.get("techo") else [])
+              if not cfg.ruta(r).exists()]
     if faltan:
         raise ErrorConfiguracion("No se encuentran estos planos (revisa proyecto.yaml):\n  - " + "\n  - ".join(faltan))
 
@@ -112,8 +173,35 @@ def construir_modelo(cfg: Configuracion) -> dict:
     # Niveles
     elevaciones = [vistas_mod.recortar(leer(cfg.ruta(vistas_mod.archivo_de(e)), unidades), vistas_mod.zonas_de(e))
                    for e in cfg.proyecto.get("elevaciones") or []]
+    patron_nivel = cfg.capas_cad.get("patron_nivel", r"([+-]?\d+[.,]\d+)")
+    vistas_altura = []          # cortes y fachadas: alero, cumbrera, pendiente, y letra del corte
+    for e, dib_e in zip(cfg.proyecto.get("elevaciones") or [], elevaciones):
+        zonas = vistas_mod.zonas_de(e)
+        caja = zonas[0] if zonas else _caja(dib_e)
+        if caja is None:
+            continue
+        pf = cortes_mod.perfil(dib_e, caja, patron_nivel)
+        tit = cortes_mod.titulos(leer(cfg.ruta(vistas_mod.archivo_de(e)), unidades), [caja]).get(0)
+        if pf:
+            vistas_altura.append(dict(pf, titulo=tit[2] if tit else Path(vistas_mod.archivo_de(e)).name,
+                                      tipo=tit[0] if tit else "elevacion", letra=tit[1] if tit else None))
+    techo_cad = None
+    if cfg.proyecto.get("techo"):
+        t = cfg.proyecto["techo"]
+        techo_cad = cortes_mod.techo(vistas_mod.recortar(leer(cfg.ruta(vistas_mod.archivo_de(t)), unidades),
+                                                         vistas_mod.zonas_de(t)))
+        if techo_cad is None:
+            adv.append("Planta de techo: no se pudo leer el contorno de la cubierta; se usa el de la planta")
     cotas = leer_cotas(elevaciones, cfg.capas_cad.get("patron_nivel", r"([+-]?\d+[.,]\d+)"), cfg.capa("niveles"))
     niveles = ajustar_niveles(cfg.proyecto["niveles"], cotas, adv)
+    alero = _alero_de_cortes(vistas_altura)
+    con_planta = {p["nivel"] for p in cfg.proyecto.get("plantas") or []}
+    if alero and len(niveles) > 1 and niveles[-1]["nombre"] not in con_planta:
+        sup_n, previo = niveles[-1], niveles[-2]["cota"]
+        if alero > previo + 1.5 and abs(sup_n["cota"] - alero) > 0.05:
+            adv.append(f"Nivel {sup_n['nombre']}: cota {sup_n['cota']} reemplazada por {alero} "
+                       "(altura de alero leída de los cortes/fachadas)")
+            sup_n["cota"] = alero
     orden = [n["nombre"] for n in niveles]
 
     def siguiente(nivel: str) -> str | None:
@@ -127,6 +215,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         "niveles": niveles, "ejes": [], "tipos_muro": [], "tipos_losa": [],
         "muros": [], "aberturas": [], "losas": [], "cielos": [], "columnas": [], "vigas": [],
         "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "marcos": [], "tramos": [], "advertencias": adv,
+        "cortes": [], "cubierta": None,
     }
     cota = {n["nombre"]: n["cota"] for n in niveles}
 
@@ -208,8 +297,12 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if sup is None:
                     adv.append(f"{nivel}: no hay nivel superior para la cubierta; agrega un nivel 'Cubierta'")
                 elif cub_def:
+                    cub = _cubierta(contorno, techo_cad, vistas_altura, dib, adv, modelo)
                     modelo["losas"].append(dict(id=f"{sup}-L001", nivel=sup, tipo=cub_def,
-                                                contorno=contorno, cubierta=True))
+                                                contorno=cub["contorno"], cubierta=True,
+                                                pendiente=cub["pendiente"], bordes_pendiente=cub["bordes_pendiente"],
+                                                forma=cub["forma"]))
+                    modelo["cubierta"] = cub
                     tipos_losa_usados.add(cub_def)
             if lod["cielos"]:
                 modelo["cielos"].append(dict(nivel=nivel, altura=lod["altura_cielo"], contorno=contorno))

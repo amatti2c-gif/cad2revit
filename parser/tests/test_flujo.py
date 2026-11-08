@@ -357,7 +357,7 @@ def test_planta_y_cuatro_fachadas_es_un_solo_edificio():
     plantas = [x for x in v if x["sugerido"] == "planta"]
     assert len(plantas) == 1 and plantas[0]["caja"][0] == 0
     assert sum(x["tipo"] == "fachada o corte" for x in v) == 4
-    assert all(x["sugerido"] == "no" for x in v if x is not plantas[0])
+    assert all(x["sugerido"] == "elevacion" for x in v if x is not plantas[0])   # dan alturas, no estructura
 
 
 def test_achurado_no_cuenta_como_muro():
@@ -368,3 +368,79 @@ def test_achurado_no_cuenta_como_muro():
     achurado = [Segmento((0, j * 0.1), (10, j * 0.1), "H") for j in range(50)]
     r = largo_pareado_por_capa(muro + achurado, det)
     assert r["M"][0] == 20 and r["H"][0] <= 20      # solo las 2 líneas de borde del achurado
+
+
+def _dxf_edificio(ruta):
+    """Un edificio 10 x 6 m en un solo DXF: planta (con marcas de corte A…A), planta de techo,
+    corte A-A (dos aguas: alero 2,5 m, cumbrera 4,0 m) y fachada norte."""
+    import ezdxf
+    doc = ezdxf.new()
+    doc.header["$INSUNITS"] = 6
+    m = doc.modelspace()
+    blk = doc.blocks.new("P80")
+    blk.add_line((0, 0), (0.8, 0))
+
+    def rect(x0, y0, x1, y1, capa):
+        m.add_lwpolyline([(x0, y0), (x1, y0), (x1, y1), (x0, y1)], close=True, dxfattribs={"layer": capa})
+
+    def txt(t, x, y, capa="TEXTO"):
+        m.add_text(t, dxfattribs={"insert": (x, y), "layer": capa, "height": 0.3})
+    # planta
+    rect(0, 0, 10, 6, "A-MURO"); rect(0.2, 0.2, 9.8, 5.8, "A-MURO")
+    m.add_blockref("P80", (4, 0.1), dxfattribs={"layer": "A-PUERTA"})
+    txt("A", 5, -1.5); txt("A", 5, 7.5)                       # corte A-A: transversal (vertical en planta)
+    m.add_line((5, -1.2), (5, 7.2), dxfattribs={"layer": "A-CORTE"})
+    txt("PLANTA PRIMER NIVEL", 2, -3)
+    # planta de techo (con aleros de 0,5 m) y cumbrera a lo largo
+    rect(30, -0.5, 41, 6.5, "A-TECHO"); m.add_line((30, 3), (41, 3), dxfattribs={"layer": "A-TECHO"})
+    txt("PLANTA DE TECHO", 32, -3)
+    # corte A-A: 6 m de ancho, alero 2,5, cumbrera 4,0
+    x0 = 60
+    m.add_line((x0 - 1, 0), (x0 + 7, 0), dxfattribs={"layer": "A-CORTE"})
+    m.add_line((x0, 0), (x0, 2.5)); m.add_line((x0 + 6, 0), (x0 + 6, 2.5))
+    m.add_line((x0 - 0.5, 2.25), (x0 + 3, 4.0)); m.add_line((x0 + 3, 4.0), (x0 + 6.5, 2.25))
+    m.add_line((x0, 2.5), (x0 + 6, 2.5))
+    txt("NPT ±0.00", x0 + 6.5, 0); txt("CORTE A-A", x0 + 1, -3)
+    # fachada norte (lado largo: techo se ve plano a la altura de la cumbrera)
+    x0 = 80
+    m.add_line((x0 - 1, 0), (x0 + 11, 0))
+    for y in (2.5, 4.0):
+        m.add_line((x0, y), (x0 + 10, y))
+    m.add_line((x0, 0), (x0, 4.0)); m.add_line((x0 + 10, 0), (x0 + 10, 4.0))
+    txt("ELEVACION NORTE", x0 + 2, -3)
+    doc.saveas(ruta)
+
+
+def test_cortes_fachadas_y_techo_de_un_edificio(proyecto, tmp_path):
+    from cad2revit import vistas
+    from cad2revit.dxf_reader import leer
+    ruta = tmp_path / "edificio.dxf"
+    _dxf_edificio(ruta)
+    v = vistas.detectar(leer(str(ruta)), es_abertura=lambda i: i.nombre == "P80", patron_nivel=r"(?i)NPT\s*[±+-]?\s*(\d+[.,]\d+)")
+    por_tipo = {x["tipo"]: x for x in v}
+    assert set(por_tipo) == {"planta", "planta de techo", "corte A", "fachada"}, por_tipo.keys()
+    assert por_tipo["planta"]["sugerido"] == "planta" and por_tipo["planta de techo"]["sugerido"] == "techo"
+    assert por_tipo["corte A"]["sugerido"] == "elevacion" and por_tipo["fachada"]["sugerido"] == "elevacion"
+    # proyecto con esas vistas
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["A-MURO"], "puertas": ["A-PUERTA"]}
+    py["niveles"] = [{"nombre": "N1", "cota": 0.0}, {"nombre": "Cubierta", "cota": 3.0}]
+    py["plantas"] = [{"nivel": "N1", "archivo": str(ruta), "zonas": [por_tipo["planta"]["caja"]]}]
+    py["elevaciones"] = [{"archivo": str(ruta), "zona": por_tipo[t]["caja"]} for t in ("corte A", "fachada")]
+    py["techo"] = {"archivo": str(ruta), "zona": por_tipo["planta de techo"]["caja"]}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    # el corte A-A se conecta con su marca en la planta
+    corte = next(c for c in modelo["cortes"] if c["letra"] == "A")
+    assert corte["linea"] and abs(corte["linea"][0][0] - 5) < 0.01
+    assert corte["alero"] == 2.5 and corte["cumbrera"] == 4.0
+    # la cubierta va a la altura del alero, a dos aguas, con los aleros de la planta de techo
+    assert {n["nombre"]: n["cota"] for n in modelo["niveles"]}["Cubierta"] == 2.5
+    cub = modelo["cubierta"]
+    assert cub["forma"] == "dos aguas" and abs(cub["pendiente"] - 26.6) < 1.5
+    xs = [p[0] for p in cub["contorno"]]
+    assert abs(min(xs) + 0.5) < 0.05 and abs(max(xs) - 10.5) < 0.05          # 0,5 m de alero
+    lados = [(cub["contorno"][i], cub["contorno"][(i + 1) % len(cub["contorno"])]) for i in cub["bordes_pendiente"]]
+    assert len(lados) == 2 and all(abs(a[1] - b[1]) < 0.01 for a, b in lados)   # los bordes largos (paralelos a la cumbrera)
+    losa = next(l for l in modelo["losas"] if l["cubierta"])
+    assert losa["pendiente"] == cub["pendiente"] and losa["nivel"] == "Cubierta"
+    assert len(modelo["muros"]) == 4

@@ -98,6 +98,10 @@ namespace Cad2Revit
         public string Tipo { get; set; }
         public bool Cubierta { get; set; }
         public bool Terminacion { get; set; }
+        /// <summary>Cubierta inclinada: grados de pendiente y bordes del contorno que la llevan (0 = plana).</summary>
+        public double Pendiente { get; set; }
+        public List<int> BordesPendiente { get; set; } = new();
+        public string Forma { get; set; }
         public double Desfase { get; set; }
         public List<double[]> Contorno { get; set; } = new();
     }

@@ -367,6 +367,25 @@
             "items": {
               "$ref": "#/$defs/punto"
             }
+          },
+          "pendiente": {
+            "type": "number",
+            "description": "Grados; solo cubiertas. 0 = plana"
+          },
+          "bordes_pendiente": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Índices de los bordes del contorno con pendiente (borde i: punto i -> i+1)"
+          },
+          "forma": {
+            "type": "string",
+            "enum": [
+              "plana",
+              "dos aguas",
+              "cuatro aguas"
+            ]
           }
         }
       }
@@ -879,6 +898,20 @@
           }
         }
       }
+    },
+    "cortes": {
+      "type": "array",
+      "description": "Cortes y fachadas leídos (alturas) y su marca en la planta",
+      "items": {
+        "type": "object"
+      }
+    },
+    "cubierta": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Forma de la cubierta deducida de cortes, fachadas y planta de techo"
     }
   }
 }

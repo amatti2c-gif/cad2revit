@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import re
 
+from . import cortes as cortes_mod
 from .dxf_reader import DibujoCAD
 from .muros import largo_pareado_por_capa
 
@@ -90,8 +91,7 @@ def detectar(dib: DibujoCAD, es_abertura=None, patron_nivel: str | None = None,
     for gr in grupos.values():
         total = sum(math.dist(s.a, s.b) for s in gr["segs"])
         textos_nivel = sum(1 for t in gr["txt"] if patron_nivel and re.search(patron_nivel, t.texto))
-        if (len(gr["segs"]) < 8 or total < 5) and not textos_nivel:
-            continue                                  # rótulos, flechas de norte, textos sueltos
+        chico = (len(gr["segs"]) < 8 or total < 5) and not textos_nivel   # rótulo, norte… salvo que tenga título
         xs = [p[0] for s in gr["segs"] for p in (s.a, s.b)]
         ys = [p[1] for s in gr["segs"] for p in (s.a, s.b)]
         caja = [round(float(min(xs)), 2), round(float(min(ys)), 2), round(float(max(xs)), 2), round(float(max(ys)), 2)]
@@ -107,7 +107,10 @@ def detectar(dib: DibujoCAD, es_abertura=None, patron_nivel: str | None = None,
         vistas.append({"caja": caja, "ancho": round(caja[2] - caja[0], 1), "alto": round(caja[3] - caja[1], 1),
                        "lineas": len(gr["segs"]), "muros_m": round(float(muros_m), 1), "aberturas": aberturas,
                        "textos_nivel": textos_nivel, "marcas_nivel": marcas, "linea_suelo": suelo,
-                       "bloques": sum(1 for i in gr["ins"] if not MARCA_NIVEL.search(i.nombre))})
+                       "bloques": sum(1 for i in gr["ins"] if not MARCA_NIVEL.search(i.nombre)), "chico": chico})
+    for k, (tipo, letra, texto) in cortes_mod.titulos(dib, [v["caja"] for v in vistas]).items():
+        vistas[k].update(titulo=texto, tipo_titulo=tipo, letra=letra)
+    vistas = [v for v in vistas if not v.pop("chico") or v.get("titulo")]
     vistas.sort(key=lambda v: -(v["ancho"] * v["alto"] + v["lineas"]))
     vistas = vistas[:MAX_VISTAS]
     _sugerir(vistas)
@@ -123,16 +126,30 @@ def _sugerir(vistas: list[dict]) -> None:
     if not vistas:
         return
     for v in vistas:
-        v["tipo"] = "fachada o corte" if (v["linea_suelo"] or v["marcas_nivel"]) else "otro dibujo"
-    # planta: puertas/ventanas, bloques (muebles, artefactos) y caras de muro; las marcas de nivel son de fachadas/cortes
-    puntaje = [(v["aberturas"] * 10 + v["bloques"] * 2 + v["muros_m"]) * (0.2 if v["marcas_nivel"] else 1.0)
-               for v in vistas]
-    mejor = max(range(len(vistas)), key=lambda i: puntaje[i])
+        t = v.get("tipo_titulo")
+        v["tipo"] = ({"techo": "planta de techo", "corte": f"corte {v.get('letra') or ''}".strip(),
+                      "fachada": "fachada", "planta": "planta"}.get(t)
+                     or ("fachada o corte" if (v["linea_suelo"] or v["marcas_nivel"]) else "otro dibujo"))
+    # planta: puertas/ventanas, bloques (muebles, artefactos) y caras de muro; las marcas de nivel son de fachadas/cortes.
+    # El título manda: "PLANTA …" suma, "CORTE/ELEVACIÓN/TECHO" descarta.
+    def puntaje(v):
+        base = v["aberturas"] * 10 + v["bloques"] * 2 + v["muros_m"]
+        t = v.get("tipo_titulo")
+        if t in ("techo", "corte", "fachada"):
+            return base * 0.01
+        if t == "planta":
+            return base * 3 + 1
+        return base * (0.2 if v["marcas_nivel"] else 1.0)
+    mejor = max(range(len(vistas)), key=lambda i: puntaje(vistas[i]))
+    hay_techo = False
     for i, v in enumerate(vistas):
+        t = v.get("tipo_titulo")
         if i == mejor:
             v["sugerido"], v["tipo"] = "planta", "planta"
-        elif v["textos_nivel"]:
-            v["sugerido"] = "elevacion"
+        elif t == "techo" and not hay_techo:
+            v["sugerido"], hay_techo = "techo", True
+        elif t in ("corte", "fachada") or v["textos_nivel"] or v["marcas_nivel"] or v["linea_suelo"]:
+            v["sugerido"] = "elevacion"      # de aquí salen alturas de nivel, alero y cumbrera
         else:
             v["sugerido"] = "no"
 

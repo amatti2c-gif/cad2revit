@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using Autodesk.Revit.DB;
@@ -113,6 +114,84 @@ namespace Cad2Revit
             }
         }
 
+        private readonly Dictionary<string, RoofType> _tiposTecho = new();
+
+        /// <summary>
+        /// Cubierta inclinada como techo por contorno (FootPrintRoof): cada borde del contorno que
+        /// lleva pendiente define la inclinación (dos aguas: los bordes paralelos a la cumbrera).
+        /// Luego los muros del piso de abajo se unen al techo para llegar a los frontones.
+        /// </summary>
+        private void CrearTechoInclinado(LosaDef l, Level nivel)
+        {
+            var tipo = TipoTecho(l.Tipo);
+            var bordes = new CurveArray();
+            var extremos = new List<(XYZ a, XYZ b, int i)>();
+            for (int i = 0; i < l.Contorno.Count; i++)
+            {
+                var a = U.P(l.Contorno[i], nivel.Elevation);
+                var b = U.P(l.Contorno[(i + 1) % l.Contorno.Count], nivel.Elevation);
+                if (a.DistanceTo(b) < 1e-6) continue;
+                bordes.Append(Line.CreateBound(a, b));
+                extremos.Add((a, b, i));
+            }
+            var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out ModelCurveArray curvas);
+            double tangente = Math.Tan(l.Pendiente * Math.PI / 180.0);
+            foreach (ModelCurve mc in curvas)
+            {
+                var c = mc.GeometryCurve;
+                XYZ p0 = c.GetEndPoint(0), p1 = c.GetEndPoint(1);
+                var borde = extremos.FirstOrDefault(e =>
+                    (e.a.IsAlmostEqualTo(p0, 1e-4) && e.b.IsAlmostEqualTo(p1, 1e-4)) ||
+                    (e.a.IsAlmostEqualTo(p1, 1e-4) && e.b.IsAlmostEqualTo(p0, 1e-4)));
+                bool pendiente = borde.a != null && l.BordesPendiente.Contains(borde.i);
+                techo.set_DefinesSlope(mc, pendiente);
+                if (pendiente) techo.set_SlopeAngle(mc, tangente);
+            }
+            Marcar(techo, l.Id);
+            _inf.Contar($"Cubiertas inclinadas ({l.Forma})");
+            UnirMurosAlTecho(techo, l.Nivel);
+        }
+
+        private RoofType TipoTecho(string nombre)
+        {
+            if (_tiposTecho.TryGetValue(nombre, out var rt)) return rt;
+            var seguro = U.NombreSeguro(nombre);
+            rt = U.De<RoofType>(_doc).FirstOrDefault(r => r.Name == seguro);
+            if (rt == null)
+            {
+                var basico = U.De<RoofType>(_doc).FirstOrDefault(r => r.GetCompoundStructure() != null)
+                             ?? throw new Exception("la plantilla no tiene tipos de techo básico");
+                rt = (RoofType)basico.Duplicate(seguro);
+                var def = _m.TiposLosa.FirstOrDefault(t => t.Nombre == nombre);
+                if (def != null)
+                {
+                    try { rt.SetCompoundStructure(Estructura(def, rt.GetCompoundStructure())); }
+                    catch (Exception ex) { _inf.Advertencia($"Techo {nombre}: se usaron las capas del tipo base ({ex.Message})"); }
+                }
+                _inf.Contar("Tipos de techo");
+            }
+            _tiposTecho[nombre] = rt;
+            return rt;
+        }
+
+        /// <summary>Muros del piso bajo la cubierta: se unen al techo (llegan a los frontones).
+        /// Wall.AddAttachment existe desde Revit 2024; se invoca por reflexión para no fallar si cambia.</summary>
+        private void UnirMurosAlTecho(RoofBase techo, string nivelTecho)
+        {
+            var metodo = typeof(Wall).GetMethod("AddAttachment");
+            if (metodo == null) return;
+            var tipoUbic = metodo.GetParameters()[1].ParameterType;
+            var arriba = Enum.Parse(tipoUbic, "Top");
+            int unidos = 0;
+            foreach (var m in _m.Muros.Where(m => m.NivelSuperior == nivelTecho))
+            {
+                if (!_muros.TryGetValue(m.Id, out var w)) continue;
+                if (Intentar(m.Id + " (unir al techo)", () => metodo.Invoke(w, new object[] { techo.Id, arriba }), false))
+                    unidos++;
+            }
+            if (unidos > 0) _inf.Contar("Muros unidos al techo", unidos);
+        }
+
         private void ColocarVano(AberturaDef a, Wall muro)
         {
             var nivel = (Level)_doc.GetElement(muro.LevelId);
@@ -135,6 +214,13 @@ namespace Cad2Revit
                     var nivel = Nivel(l.Nivel) ?? throw new System.Exception($"nivel '{l.Nivel}' inexistente");
                     if (!_tiposLosa.TryGetValue(l.Tipo, out var tipo))
                         throw new System.Exception($"tipo de losa '{l.Tipo}' no fue creado");
+                    if (l.Cubierta && l.Pendiente > 0 && l.BordesPendiente.Count > 0)
+                    {
+                        // Techo de Revit por contorno; si Revit lo rechaza, se deja la losa plana y se informa
+                        if (Intentar(l.Id + " (techo inclinado)", () => CrearTechoInclinado(l, nivel), false)) return;
+                        _inf.Faltante("Techo básico", l.Tipo, "Cubiertas", l.Id,
+                                      $"no se pudo crear el techo a {l.Forma} ({l.Pendiente}°); se dejó una losa plana");
+                    }
                     var est = _m.TiposLosa.FirstOrDefault(t => t.Nombre == l.Tipo)?.Estructural ?? false;
                     var loop = U.Contorno(l.Contorno, nivel.Elevation);
                     var f = Floor.Create(_doc, new List<CurveLoop> { loop }, tipo.Id, nivel.Id, est && !l.Terminacion, null, 0);

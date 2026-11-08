@@ -699,7 +699,11 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
 # ---------------------------------------------------------------- niveles y uso de cada plano
 def _reemplazar_bloque(texto: str, clave: str, valor) -> str:
     """Reemplaza (en su lugar) el bloque de primer nivel `clave:` de un YAML, conservando el resto."""
-    nuevo = yaml.safe_dump({clave: valor}, allow_unicode=True, sort_keys=False, default_flow_style=None)
+    if isinstance(valor, (dict, list)) and valor:
+        nuevo = yaml.safe_dump({clave: valor}, allow_unicode=True, sort_keys=False, default_flow_style=None)
+    else:   # vacío o escalar: siempre "clave: valor" (no "{clave: valor}", que no se reconocería después)
+        escalar = yaml.safe_dump(valor, allow_unicode=True, default_flow_style=True).split("\n")[0]
+        nuevo = f"{clave}: {escalar}\n"
     patron = re.compile(rf"^{re.escape(clave)}:.*?(?=^[^\s-]|\Z)", flags=re.M | re.S)
     if patron.search(texto):
         return patron.sub(lambda _m: nuevo + "\n", texto, count=1)
@@ -745,7 +749,8 @@ def _uso_de_planos(py: dict, d: Path | None = None) -> dict[str, str]:
     from cad2revit.vistas import archivo_de, zonas_de
     uso = {}
     entradas = [(p, f"planta:{p['nivel']}") for p in py.get("plantas") or []] + \
-               [(e, "elevacion") for e in py.get("elevaciones") or []]
+               [(e, "elevacion") for e in py.get("elevaciones") or []] + \
+               ([(py["techo"], "techo")] if py.get("techo") else [])
     for e, u in entradas:
         nombre = Path(archivo_de(e)).name
         zonas = zonas_de(e)
@@ -854,11 +859,11 @@ def leer_distribucion(pid: str):
     return {"niveles": py.get("niveles") or [], "usos": _uso_de_planos(py, d)}
 
 
-def _plantas_y_elevaciones(d: Path, usos: dict[str, str], nombres: list[str]) -> tuple[list, list]:
+def _plantas_y_elevaciones(d: Path, usos: dict[str, str], nombres: list[str]) -> tuple[list, list, dict | None]:
     """De los usos (por plano o por vista) a los bloques plantas/elevaciones de proyecto.yaml."""
     existentes = {f.name for f in (d / "planos").glob("*.dxf")}
     con_vistas = {k.split("#")[0] for k in usos if "#" in k}
-    plantas, elevaciones, ocupados = {}, [], {}
+    plantas, elevaciones, ocupados, techo = {}, [], {}, None
     for clave, uso in sorted(usos.items()):
         archivo, _, k = clave.partition("#")
         if archivo not in existentes or uso in ("", "no", "vistas") or (not k and archivo in con_vistas):
@@ -870,7 +875,11 @@ def _plantas_y_elevaciones(d: Path, usos: dict[str, str], nombres: list[str]) ->
             if v is None:
                 continue
             caja = v["caja"]
-        if uso == "elevacion":
+        if uso == "techo":
+            if techo:
+                raise HTTPException(400, "Solo puede haber una planta de techo")
+            techo = {"archivo": f"../planos/{archivo}", "zona": caja} if caja else {"archivo": f"../planos/{archivo}"}
+        elif uso == "elevacion":
             elevaciones.append({"archivo": f"../planos/{archivo}", "zona": caja} if caja else f"../planos/{archivo}")
         elif uso.startswith("planta:") and uso[7:] in nombres:
             nivel = uso[7:]
@@ -884,7 +893,7 @@ def _plantas_y_elevaciones(d: Path, usos: dict[str, str], nombres: list[str]) ->
                 raise HTTPException(400, f"{archivo}: elige vistas sueltas o el plano completo, no ambos")
         else:
             raise HTTPException(400, f"Uso no válido para {clave}: {uso}")
-    return list(plantas.values()), elevaciones
+    return list(plantas.values()), elevaciones, techo
 
 
 @app.put("/api/proyectos/{pid}/distribucion")
@@ -894,7 +903,8 @@ def guardar_distribucion(pid: str, datos: Distribucion):
     nombres = [n.nombre.strip() for n in datos.niveles]
     if not nombres or any(not n for n in nombres) or len(set(nombres)) != len(nombres):
         raise HTTPException(400, "Los niveles necesitan nombres distintos y no vacíos (al menos uno)")
-    plantas, elevaciones = _plantas_y_elevaciones(d, datos.usos, nombres)
+    plantas, elevaciones, techo = _plantas_y_elevaciones(d, datos.usos, nombres)
+    revisados = sorted({k.split("#")[0] for k in datos.usos if "#" in k})
     plantas.sort(key=lambda p: nombres.index(p["nivel"]))
     niveles = sorted(({"nombre": n.nombre.strip(), "cota": round(n.cota, 3)} for n in datos.niveles), key=lambda n: n["cota"])
     py = d / "entradas" / "proyecto.yaml"
@@ -902,6 +912,10 @@ def guardar_distribucion(pid: str, datos: Distribucion):
     texto = _reemplazar_bloque(texto, "niveles", niveles)
     texto = _reemplazar_bloque(texto, "plantas", plantas)
     texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+    texto = _reemplazar_bloque(texto, "techo", techo)
+    if revisados:     # el usuario eligió las vistas de estos planos: la app ya no las cambia sola
+        previos = set(_leer_yaml_seguro(py).get("vistas_revisadas") or []) if py.exists() else set()
+        texto = _reemplazar_bloque(texto, "vistas_revisadas", sorted(previos | set(revisados)))
     py.write_text(texto, encoding="utf-8")
     return {"guardado": True, "errores": _validar_entradas(d)}
 
@@ -978,10 +992,33 @@ def _separar_vistas(d: Path) -> list[str]:
     notas, cambio = [], False
     elevaciones = list(datos.get("elevaciones") or [])
     plantas = list(datos.get("plantas") or [])
+    from cad2revit.vistas import archivo_de
+    revisados = set(datos.get("vistas_revisadas") or [])
+    techo = datos.get("techo")
     for pl in plantas:
-        if pl.get("zonas"):
-            continue
         nombre = Path(pl["archivo"]).name
+        if nombre in revisados:
+            continue
+        ya = {Path(archivo_de(e)).name for e in elevaciones} | ({Path(archivo_de(techo)).name} if techo else set())
+        if pl.get("zonas"):
+            # planta ya separada: completar cortes/fachadas y planta de techo si aún no se usan
+            if nombre in ya:
+                continue
+            try:
+                vistas = _vistas_de(d, nombre)
+            except Exception:
+                continue
+            nuevas = [v for v in vistas if v["sugerido"] in ("elevacion", "techo")]
+            for v in nuevas:
+                if v["sugerido"] == "techo" and not techo:
+                    techo = {"archivo": pl["archivo"], "zona": v["caja"]}
+                elif v["sugerido"] == "elevacion":
+                    elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
+            if nuevas:
+                notas.append(f"{nombre}: se agregaron {len(nuevas)} vistas (cortes, fachadas, planta de techo) "
+                             "para las alturas y la forma de la cubierta. Puedes cambiarlo en Planos.")
+                cambio = True
+            continue
         try:
             vistas = _vistas_de(d, nombre)
         except Exception:
@@ -993,15 +1030,18 @@ def _separar_vistas(d: Path) -> list[str]:
         for v in vistas:
             if v["sugerido"] == "elevacion":
                 elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
+            elif v["sugerido"] == "techo" and not techo:
+                techo = {"archivo": pl["archivo"], "zona": v["caja"]}
         otras = len(vistas) - 1
         notas.append(f"{nombre} trae {len(vistas)} vistas: se usa la vista {planta['k'] + 1} como planta de "
-                     f"{pl['nivel']} y las otras {otras} (fachadas, cortes…) no generan estructura. "
-                     "Puedes cambiarlo en Planos.")
+                     f"{pl['nivel']}; las otras {otras} (cortes, fachadas, planta de techo) no generan estructura: "
+                     "dan las alturas y la forma de la cubierta. Puedes cambiarlo en Planos.")
         cambio = True
     if cambio:
         texto = py.read_text(encoding="utf-8")
         texto = _reemplazar_bloque(texto, "plantas", plantas)
         texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+        texto = _reemplazar_bloque(texto, "techo", techo)
         py.write_text(texto, encoding="utf-8")
     return notas
 
@@ -1036,6 +1076,9 @@ def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
     niveles = sorted(datos.get("niveles") or [], key=lambda n: n.get("cota", 0))
     candidatos = [n["nombre"] for n in (niveles[:-1] if len(niveles) > 1 else niveles)]
     patron = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
+    techo = datos.get("techo")
+    if techo and Path(archivo_de(techo)).name not in existe:
+        techo = None
     usados = {Path(x["archivo"]).name for x in plantas} | {Path(archivo_de(x)).name for x in elevaciones}
     asignados = {}
     for n in sorted(set(nuevos) & existe - usados):
@@ -1054,6 +1097,8 @@ def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
             for v in vistas:
                 if v["sugerido"] == "elevacion":
                     elevaciones.append({"archivo": f"../planos/{n}", "zona": v["caja"]})
+                elif v["sugerido"] == "techo" and not techo:
+                    techo = {"archivo": f"../planos/{n}", "zona": v["caja"]}
             continue
         if _parece_elevacion(dib, patron):
             elevaciones.append(f"../planos/{n}")
@@ -1067,6 +1112,7 @@ def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
     texto = py.read_text(encoding="utf-8")
     texto = _reemplazar_bloque(texto, "plantas", plantas)
     texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+    texto = _reemplazar_bloque(texto, "techo", techo)
     py.write_text(texto, encoding="utf-8")
     return {"asignados": asignados, "ejemplos_quitados": quitados}
 
