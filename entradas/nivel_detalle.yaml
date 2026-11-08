@@ -46,6 +46,8 @@ ajustes:
   # Ejemplo: modelo LOD 300 pero sin fundaciones y con entramado de madera
   fundaciones: false
   entramado: true
+  # Modelo estructural: sin familias de puerta/ventana; solo el vano exacto en el muro
+  aberturas: hueco
 
 # Altura de cielo (desde el nivel) cuando cielos = true
 altura_cielo: 2.40

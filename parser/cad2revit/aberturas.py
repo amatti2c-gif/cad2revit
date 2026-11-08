@@ -84,6 +84,12 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
         if ab.ancho is None:
             ab.ancho = round(ancho_medido, 3) if ancho_medido > 0.3 else (0.9 if cat == "puerta" else 1.2)
         tc = (t0 + t1) / 2 if ancho_medido > 0.3 else proyectar(ins.punto, muro.a, u)
+        if regla.get("vano") and ancho_medido > 0.3:
+            # vano rotulado: mismo lado de la bisagra, ancho del vano
+            tb = proyectar(ins.punto, muro.a, u)
+            lado = 1 if (t0 + t1) / 2 >= tb else -1
+            ab.ancho = float(regla["vano"])
+            tc = tb + lado * ab.ancho / 2
         tc = max(ab.ancho / 2, min(muro.largo - ab.ancho / 2, tc))
         ab.centro = (round(muro.a[0] + u[0] * tc, 4), round(muro.a[1] + u[1] * tc, 4))
         ab.muro = muro.id
@@ -96,6 +102,8 @@ def _regla_muro_delgado(ab: Abertura, muro: Muro, cfg, advertencias: list[str]) 
     """Las familias de puerta/ventana de Revit exigen un espesor mínimo de muro (las de la
     plantilla métrica de Revit 2027: 12,5 cm). En muros más delgados se usa la familia
     alternativa configurada o, si no hay, se deja solo el vano."""
+    if (getattr(cfg, "lod", None) or {}).get("aberturas") != "familia":
+        return                                   # solo vanos: no hay familia que exija espesor
     reglas = cfg.capas_cad.get("aberturas_en_muros_delgados") or {}
     r = reglas.get(ab.categoria) or {}
     minimo = r.get("espesor_minimo")
@@ -134,8 +142,17 @@ def _medida(rx, texto: str) -> float | None:
     return v / 100 if v > 10 else v          # 120 -> 1,20 m ; 1.2 -> 1,2 m
 
 
-def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3) -> list[tuple[Insercion, dict]]:
-    """Arcos de ~90° con radio de hoja de puerta: bisagra en el centro; el ancho es el radio."""
+RX_VANO_PUERTA = re.compile(r"(?i)(?:^|[\s\n])v(?:ano)?\s*[:=]\s*(\d+(?:[.,]\d+)?)")
+
+
+def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, textos=None) -> list[tuple[Insercion, dict]]:
+    """Arcos de ~90° con radio de hoja de puerta: bisagra en el centro; el ancho es el radio, o el vano
+    del rótulo cercano ("P:90 V:95": hoja 90, vano 95 cm), que es la medida real del hueco en el muro."""
+    rotulos = []
+    for t in textos or []:
+        v = _medida(RX_VANO_PUERTA, t.texto)
+        if v and 0.4 <= v <= 3.0:
+            rotulos.append((t.punto, v))
     out = []
     for a in arcos:
         if not (radio_min <= a.radio <= radio_max):
@@ -147,7 +164,12 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3) -> l
             continue
         ins = Insercion(nombre="puerta (arco)", capa=a.capa, punto=a.centro, rotacion=0.0, extremos=None,
                         esquinas=[a.centro, a.p0, a.p1])
-        out.append((ins, {"categoria": "puerta"}))
+        regla = {"categoria": "puerta"}
+        cerca = [(math.dist(p, a.centro), v) for p, v in rotulos
+                 if math.dist(p, a.centro) <= 2.0 and abs(v - a.radio) <= 0.25]
+        if cerca:
+            regla["vano"] = min(cerca)[1]        # el hueco real (la hoja es un poco más angosta)
+        out.append((ins, regla))
     return out
 
 

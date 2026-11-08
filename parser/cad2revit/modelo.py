@@ -276,7 +276,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         abert_ins, col_ins = clasificar_inserciones(dib.inserciones, cfg)
         # puertas dibujadas como arco suelto (sin bloque): solo si el plano no trae bloques de puerta
         if not any(r.get("categoria") == "puerta" for _, r in abert_ins):
-            arcos = aberturas_mod.puertas_de_arcos(dib.arcos)
+            arcos = aberturas_mod.puertas_de_arcos(dib.arcos, textos=dib.textos)
             if arcos:
                 abert_ins += arcos
                 adv.append(f"{nivel}: {len(arcos)} puertas leídas de los arcos de abatimiento (el plano no trae bloques de puerta)")

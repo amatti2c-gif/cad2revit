@@ -37,11 +37,18 @@ def proyecto(tmp_path: Path):
     return ajustar
 
 
+def _con_familias(proyecto) -> None:
+    """Estas pruebas revisan las familias de puerta/ventana (por defecto la app deja solo vanos)."""
+    nd = yaml.safe_load((proyecto.ruta.parent / "nivel_detalle.yaml").read_text(encoding="utf-8"))
+    proyecto("nivel_detalle.yaml", {"ajustes": dict(nd.get("ajustes") or {}, aberturas="familia")})
+
+
 def _muros(modelo, nivel):
     return [m for m in modelo["muros"] if m["nivel"] == nivel]
 
 
 def test_lod300_completo(proyecto):
+    _con_familias(proyecto)
     modelo = construir_modelo(cargar(proyecto.ruta))
     assert validar(modelo) == []
     assert [n["cota"] for n in modelo["niveles"]] == [0.0, 2.7, 5.4]
@@ -75,6 +82,7 @@ def test_lod300_completo(proyecto):
 
 
 def test_puertas_en_tabique_delgado(proyecto):
+    _con_familias(proyecto)
     modelo = construir_modelo(cargar(proyecto.ruta))
     tabique = {m["id"] for m in modelo["muros"] if m["espesor"] == 0.1}
     en_tabique = [a for a in modelo["aberturas"] if a["muro"] in tabique]
@@ -85,6 +93,7 @@ def test_puertas_en_tabique_delgado(proyecto):
 
 
 def test_puertas_en_tabique_con_familia_alternativa(proyecto):
+    _con_familias(proyecto)
     capas = yaml.safe_load((proyecto.ruta.parent / "capas_cad.yaml").read_text(encoding="utf-8"))
     capas["aberturas_en_muros_delgados"]["puerta"].update(familia="Puerta Tabique", tipo="80x200")
     ruta = proyecto("capas_cad.yaml", capas)
@@ -487,3 +496,10 @@ def test_muro_dentro_de_otro_se_descarta():
     tabique = Muro(id="M3", a=(5, 0.1), b=(5, 4), espesor=0.10, capa_cad="MURO")           # perpendicular: queda
     quedan, quitados = quitar_encimados([real, vidrio, tabique])
     assert [m.id for m in quedan] == ["M1", "M3"] and [m.id for m in quitados] == ["M2"]
+
+
+def test_por_defecto_solo_vanos(proyecto):
+    """Modelo estructural: sin familias de puerta/ventana, solo el hueco exacto en el muro."""
+    modelo = construir_modelo(cargar(proyecto.ruta))
+    assert modelo["aberturas"] and all(a["modo"] == "hueco" for a in modelo["aberturas"])
+    assert not any("necesitan al menos 12.5 cm" in a for a in modelo["advertencias"])
