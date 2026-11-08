@@ -3,6 +3,8 @@ consume el add-in de Revit. Toda la lógica de 'qué se modela' vive aquí; el
 add-in solo construye lo que el JSON indica."""
 from __future__ import annotations
 
+import math
+
 import json
 import string
 from pathlib import Path
@@ -431,6 +433,23 @@ def construir_modelo(cfg: Configuracion) -> dict:
         if d["nivel_superior"] is None:
             d["altura"] = ALTURA_POR_DEFECTO
         modelo["muros"].append(d)
+
+    # Muros quitados en la app (se reconocen por su posición: nivel y extremos)
+    quitar = cfg.proyecto.get("muros_quitar") or []
+    if quitar:
+        fuera = set()
+        for i, q in enumerate(quitar, 1):
+            qa, qb = tuple(q.get("inicio") or ()), tuple(q.get("fin") or ())
+            hallados = [d["id"] for d in modelo["muros"] if d["nivel"] == q.get("nivel") and len(qa) == 2 and len(qb) == 2
+                        and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
+                             or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2))]
+            if not hallados:
+                adv.append(f"Muro quitado {i} ({q.get('nivel')}): ya no está en el plano; no hay nada que quitar")
+            fuera |= set(hallados)
+        if fuera:
+            modelo["muros"] = [d for d in modelo["muros"] if d["id"] not in fuera]
+            modelo["aberturas"] = [a for a in modelo["aberturas"] if a["muro"] not in fuera]
+            adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
 
     # Propuesta de estructuración por tramos de eje (y elecciones del proyecto)
     if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):

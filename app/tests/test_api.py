@@ -490,5 +490,21 @@ def test_ediciones_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
     assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
     cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
-    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": []}
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": []}
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
+
+
+def test_quitar_muro_del_plano(cliente):
+    pid = _crear(cliente)
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    tab = next(w for w in m["muros"] if w["nivel"] == "N1" and w["capa_cad"] == "A-TABIQUE")
+    n_ab = sum(1 for a in m["aberturas"] if a["muro"] == tab["id"])
+    r = cliente.put(f"/api/proyectos/{pid}/ediciones", json={"quitar": [
+        {"nivel": "N1", "inicio": tab["inicio"], "fin": tab["fin"], "id": tab["id"]}]})
+    assert r.status_code == 200
+    c2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m2 = cliente.get(f"/api/proyectos/{pid}/corridas/{c2['n']}").json()["modelo"]
+    assert len(m2["muros"]) == len(m["muros"]) - 1 and not any(w["id"] == tab["id"] for w in m2["muros"])
+    assert len(m2["aberturas"]) == len(m["aberturas"]) - n_ab            # sus vanos se van con él
+    assert any("Muros quitados" in a for a in m2["advertencias"])

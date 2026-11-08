@@ -738,12 +738,14 @@ class EleccionesTramos(BaseModel):
 class Ediciones(BaseModel):
     ejes: dict[str, dict | None] | None = None      # ejes_usuario (por nombre de eje)
     muros: list[dict] | None = None                  # muros_usuario (dibujados en la app)
+    quitar: list[dict] | None = None                 # muros_quitar (muros del plano quitados en la app)
 
 
 @app.get("/api/proyectos/{pid}/ediciones")
 def leer_ediciones(pid: str):
     py = _leer_yaml_seguro(_proyecto(pid) / "entradas" / "proyecto.yaml")
-    return {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or []}
+    return {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or [],
+            "quitar": py.get("muros_quitar") or []}
 
 
 @app.put("/api/proyectos/{pid}/ediciones")
@@ -771,6 +773,11 @@ def guardar_ediciones(pid: str, datos: Ediciones):
                     "fin": [round(float(v), 4) for v in w["fin"]], "tipo": w.get("tipo"),
                     "estructural": bool(w.get("estructural"))} for w in datos.muros]
         texto = _reemplazar_bloque(texto, "muros_usuario", limpios)
+    if datos.quitar is not None:
+        q = [{"nivel": w.get("nivel"), "inicio": [round(float(v), 4) for v in w["inicio"]],
+              "fin": [round(float(v), 4) for v in w["fin"]], **({"id": w["id"]} if w.get("id") else {})}
+             for w in datos.quitar if isinstance(w.get("inicio"), list) and isinstance(w.get("fin"), list)]
+        texto = _reemplazar_bloque(texto, "muros_quitar", q)
     py.write_text(texto, encoding="utf-8")
     return {"guardado": True, "errores": _validar_entradas(d)}
 

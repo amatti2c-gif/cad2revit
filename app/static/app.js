@@ -465,7 +465,7 @@ const TIPOLOGIA = {
   ninguno: { nombre: "Sin elemento", color: "#cbd5e1" },
 };
 const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false,
-  modo: "tramo", pend: [], eje: null, muroSel: null, nuevo: null, ed: { ejes: {}, muros: [] }, ultimoLego: null };
+  modo: "tramo", pend: [], eje: null, muroSel: null, nuevo: null, ed: { ejes: {}, muros: [], quitar: [] }, ultimoLego: null };
 /** "tabique:TM-11 …" -> "Tabique (no estructural) · TM-11 …" */
 const nombreTipologia = (v, tipo) => {
   const [base, ...resto] = (v || "").split(":");
@@ -491,7 +491,7 @@ async function cargarEstructura() {
     api("GET", P("/ediciones"))]);
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
-  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [] };
+  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [] };
   const tramos = est.modelo.tramos || [];
   if (!tramos.length && !est.modelo.muros.length && !est.modelo.ejes.length) {
     $("#est-contenido").classList.add("oculto");
@@ -537,9 +537,15 @@ function pintarPlantaEst() {
   };
   for (const w of m.muros.filter(x => x.nivel === nivel)) {
     const [x1, y1] = w.inicio, [x2, y2] = w.fin, L = Math.hypot(x2 - x1, y2 - y1) || 1;
-    const nx = -(y2 - y1) / L * w.espesor / 2, ny = (x2 - x1) / L * w.espesor / 2;
-    raiz.append(s("polygon", { points: [[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]].map(p => p.join(",")).join(" "),
-      fill: "var(--cad)", "fill-opacity": 0.35 }));
+    const e2 = Math.max(w.espesor, 0.08) / 2;
+    const nx = -(y2 - y1) / L * e2, ny = (x2 - x1) / L * e2;
+    const sel = w.id === est.muroSel;
+    const pol = s("polygon", { points: [[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]].map(p => p.join(",")).join(" "),
+      fill: sel ? "#dc2626" : "var(--cad)", "fill-opacity": sel ? 0.7 : 0.35, style: "cursor:pointer" });
+    const tt = s("title"); tt.textContent = `${w.id} · ${w.tipo} · ${w.espesor} m (clic para seleccionar)`; pol.append(tt);
+    pol.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.muroSel = w.id; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(pol);
     puntos.push(w.inicio, w.fin);
   }
   for (const w of m.muros.filter(x => x.nivel === nivel && x.capa_cad === "dibujado en la app")) {
@@ -595,6 +601,10 @@ function pintarPlantaEst() {
       "stroke-width": 4, "stroke-opacity": 0.5, "vector-effect": "non-scaling-stroke" }));
     puntos.push(f.inicio, f.fin);
   }
+  // muro seleccionado: resaltado encima de todo (los tramos suelen ir sobre los muros)
+  const wSel = m.muros.find(x => x.id === est.muroSel && x.nivel === nivel);
+  if (wSel) raiz.append(s("line", { x1: wSel.inicio[0], y1: wSel.inicio[1], x2: wSel.fin[0], y2: wSel.fin[1], stroke: "#dc2626",
+    "stroke-width": 9, "stroke-opacity": 0.85, "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
   // dibujo en curso (puntos ya marcados y línea guía hasta el cursor)
   const guia = s("g", { "pointer-events": "none" });
   raiz.append(guia);
@@ -668,13 +678,32 @@ function pintarGuia(cursor) {
 }
 
 $("#est-planta").addEventListener("mousemove", ev => {
-  if (est.modo === "tramo" || !est.modelo) return;
+  if (est.modo === "tramo" || est.modo === "borrar" || !est.modelo) return;
   const r = puntoModelo(ev); if (!r) return;
   pintarGuia(ajustar(r.p, r.escala));
 });
+/** Muro más cercano al punto (a menos de 15 px), del piso que se está viendo. */
+function muroCercano(p, escala) {
+  let mejor = null;
+  for (const w of est.modelo.muros.filter(x => x.nivel === est.nivel)) {
+    const [ax, ay] = w.inicio, [bx, by] = w.fin, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2));
+    const d = Math.hypot(p[0] - (ax + dx * t), p[1] - (ay + dy * t)) - w.espesor / 2;
+    if (d <= 15 / escala && (!mejor || d < mejor.d)) mejor = { w, d };
+  }
+  return mejor?.w ?? null;
+}
+
 $("#est-planta").addEventListener("click", ev => {
   if (est.modo === "tramo" || !est.modelo || est.ocupado) return;
   const r = puntoModelo(ev); if (!r) return;
+  if (est.modo === "borrar") {
+    const w = muroCercano(r.p, r.escala);
+    est.muroSel = w?.id ?? null; est.eje = null; est.tramo = null; est.nuevo = null;
+    if (!w) toast("No hay un muro ahí; haz clic sobre un muro");
+    pintarEstructura();
+    return;
+  }
   const q = ajustar(r.p, r.escala).p;
   est.pend.push(q);
   if (est.pend.length === 2) {
@@ -690,7 +719,7 @@ $("#est-planta").addEventListener("click", ev => {
 $$("#est-modos button").forEach(b => b.addEventListener("click", () => {
   est.modo = b.dataset.modo; est.pend = []; est.nuevo = null;
   $$("#est-modos button").forEach(x => x.classList.toggle("activo", x === b));
-  $("#est-ayuda").textContent = { tramo: "", eje: "Haz clic en el inicio y en el fin del eje (se ajusta a cruces y en horizontal/vertical).",
+  $("#est-ayuda").textContent = { tramo: "", borrar: "Haz clic sobre el muro que quieres eliminar (también los que están bajo un tramo).", eje: "Haz clic en el inicio y en el fin del eje (se ajusta a cruces y en horizontal/vertical).",
     muro: "Haz clic en el inicio y en el fin del muro (se ajusta a cruces de ejes y extremos de muros)." }[est.modo];
   if (est.modelo) pintarEstructura();
 }));
@@ -708,7 +737,7 @@ async function guardarEdiciones(nota) {
   est.ocupado = true;
   $("#est-estado").textContent = "Recalculando…";
   try {
-    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros });
+    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar });
     mostrarErroresEntradas(r.errores);
     const c = await api("POST", P("/corridas"), { notas: nota });
     await cargarCorridas(c.n);
@@ -780,8 +809,24 @@ function pintarPanelEdicion(box) {
   }
   if (est.muroSel) {
     const w = m.muros.find(x => x.id === est.muroSel);
-    const i = w ? +w.id.split("-D").pop() - 1 : -1;
-    if (!w || !est.ed.muros[i]) { est.muroSel = null; return false; }
+    if (!w) { est.muroSel = null; return false; }
+    if (w.capa_cad !== "dibujado en la app") {
+      box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, `Muro ${w.id}`),
+        h("div", { class: "tenue" }, `Del plano (capa ${w.capa_cad}) · ${w.tipo} · ${(w.espesor * 100).toFixed(0)} cm · ` +
+          `${Math.hypot(w.fin[0] - w.inicio[0], w.fin[1] - w.inicio[1]).toFixed(2)} m · ${w.nivel}` +
+          `${w.estructural ? " · estructural" : ""}`),
+        h("div", { class: "fila" },
+          h("button", { class: "pri", style: "background:#dc2626;border-color:#dc2626", onclick: () => {
+            est.ed.quitar.push({ nivel: w.nivel, inicio: w.inicio, fin: w.fin, id: w.id });
+            est.muroSel = null;
+            guardarEdiciones(`Muro ${w.id} eliminado`);
+          } }, "Eliminar muro"),
+          h("button", { class: "sec", onclick: () => { est.muroSel = null; pintarEstructura(); } }, "Cancelar")),
+        h("div", { class: "tenue" }, "Se quita del modelo (y sus vanos). Puedes restaurarlo desde la lista de tus cambios.")));
+      return true;
+    }
+    const i = +w.id.split("-D").pop() - 1;
+    if (!est.ed.muros[i]) { est.muroSel = null; return false; }
     const lego = selectorLego(w.tipo);
     const caracter = h("select", {}, h("option", { value: "tabique", selected: !w.estructural }, "Tabique (no estructural)"),
       h("option", { value: "muro", selected: w.estructural }, "Muro estructural"));
@@ -863,19 +908,24 @@ function pintarDetalleEst() {
   if (pintarPanelEdicion(box)) return;
   const t = est.modelo.tramos.find(x => x.id === est.tramo);
   if (!t) {
-    const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length;
-    box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo, un eje o un muro dibujado en la planta, o usa ",
-      h("strong", {}, "＋ Agregar eje"), " / ", h("strong", {}, "✎ Dibujar muro"), "."),
+    const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length + est.ed.quitar.length;
+    box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo, la burbuja de un eje o un muro en la planta, o usa ",
+      h("strong", {}, "＋ Agregar eje"), " / ", h("strong", {}, "✎ Dibujar muro"), " / ", h("strong", {}, "🗑 Borrar muro"), "."),
       nEjes || nMuros ? h("div", {}, h("strong", {}, "Tus cambios sobre el plano"),
         h("ul", { class: "lista-dibujados" },
           ...Object.entries(est.ed.ejes).map(([k, c]) => h("li", {}, c === null ? `Eje ${k}: eliminado` :
             c.inicio && !est.modelo.ejes.some(e => e.nombre === k && (e.origen || "").startsWith("editado")) ? `Eje ${c.nombre || k}: agregado` :
             `Eje ${k}: ${[c.posicion != null && "movido", (c.desde || c.hasta) && `entre ${c.desde || "…"} y ${c.hasta || "…"}`,
               c.nombre && `renombrado ${c.nombre}`].filter(Boolean).join(", ")}`)),
-          ...est.ed.muros.map((w, i) => h("li", {}, `Muro ${w.nivel}-D${String(i + 1).padStart(3, "0")}: ${w.tipo} (${w.nivel})`))),
+          ...est.ed.muros.map((w, i) => h("li", {}, `Muro ${w.nivel}-D${String(i + 1).padStart(3, "0")}: ${w.tipo} (${w.nivel})`)),
+          ...est.ed.quitar.map((q, i) => h("li", {}, `Muro ${q.id ?? ""} (${q.nivel}) eliminado `,
+            h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", onclick: () => {
+              est.ed.quitar.splice(i, 1);
+              guardarEdiciones(`Muro ${q.id ?? ""} restaurado`);
+            } }, "Restaurar")))),
         h("button", { class: "sec", style: "margin-top:6px", onclick: () => {
           if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
-          est.ed = { ejes: {}, muros: [] };
+          est.ed = { ejes: {}, muros: [], quitar: [] };
           guardarEdiciones("Ejes y muros: vuelven a los del plano");
         } }, "Deshacer todos mis cambios")) : null);
     return;
@@ -904,10 +954,20 @@ function pintarDetalleEst() {
         aplicarTramos(`Tramo ${t.id}: se agrega ${nombreTipologia(est.elecciones[t.id])}`);
       } }, "Agregar muro"));
   }
+  // muros del plano (o dibujados) sobre este tramo en el piso que se ve: se pueden eliminar aquí
+  const idsTramo = t.niveles[est.nivel]?.muros || [];
+  const murosTramo = est.modelo.muros.filter(w => idsTramo.includes(w.id));
+  const listaMuros = murosTramo.length ? h("div", { style: "margin-top:8px" }, h("strong", {}, `Muros en este tramo (${est.nivel})`),
+    h("ul", { class: "lista-dibujados" }, ...murosTramo.map(w => h("li", {}, `${w.id} · ${w.tipo} `,
+      h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", disabled: est.ocupado, onclick: () => {
+        if (w.capa_cad === "dibujado en la app") est.ed.muros.splice(+w.id.split("-D").pop() - 1, 1);
+        else est.ed.quitar.push({ nivel: w.nivel, inicio: w.inicio, fin: w.fin, id: w.id });
+        guardarEdiciones(`Muro ${w.id} eliminado`);
+      } }, "Eliminar"))))) : null;
   box.replaceChildren(
     h("h4", {}, `Tramo ${t.id}`),
     h("div", { class: "tenue" }, `Eje ${t.eje} entre ${t.entre[0]} y ${t.entre[1]} · ${t.largo.toFixed(2)} m · dirección ${t.direccion}`),
-    agregar,
+    agregar, listaMuros,
     h("label", { style: "display:flex;flex-direction:column;gap:4px;margin-top:10px" }, h("strong", {}, "Todos los pisos"), todos),
     ...niveles.map(n => {
       const inf = t.niveles[n];
