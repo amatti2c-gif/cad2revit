@@ -153,6 +153,32 @@ def test_proyecto_yaml_protegido_y_reparado(cliente, tmp_path):
     assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["ok"]
 
 
+def test_marcos_api(cliente):
+    pid = _crear(cliente)
+    cat = cliente.get("/api/catalogo").json()
+    assert {m["sistema"] for m in cat["marcos"]} == {"momento", "arriostrado_x"}
+    lg = cliente.get(f"/api/proyectos/{pid}/legos").json()
+    assert lg["capas_marco"] == ["S-MARCO-ARRIOSTRADO", "S-MARCO-MOMENTO"]
+    # nuevo lego: marco arriostrado con diagonales de tubo
+    nuevo = {"nombre": "MA-2 Arriostrado tubo", "sistema": "arriostrado_x", "material": "Acero estructural A270ES",
+             "vano_maximo": 5,
+             "columna": {"perfil": "W8X31", "forma": "W", "b": 0.2, "h": 0.2, "familia": "W-Wide Flange-Column"},
+             "viga": {"perfil": "W310X21", "forma": "W", "b": 0.101, "h": 0.303, "familia": "M_W Shapes"},
+             "diagonal": {"perfil": "", "forma": "tubo", "b": 0.1, "h": 0.1, "familia": ""}}
+    assert cliente.post("/api/catalogo/marcos", json=nuevo).status_code == 201
+    cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {}, "marcos": {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}})
+    assert cliente.get(f"/api/proyectos/{pid}/legos").json()["marcos"] == {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r["ok"] and r["conteos"]["marcos"] == 4
+    modelo = cliente.get(f"/api/proyectos/{pid}/corridas/{r['n']}").json()["modelo"]
+    norte = next(f for f in modelo["marcos"] if f["capa_cad"] == "S-MARCO-MOMENTO" and f["nivel"] == "N1")
+    assert norte["vanos"] == 2 and len(norte["diagonales"]) == 4 and norte["perfiles"]["diagonal"]["forma"] == "tubo"
+    # en uso: no se elimina; sin diagonal: inválido
+    assert cliente.delete("/api/catalogo/marcos/MA-2 Arriostrado tubo").status_code == 409
+    malo = dict(nuevo, nombre="Malo"); malo.pop("diagonal")
+    assert cliente.post("/api/catalogo/marcos", json=malo).status_code == 400
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

@@ -89,6 +89,12 @@ def planta(ruta: Path, con_puerta_exterior: bool) -> None:
         msp.add_lwpolyline([(cx - .15, -2.15), (cx + .15, -2.15), (cx + .15, -1.85), (cx - .15, -1.85)],
                            close=True, dxfattribs={"layer": "S-COL"})
 
+    # Marcos de acero (eje en planta): de momento al norte y arriostrado al oeste
+    for capa in ("S-MARCO-MOMENTO", "S-MARCO-ARRIOSTRADO"):
+        doc.layers.add(capa)
+    msp.add_line((0, 10), (10, 10), dxfattribs={"layer": "S-MARCO-MOMENTO"})       # 10 m -> 2 vanos
+    msp.add_line((-2, 0), (-2, 6), dxfattribs={"layer": "S-MARCO-ARRIOSTRADO"})    # 6 m -> 1 vano
+
     # Ejes
     for x in (0.1, 9.9):
         msp.add_line((x, -3), (x, 9), dxfattribs={"layer": "A-EJES"})

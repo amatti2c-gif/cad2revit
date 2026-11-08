@@ -178,6 +178,43 @@ def test_lego_inexistente(proyecto):
         cargar(proyecto("proyecto.yaml", py))
 
 
+def test_marcos_de_acero(proyecto):
+    modelo = construir_modelo(cargar(proyecto.ruta))
+    assert validar(modelo) == []
+    marcos = modelo["marcos"]
+    assert len(marcos) == 4                                   # 2 marcos x 2 pisos
+    mom = next(f for f in marcos if f["nivel"] == "N1" and f["sistema"] == "momento")
+    arr = next(f for f in marcos if f["nivel"] == "N1" and f["sistema"] == "arriostrado_x")
+    # momento: 10 m con vano máximo 6 -> 2 vanos, 3 columnas, 2 vigas, sin diagonales
+    assert mom["vanos"] == 2 and len(mom["columnas"]) == 3 and len(mom["vigas"]) == 2 and mom["diagonales"] == []
+    assert mom["perfiles"]["viga"]["perfil"] == "W310X21" and "diagonal" not in mom["perfiles"]
+    # arriostrado: 6 m -> 1 vano, cruz de 2 diagonales de piso a piso
+    assert arr["vanos"] == 1 and len(arr["diagonales"]) == 2 and arr["perfiles"]["diagonal"]["forma"] == "C"
+    d = arr["diagonales"][0]
+    assert d["inicio"][2] == 0.0 and d["fin"][2] == 2.7
+    assert {tuple(x["inicio"][:2]) for x in arr["diagonales"]} == {(-2.0, 0.0), (-2.0, 6.0)}
+    # vigas en el nivel superior y columnas de piso a piso
+    assert all(v["inicio"][2] == 2.7 for v in mom["vigas"])
+    assert all(c["z0"] == 0.0 and c["z1"] == 2.7 for c in mom["columnas"])
+    assert any(m["nombre"] == "Acero estructural A270ES" for m in modelo["materiales"])
+
+
+def test_marcos_lego_por_capa(proyecto):
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["legos"] = {"marcos": {"S-MARCO-MOMENTO": "MA-1 Marco arriostrado en cruz acero"}}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert all(f["sistema"] == "arriostrado_x" for f in modelo["marcos"])
+    norte = next(f for f in modelo["marcos"] if f["capa_cad"] == "S-MARCO-MOMENTO" and f["nivel"] == "N1")
+    assert len(norte["diagonales"]) == 4                      # 2 vanos x cruz
+
+
+def test_marco_invalido(proyecto):
+    mat = yaml.safe_load((proyecto.ruta.parent / "materialidades.yaml").read_text(encoding="utf-8"))
+    del mat["tipos_marco"][1]["diagonal"]
+    with pytest.raises(ErrorConfiguracion, match="falta el perfil de diagonal"):
+        cargar(proyecto("materialidades.yaml", mat))
+
+
 def test_lod100_simplifica(proyecto):
     ruta = proyecto("nivel_detalle.yaml", {"preset": 100, "ajustes": {}})
     modelo = construir_modelo(cargar(ruta))

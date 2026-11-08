@@ -130,6 +130,31 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
       Math.atan2(y2 - y1, x2 - x1));
   }
 
+  // Marcos de acero: columnas, vigas (bajo el nivel) y diagonales como prismas de sección b × h
+  const mAcero = mat("#64748b", { metalness: 0.3, roughness: 0.5 }), mDiag = mat("#2563eb", { metalness: 0.3, roughness: 0.5 });
+  const barra = (a, b, ancho, alto, material, normal) => {
+    const A = new THREE.Vector3(a[0], a[2], -a[1]), B = new THREE.Vector3(b[0], b[2], -b[1]);
+    const ejeB = new THREE.Vector3().subVectors(B, A); const L = ejeB.length(); if (L < 1e-4) return;
+    ejeB.normalize();
+    const n = normal.clone().sub(ejeB.clone().multiplyScalar(normal.dot(ejeB))).normalize();
+    const lat = new THREE.Vector3().crossVectors(ejeB, n).normalize();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(ancho, L, alto), material);
+    mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(lat, ejeB, n));
+    mesh.position.copy(A).add(B).multiplyScalar(0.5);
+    grupo.add(mesh);
+  };
+  for (const f of modelo.marcos || []) {
+    if (!ver(f.nivel)) continue;
+    const dir = new THREE.Vector3(f.direccion[0], 0, -f.direccion[1]);
+    const enPlano = new THREE.Vector3(-f.direccion[1], 0, -f.direccion[0]);   // normal al plano del marco
+    const pc = f.perfiles.columna, pv = f.perfiles.viga, pd = f.perfiles.diagonal;
+    for (const c of f.columnas) barra([c.punto[0], c.punto[1], c.z0], [c.punto[0], c.punto[1], c.z1], pc.h, pc.b, mAcero, enPlano);
+    for (const v of f.vigas) barra([v.inicio[0], v.inicio[1], v.inicio[2] - pv.h / 2], [v.fin[0], v.fin[1], v.fin[2] - pv.h / 2],
+                                   pv.b, pv.h, mAcero, new THREE.Vector3(0, 1, 0));
+    if (pd) for (const d of f.diagonales) barra(d.inicio, d.fin, pd.b, pd.h, mDiag, enPlano);
+    void dir;
+  }
+
   const mFund = mat("#a8a29e");
   const base = modelo.niveles[0]?.cota ?? 0;
   for (const f of modelo.fundaciones.corridas) {

@@ -704,6 +704,133 @@
           }
         }
       }
+    },
+    "marcos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "nivel",
+          "nivel_superior",
+          "sistema",
+          "material",
+          "perfiles",
+          "columnas",
+          "vigas",
+          "diagonales",
+          "direccion"
+        ],
+        "properties": {
+          "sistema": {
+            "enum": [
+              "momento",
+              "arriostrado_x"
+            ]
+          },
+          "perfiles": {
+            "type": "object",
+            "required": [
+              "columna",
+              "viga"
+            ],
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "forma",
+                "b",
+                "h",
+                "material"
+              ],
+              "properties": {
+                "forma": {
+                  "enum": [
+                    "W",
+                    "C",
+                    "L",
+                    "tubo",
+                    "rectangular",
+                    "circular"
+                  ]
+                },
+                "b": {
+                  "type": "number"
+                },
+                "h": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "columnas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "punto",
+                "z0",
+                "z1"
+              ]
+            }
+          },
+          "vigas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "inicio",
+                "fin"
+              ],
+              "properties": {
+                "inicio": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "fin": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              }
+            }
+          },
+          "diagonales": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "inicio",
+                "fin"
+              ],
+              "properties": {
+                "inicio": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                },
+                "fin": {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  },
+                  "minItems": 3,
+                  "maxItems": 3
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

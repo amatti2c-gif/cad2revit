@@ -318,8 +318,9 @@ def catalogo():
         "muros": [tarjeta(t) for t in mat.get("tipos_muro", [])],
         "losas": [tarjeta(t) for t in mat.get("tipos_losa", [])],
         "cubiertas": [tarjeta(t) for t in mat.get("tipos_cubierta", [])],
+        "marcos": mat.get("tipos_marco", []),
         "por_defecto": {"losa": mat.get("tipo_losa_por_defecto"), "cubierta": mat.get("tipo_cubierta_por_defecto"),
-                        "muro": mat.get("tipo_muro_por_defecto")},
+                        "muro": mat.get("tipo_muro_por_defecto"), "marco": mat.get("tipo_marco_por_defecto")},
         "estructura": {"sistema": est.get("sistema"), "material": est.get("material_estructural"),
                        "columnas": est.get("columnas"), "vigas": est.get("vigas")},
         "materiales": mat.get("materiales", []),
@@ -327,8 +328,10 @@ def catalogo():
 
 
 # ---------------------------------------------------------------- edición del catálogo
-GRUPOS = {"muros": "tipos_muro", "losas": "tipos_losa", "cubiertas": "tipos_cubierta"}
-DEFECTO = {"muros": "tipo_muro_por_defecto", "losas": "tipo_losa_por_defecto", "cubiertas": "tipo_cubierta_por_defecto"}
+GRUPOS = {"muros": "tipos_muro", "losas": "tipos_losa", "cubiertas": "tipos_cubierta", "marcos": "tipos_marco"}
+DEFECTO = {"muros": "tipo_muro_por_defecto", "losas": "tipo_losa_por_defecto", "cubiertas": "tipo_cubierta_por_defecto",
+           "marcos": "tipo_marco_por_defecto"}
+REGLAS = {"muros": "reglas_muro", "marcos": "reglas_marco"}
 CLAVE_PROYECTO = {"losas": "losa", "cubiertas": "cubierta"}
 
 
@@ -398,7 +401,26 @@ def _flow(d: dict):
     return m
 
 
+def _marco_a_yaml(lego: dict) -> dict:
+    from ruamel.yaml.comments import CommentedMap
+    out = CommentedMap()
+    out["nombre"] = lego["nombre"].strip()
+    out["sistema"] = lego.get("sistema")
+    out["material"] = lego.get("material")
+    if lego.get("vano_maximo"):
+        out["vano_maximo"] = round(float(lego["vano_maximo"]), 2)
+    roles = ["columna", "viga"] + (["diagonal"] if lego.get("sistema") == "arriostrado_x" else [])
+    for rol in roles:
+        p = lego.get(rol) or {}
+        out[rol] = _flow({"perfil": (p.get("perfil") or "").strip(), "forma": p.get("forma"),
+                          "b": round(float(p.get("b") or 0), 4), "h": round(float(p.get("h") or 0), 4),
+                          "familia": (p.get("familia") or "").strip()})
+    return out
+
+
 def _lego_a_yaml(grupo: str, lego: dict) -> dict:
+    if grupo == "marcos":
+        return _marco_a_yaml(lego)
     from ruamel.yaml.comments import CommentedMap
     out = CommentedMap()
     out["nombre"] = lego["nombre"].strip()
@@ -429,13 +451,13 @@ def _usos(grupo: str, nombre: str) -> list[str]:
     """Dónde se usa un lego: reglas, valores por defecto y proyectos."""
     usos = []
     mat = _leer_yaml_seguro(_lineamientos() / "materialidades.yaml")
-    if grupo == "muros" and any(r.get("tipo") == nombre for r in mat.get("reglas_muro", [])):
-        usos.append("reglas automáticas de muros (Lineamientos → materialidades.yaml → reglas_muro)")
+    if grupo in REGLAS and any(r.get("tipo") == nombre for r in mat.get(REGLAS[grupo], [])):
+        usos.append(f"reglas automáticas (Lineamientos → materialidades.yaml → {REGLAS[grupo]})")
     if mat.get(DEFECTO[grupo]) == nombre:
         usos.append(f"valor por defecto ({DEFECTO[grupo]})")
     for d in (_datos() / "proyectos").iterdir():
         legos = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("legos") or {}
-        if (grupo == "muros" and nombre in (legos.get("muros") or {}).values()) or \
+        if (grupo in ("muros", "marcos") and nombre in (legos.get(grupo) or {}).values()) or \
            (grupo in CLAVE_PROYECTO and legos.get(CLAVE_PROYECTO[grupo]) == nombre):
             usos.append(f"proyecto '{d.name}'")
     return usos
@@ -449,23 +471,31 @@ def _renombrar_en_proyectos(grupo: str, viejo: str, nuevo: str) -> None:
         datos = _leer_yaml_seguro(py)
         legos = datos.get("legos") or {}
         cambio = False
-        if grupo == "muros":
-            for capa, t in list((legos.get("muros") or {}).items()):
+        if grupo in ("muros", "marcos"):
+            for capa, t in list((legos.get(grupo) or {}).items()):
                 if t == viejo:
-                    legos["muros"][capa] = nuevo
+                    legos[grupo][capa] = nuevo
                     cambio = True
         elif legos.get(CLAVE_PROYECTO[grupo]) == viejo:
             legos[CLAVE_PROYECTO[grupo]] = nuevo
             cambio = True
         if cambio:
-            guardar_legos(d.name, Legos(muros=legos.get("muros") or {}, losa=legos.get("losa"), cubierta=legos.get("cubierta")))
+            guardar_legos(d.name, Legos(muros=legos.get("muros") or {}, marcos=legos.get("marcos") or {},
+                                        losa=legos.get("losa"), cubierta=legos.get("cubierta")))
 
 
 class Lego(BaseModel):
     nombre: str
     estructural: bool = False
-    capas: list[dict]
+    capas: list[dict] = []
     entramado: dict | None = None
+    # marcos de acero
+    sistema: str | None = None
+    material: str | None = None
+    vano_maximo: float | None = None
+    columna: dict | None = None
+    viga: dict | None = None
+    diagonal: dict | None = None
 
 
 @app.post("/api/catalogo/{grupo}", status_code=201)
@@ -495,7 +525,7 @@ def editar_lego(grupo: str, nombre: str, lego: Lego):
         raise HTTPException(409, f"Ya existe un lego llamado '{nuevo}'")
     lista[i] = _lego_a_yaml(grupo, lego.model_dump())
     if nuevo != nombre:                       # el nombre cambia también donde se usa
-        for r in mat.get("reglas_muro", []) if grupo == "muros" else []:
+        for r in mat.get(REGLAS[grupo], []) if grupo in REGLAS else []:
             if r.get("tipo") == nombre:
                 r["tipo"] = nuevo
         if mat.get(DEFECTO[grupo]) == nombre:
@@ -552,10 +582,10 @@ def crear_material(m: Material):
     return {"creado": m.nombre}
 
 
-def _capas_de_muro(d: Path) -> list[str]:
-    """Capas del CAD que contienen muros, leídas de los planos asignados al proyecto."""
+def _capas_de_muro(d: Path, categoria: str = "muros") -> list[str]:
+    """Capas del CAD de una categoría (muros, marcos) leídas de los planos del proyecto."""
     capas_cfg = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("capas") or {}
-    patron = re.compile(capas_cfg["muros"]) if capas_cfg.get("muros") else None
+    patron = re.compile(capas_cfg[categoria]) if capas_cfg.get(categoria) else None
     py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
     archivos = [Path(p["archivo"]).name for p in py.get("plantas") or []] or \
                [f.name for f in (d / "planos").glob("*.dxf")]
@@ -573,6 +603,7 @@ def _capas_de_muro(d: Path) -> list[str]:
 
 class Legos(BaseModel):
     muros: dict[str, str | None] = {}
+    marcos: dict[str, str | None] = {}
     losa: str | None = None
     cubierta: str | None = None
 
@@ -582,6 +613,7 @@ def leer_legos(pid: str):
     d = _proyecto(pid)
     legos = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("legos") or {}
     return {"capas_muro": _capas_de_muro(d), "muros": legos.get("muros") or {},
+            "capas_marco": _capas_de_muro(d, "marcos"), "marcos": legos.get("marcos") or {},
             "losa": legos.get("losa"), "cubierta": legos.get("cubierta")}
 
 
@@ -594,6 +626,8 @@ def guardar_legos(pid: str, datos: Legos):
     texto = re.sub(r"^# Legos elegidos.*\n?", "", texto, flags=re.M)
     texto = re.sub(r"^legos:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
     bloque = {"muros": {k: v for k, v in datos.muros.items() if v}}
+    if any(datos.marcos.values()):
+        bloque["marcos"] = {k: v for k, v in datos.marcos.items() if v}
     if datos.losa:
         bloque["losa"] = datos.losa
     if datos.cubierta:
@@ -686,6 +720,8 @@ def _conteos(m: dict) -> dict:
         "vigas": len(m["vigas"]), "fundaciones": len(f["corridas"]) + len(f["aisladas"]),
         "recintos": len(m["recintos"]), "advertencias": len(m["advertencias"]),
         "piezas_entramado": sum(len(e["piezas"]) for e in m.get("entramados", [])),
+        "marcos": len(m.get("marcos", [])),
+        "perfiles_acero": sum(len(f["columnas"]) + len(f["vigas"]) + len(f["diagonales"]) for f in m.get("marcos", [])),
     }
 
 

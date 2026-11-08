@@ -14,6 +14,7 @@ from .aberturas import asignar_a_muros, clasificar_inserciones
 from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
+from . import marcos as marcos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
 from .muros import Muro, detectar_muros
@@ -121,7 +122,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         "materiales": cfg.materialidades.get("materiales", []),
         "niveles": niveles, "ejes": [], "tipos_muro": [], "tipos_losa": [],
         "muros": [], "aberturas": [], "losas": [], "cielos": [], "columnas": [], "vigas": [],
-        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "advertencias": adv,
+        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "marcos": [], "advertencias": adv,
     }
     cota = {n["nombre"]: n["cota"] for n in niveles}
 
@@ -241,6 +242,11 @@ def construir_modelo(cfg: Configuracion) -> dict:
                     e["nivel"] = nivel
                     modelo["entramados"].append(e)
 
+        # 10) Marcos de acero (líneas en capas de marcos)
+        if lod.get("marcos"):
+            segs_marco = dib.segmentos_en(cfg.capa("marcos"))
+            modelo["marcos"] += marcos_mod.generar(segs_marco, cfg, nivel, sup, cota, pref, adv)
+
         for m in muros:
             d = dict(id=m.id, nivel=nivel, nivel_superior=sup, inicio=m.a, fin=m.b, espesor=m.espesor,
                      tipo=m.tipo, estructural=m.estructural, perimetral=m.perimetral, capa_cad=m.capa_cad)
@@ -292,6 +298,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         usados_mat.add(cfg.estructuracion["material_estructural"])
     usados_mat |= {e["material"] for e in modelo["entramados"] if e.get("material")}
     usados_mat |= {x["material"] for x in modelo["columnas"] + modelo["vigas"] if x.get("material")}
+    usados_mat |= {f["material"] for f in modelo["marcos"]}
     modelo["materiales"] = [m for m in modelo["materiales"] if m["nombre"] in usados_mat]
     modelo["material_estructural"] = cfg.estructuracion.get("material_estructural")
     return json.loads(json.dumps(modelo))   # tuplas -> listas: el modelo es JSON puro

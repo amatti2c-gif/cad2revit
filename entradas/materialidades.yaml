@@ -41,6 +41,9 @@ materiales:
   - nombre: Porcelanato
     clase: Cerámica
     color: [215, 205, 190]
+  - nombre: Acero estructural A270ES
+    clase: Metal
+    color: [120, 130, 145]
   - nombre: Pino radiata
     clase: Madera
     color: [214, 180, 120]
@@ -121,6 +124,39 @@ tipos_cubierta:
     capas:
       - {funcion: aislacion,  material: Poliestireno expandido, espesor: 0.08}
       - {funcion: estructura, material: Hormigón armado H30,    espesor: 0.15}
+
+# -----------------------------------------------------------------------------
+#  MARCOS DE ACERO
+# -----------------------------------------------------------------------------
+#  En planta, cada marco es una LÍNEA (su eje) en una capa de marcos. Por piso
+#  se generan columnas en los extremos (y cada "vano_maximo" si es más largo),
+#  una viga por vano en el nivel superior y, si es arriostrado, una cruz (X)
+#  de diagonales por vano.
+#  Perfil de cada elemento:
+#    perfil   designación (ej. W310X21); si ese tipo existe en Revit se usa tal cual
+#    forma    W (doble T) | C | L | tubo | rectangular | circular
+#    b, h     ancho y alto de la sección (m), para ajustar otra familia de la misma forma
+#    familia  familia de Revit preferida
+tipos_marco:
+  - nombre: MM-1 Marco de momento acero
+    sistema: momento                  # uniones de momento viga-columna
+    material: Acero estructural A270ES
+    vano_maximo: 6.0                  # m; vacío = un solo vano
+    columna:  {perfil: "203x203x46UC", forma: W, b: 0.203, h: 0.203, familia: "UC-Universal Column-Column"}
+    viga:     {perfil: "W310X21",      forma: W, b: 0.101, h: 0.303, familia: "M_W Shapes"}
+
+  - nombre: MA-1 Marco arriostrado en cruz acero
+    sistema: arriostrado_x            # vigas articuladas + diagonales en X
+    material: Acero estructural A270ES
+    vano_maximo: 6.0
+    columna:  {perfil: "203x203x46UC", forma: W, b: 0.203, h: 0.203, familia: "UC-Universal Column-Column"}
+    viga:     {perfil: "W310X21",      forma: W, b: 0.101, h: 0.303, familia: "M_W Shapes"}
+    diagonal: {perfil: "C150X15.6",    forma: C, b: 0.051, h: 0.152, familia: "M_C Shapes"}
+
+# Capa del CAD -> lego de marco (si el proyecto no elige otro en la pestaña Legos)
+reglas_marco:
+  - {capa_cad: "(?i)arriostr|brac|MARCO-A", tipo: MA-1 Marco arriostrado en cruz acero}
+tipo_marco_por_defecto: MM-1 Marco de momento acero
 
 # -----------------------------------------------------------------------------
 #  REGLAS DE ASIGNACIÓN DE MUROS

@@ -15,16 +15,16 @@ FUNCIONES_CAPA = {"estructura", "sustrato", "aislacion", "terminacion1", "termin
 PRESETS_LOD: dict[int, dict[str, Any]] = {
     100: dict(muros="generico", aberturas="ninguna", losas=True, cubierta=True, recintos=False,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=False, vigas=False, fundaciones=False, ejes=True, entramado=False),
+              columnas=False, vigas=False, fundaciones=False, ejes=True, entramado=False, marcos=False),
     200: dict(muros="tipo", aberturas="hueco", losas=True, cubierta=True, recintos=False,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=True, vigas=False, fundaciones=False, ejes=True, entramado=False),
+              columnas=True, vigas=False, fundaciones=False, ejes=True, entramado=False, marcos=True),
     300: dict(muros="compuesto", aberturas="familia", losas=True, cubierta=True, recintos=True,
               terminaciones=False, cielos=False, escaleras=False,
-              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=False),
+              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=False, marcos=True),
     350: dict(muros="compuesto", aberturas="familia", losas=True, cubierta=True, recintos=True,
               terminaciones=True, cielos=True, escaleras=True,
-              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=True),
+              columnas=True, vigas=True, fundaciones=True, ejes=True, entramado=True, marcos=True),
 }
 
 VALORES_ENUM = {
@@ -91,7 +91,8 @@ def resolver_lod(nivel_detalle: dict) -> dict:
 
 
 def _validar_materialidades(m: dict) -> list[str]:
-    errores = []
+    from .marcos import validar as validar_marcos
+    errores = validar_marcos(m)
     materiales = {x["nombre"] for x in m.get("materiales", [])}
     for grupo in ("tipos_muro", "tipos_losa", "tipos_cubierta"):
         for t in m.get(grupo, []):
@@ -178,6 +179,9 @@ def cargar(proyecto_yaml: str | Path) -> Configuracion:
     for capa, tipo in (legos.get("muros") or {}).items():
         if tipo and tipo not in {t["nombre"] for t in mat.get("tipos_muro", [])}:
             errores.append(f"El lego '{tipo}' elegido para la capa '{capa}' ya no existe en el catálogo de muros")
+    for capa, tipo in (legos.get("marcos") or {}).items():
+        if tipo and tipo not in {t["nombre"] for t in mat.get("tipos_marco", [])}:
+            errores.append(f"El lego '{tipo}' elegido para la capa '{capa}' ya no existe en el catálogo de marcos")
     for clave, grupo in (("losa", "tipos_losa"), ("cubierta", "tipos_cubierta")):
         v = legos.get(clave)
         if v and v not in {t["nombre"] for t in mat.get(grupo, [])}:

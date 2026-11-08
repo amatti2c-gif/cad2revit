@@ -59,6 +59,7 @@ namespace Cad2Revit
                 Etapa("Columnas", CrearColumnas);
                 Etapa("Vigas", CrearVigas);
                 Etapa("Fundaciones", CrearFundaciones);
+                Etapa("Marcos de acero", CrearMarcos);
                 if (_m.Recintos.Count > 0) Etapa("Recintos", CrearRecintos);
                 VerificarAberturas();   // maneja sus propias etapas (reintentos confirmados uno a uno)
                 grupo.Assimilate();

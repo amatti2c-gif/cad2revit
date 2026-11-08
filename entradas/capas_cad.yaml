@@ -14,6 +14,7 @@ capas:
   ejes:       "(?i)EJE|GRID"
   recintos:   "(?i)RECINTO|ROOM|NOMBRE"
   niveles:    "(?i)NIVEL|NPT|LEVEL"     # en elevaciones/cortes
+  marcos:     "(?i)MARCO|FRAME|ARRIOSTR|BRAC"   # ejes de marcos de acero (una línea por marco)
 
 # Reconocimiento geométrico de muros (líneas paralelas)
 deteccion_muros:

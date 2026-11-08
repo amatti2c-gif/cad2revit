@@ -29,6 +29,7 @@ namespace Cad2Revit
         public FundacionesDef Fundaciones { get; set; } = new();
         public List<RecintoDef> Recintos { get; set; } = new();
         public List<EntramadoDef> Entramados { get; set; } = new();
+        public List<MarcoDef> Marcos { get; set; } = new();
         public List<string> Advertencias { get; set; } = new();
 
         public static Modelo Leer(string ruta)
@@ -184,6 +185,34 @@ namespace Cad2Revit
         public double Ancho { get; set; }
         public double Profundidad { get; set; }
     }
+
+    public class MarcoDef
+    {
+        public string Id { get; set; }
+        public string Nivel { get; set; }
+        public string NivelSuperior { get; set; }
+        public string Tipo { get; set; }
+        public string Sistema { get; set; }            // momento | arriostrado_x
+        public string Material { get; set; }
+        public double[] Direccion { get; set; }
+        public Dictionary<string, PerfilDef> Perfiles { get; set; } = new();
+        public List<ColumnaMarcoDef> Columnas { get; set; } = new();
+        public List<BarraDef> Vigas { get; set; } = new();
+        public List<BarraDef> Diagonales { get; set; } = new();
+    }
+
+    public class PerfilDef
+    {
+        public string Perfil { get; set; }
+        public string Forma { get; set; }
+        public string Familia { get; set; }
+        public string Material { get; set; }
+        public double B { get; set; }
+        public double H { get; set; }
+    }
+
+    public class ColumnaMarcoDef { public double[] Punto { get; set; } public double Z0 { get; set; } public double Z1 { get; set; } }
+    public class BarraDef { public double[] Inicio { get; set; } public double[] Fin { get; set; } }
 
     public class RecintoDef { public string Nivel { get; set; } public string Nombre { get; set; } public double[] Punto { get; set; } }
 }

@@ -61,6 +61,12 @@
         <div class="tabla-wrap"><table class="tabla" id="tabla-legos">
           <thead><tr><th>Capa del CAD</th><th>Lego</th><th>Espesor</th></tr></thead><tbody></tbody>
         </table></div>
+        <div id="bloque-marcos" class="oculto">
+          <p class="tenue" style="margin-top:14px">Marcos de acero: elige el lego de cada capa de marcos (una línea por marco en planta).</p>
+          <div class="tabla-wrap"><table class="tabla" id="tabla-marcos">
+            <thead><tr><th>Capa del CAD</th><th>Lego de marco</th><th>Sistema</th></tr></thead><tbody></tbody>
+          </table></div>
+        </div>
         <div class="fila-legos">
           <label>Losa de entrepiso <select id="sel-lego-losa"></select></label>
           <label>Cubierta <select id="sel-lego-cubierta"></select></label>
@@ -219,6 +225,31 @@
       <div id="lego-error" class="aviso error oculto"></div>
       <div class="acciones"><button value="cancel" class="sec" formnovalidate>Cancelar</button>
         <button id="lego-guardar" value="ok" class="pri">Guardar lego</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-marco" class="dlg-ancho">
+    <form method="dialog" id="form-marco">
+      <h3 id="marco-titulo">Marco de acero</h3>
+      <div class="grilla-campos">
+        <label>Nombre <input id="marco-nombre" required></label>
+        <label>Sistema <select id="marco-sistema">
+          <option value="momento">Marco de momento (uniones rígidas)</option>
+          <option value="arriostrado_x">Marco arriostrado en cruz (X)</option>
+        </select></label>
+        <label>Material <select id="marco-material"></select></label>
+        <label>Vano máximo (m) <input id="marco-vano" type="number" step="0.5" min="1" placeholder="sin límite"></label>
+      </div>
+      <svg id="marco-esquema" viewBox="0 0 220 110" class="esquema-marco"></svg>
+      <div class="tabla-wrap"><table class="tabla" id="marco-perfiles">
+        <thead><tr><th>Elemento</th><th>Perfil (designación)</th><th>Forma</th><th>b (mm)</th><th>h (mm)</th><th>Familia Revit</th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p class="tenue">Si en Revit existe un tipo con esa designación (ej. W310X21) se usa tal cual. Si no, se usa una familia
+        de acero de la misma forma ajustada a b × h (b = ancho del ala o lado, h = altura del perfil).</p>
+      <div id="marco-error" class="aviso error oculto"></div>
+      <div class="acciones"><button value="cancel" class="sec" formnovalidate>Cancelar</button>
+        <button id="marco-guardar" value="ok" class="pri">Guardar lego</button></div>
     </form>
   </dialog>
 

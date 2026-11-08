@@ -182,3 +182,12 @@ legend { padding: 0 4px; }
 .lego .acciones-lego button { padding: 4px 10px; font-size: 12.5px; }
 .grupo-legos .tit { display: flex; justify-content: space-between; align-items: center; }
 .grupo-legos .tit button { padding: 4px 10px; font-size: 12.5px; }
+
+/* ---------- Marcos de acero ---------- */
+.esquema-marco { width: 220px; max-width: 100%; height: 110px; display: block; margin: 8px 0; }
+.lego .esquema-marco { width: 160px; height: 80px; }
+.esquema-marco .col, .esquema-marco .vig { stroke: var(--texto); stroke-width: 4; }
+.esquema-marco .dia { stroke: var(--acento); stroke-width: 2.5; }
+.esquema-marco .nudo { fill: var(--texto); }
+.esquema-marco .suelo { stroke: var(--tenue); stroke-width: 1.5; stroke-dasharray: 4 3; }
+#marco-perfiles input, #marco-perfiles select { width: 100%; min-width: 0; }
