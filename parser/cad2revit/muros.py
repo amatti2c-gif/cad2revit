@@ -312,7 +312,7 @@ def largo_pareado_por_capa(segs: list[Segmento], det: dict) -> dict[str, tuple[f
             n = (-u[1], u[0])
             d = s.a[0] * n[0] + s.a[1] * n[1]
             t = sorted((s.a[0] * u[0] + s.a[1] * u[1], s.b[0] * u[0] + s.b[1] * u[1]))
-            grupos.setdefault(k, []).append([d, t[0], t[1], 0.0])
+            grupos.setdefault(k, []).append([d, t[0], t[1], 0.0, 0.0])     # d, t0, t1, solape abajo, solape arriba
         for items in grupos.values():
             items.sort()
             for i, a in enumerate(items):
@@ -324,8 +324,14 @@ def largo_pareado_por_capa(segs: list[Segmento], det: dict) -> dict[str, tuple[f
                         continue
                     sol = min(a[2], b[2]) - max(a[1], b[1])
                     if sol >= lmin:
-                        a[3] += sol
+                        a[4] += sol          # b está "arriba" de a
                         b[3] += sol
-        pareado = sum(min(x[3], x[2] - x[1]) for it in grupos.values() for x in it)
+        # cara de muro: paralela por UN lado (la otra cara). Con paralelas a ambos lados es achurado.
+        def cara(x):
+            largo = x[2] - x[1]
+            if min(x[3], x[4]) >= 0.5 * largo:
+                return 0.0
+            return min(max(x[3], x[4]), largo)
+        pareado = sum(cara(x) for it in grupos.values() for x in it)
         out[capa] = (round(pareado, 1), round(total, 1))
     return out

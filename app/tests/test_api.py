@@ -405,9 +405,10 @@ def test_plano_con_planta_y_fachada(cliente, tmp_path):
     # usar el plano completo como planta: la fachada agrega "muros" falsos
     d = cliente.get(f"/api/proyectos/{pid}/distribucion").json()
     cliente.put(f"/api/proyectos/{pid}/distribucion", json={"niveles": d["niveles"], "usos": {"Todo junto.dxf": "planta:N1"}})
-    assert cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["uso"] == "planta:N1"
+    # …pero un plano con varias vistas es UN edificio: la app vuelve a dejar solo la planta
+    assert cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["uso"] == "vistas"
     r2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
-    assert r2["conteos"]["muros"] >= muros_vista
+    assert r2["conteos"]["muros"] == muros_vista
     # volver a elegir por vista desde la app
     k_pl, k_el = v["planta"]["k"], v["elevacion"]["k"]
     r = cliente.put(f"/api/proyectos/{pid}/distribucion", json={"niveles": d["niveles"], "usos": {

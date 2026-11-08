@@ -225,7 +225,8 @@ async function cargarPlanos() {
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
     h("td", {}, pl.vistas.length ? h("div", { class: "aviso-vistas" },
       h("strong", {}, `Este plano trae ${pl.vistas.length} vistas`),
-      " (planta, fachadas, cortes…) dibujadas lado a lado. Elige abajo para qué se usa cada una.",
+      " (planta, fachadas, cortes…) de un mismo edificio. Solo la planta genera el modelo 3D; las fachadas y cortes " +
+      "no crean estructura (si tienen cotas de nivel, se usan para las alturas).",
       h("div", {}, h("button", { class: "sec", style: "margin-top:6px", onclick: () => intentar(() =>
         guardarVistas(pl, Object.fromEntries(pl.vistas.map(v => [v.k, sugerenciaVista(v)])), "Vistas según la sugerencia"))
       }, "Usar la sugerencia"))) : (() => {
@@ -300,7 +301,7 @@ function filaVistas(pl) {
       v.muros_m ? `${v.muros_m} m de muros` : null, v.textos_nivel ? `${v.textos_nivel} cotas de nivel` : null].filter(Boolean);
     return h("div", { class: "tarjeta-vista" + (v.uso !== "no" ? " usada" : "") }, svg,
       h("div", {}, h("strong", {}, `Vista ${v.k + 1}`), " ",
-        h("span", { class: "tenue" }, `parece ${NOMBRE_SUGERENCIA[v.sugerido]}`)),
+        h("span", { class: "tenue" }, `parece ${v.tipo ?? NOMBRE_SUGERENCIA[v.sugerido]}`)),
       h("div", { class: "tenue" }, datos.join(" · ")), sel);
   });
   return h("tr", { class: "fila-vistas" }, h("td", { colspan: 5 }, h("div", { class: "vistas" }, tarjetas)));

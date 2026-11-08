@@ -328,3 +328,43 @@ def test_ajuste_lod_invalido(proyecto):
     ruta = proyecto("nivel_detalle.yaml", {"preset": 300, "ajustes": {"muros": "bonito"}})
     with pytest.raises(ErrorConfiguracion, match="muros"):
         cargar(ruta)
+
+
+def test_planta_y_cuatro_fachadas_es_un_solo_edificio():
+    """Planta con puertas + 4 fachadas achuradas (muchas paralelas) y una con 'Cota de Nivel':
+    se sugiere UNA planta (la real) y las fachadas no generan estructura."""
+    from cad2revit import vistas
+    from cad2revit.dxf_reader import DibujoCAD, Insercion, Segmento
+    segs, ins = [], []
+
+    def rect(x0, y0, x1, y1, capa):
+        segs.extend([Segmento((x0, y0), (x1, y0), capa), Segmento((x1, y0), (x1, y1), capa),
+                     Segmento((x1, y1), (x0, y1), capa), Segmento((x0, y1), (x0, y0), capa)])
+    # planta 12 x 8 con muros de 20 cm y 3 puertas
+    rect(0, 0, 12, 8, "M"); rect(0.2, 0.2, 11.8, 7.8, "M")
+    for x in (3, 6, 9):
+        ins.append(Insercion("P80", "0Puertas", (x, 0.1), 0, None))
+    # 4 fachadas a la derecha, achuradas con líneas cada 10 cm, con línea de suelo
+    for k in range(4):
+        x0 = 30 + k * 20
+        segs.append(Segmento((x0 - 1, 0), (x0 + 13, 0), "F"))
+        for j in range(1, 60):
+            segs.append(Segmento((x0, j * 0.1), (x0 + 12, j * 0.1), "F"))
+    ins.append(Insercion("Cota de Nivel_1", "F", (31, 6.5), 0, None))
+    dib = DibujoCAD("x.dxf", 1.0, segs, [], ins, [])
+    v = vistas.detectar(dib, es_abertura=lambda i: "Puerta" in i.capa)
+    assert len(v) == 5
+    plantas = [x for x in v if x["sugerido"] == "planta"]
+    assert len(plantas) == 1 and plantas[0]["caja"][0] == 0
+    assert sum(x["tipo"] == "fachada o corte" for x in v) == 4
+    assert all(x["sugerido"] == "no" for x in v if x is not plantas[0])
+
+
+def test_achurado_no_cuenta_como_muro():
+    from cad2revit.dxf_reader import Segmento
+    from cad2revit.muros import largo_pareado_por_capa
+    det = {"espesor_min": 0.05, "espesor_max": 0.40, "largo_min": 0.20}
+    muro = [Segmento((0, 0), (10, 0), "M"), Segmento((0, 0.2), (10, 0.2), "M")]
+    achurado = [Segmento((0, j * 0.1), (10, j * 0.1), "H") for j in range(50)]
+    r = largo_pareado_por_capa(muro + achurado, det)
+    assert r["M"][0] == 20 and r["H"][0] <= 20      # solo las 2 líneas de borde del achurado

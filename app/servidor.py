@@ -910,6 +910,7 @@ def guardar_distribucion(pid: str, datos: Distribucion):
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):
     d = _proyecto(pid)
+    _separar_vistas(d)
     uso = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"), d)
     patron_nivel = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
     out = []
@@ -967,6 +968,42 @@ async def subir_planos(pid: str, archivos: list[UploadFile] = File(...)):
         (d / "planos" / nombre).write_bytes(contenido)
         guardados.append(nombre)
     return {"guardados": guardados, **_acomodar_planos(d, guardados)}
+
+
+def _separar_vistas(d: Path) -> list[str]:
+    """Si una planta usa un plano completo que trae varias vistas (planta + fachadas + cortes),
+    se deja solo la vista de planta: el plano es UN edificio, las fachadas no generan estructura."""
+    py = d / "entradas" / "proyecto.yaml"
+    datos = _leer_yaml_seguro(py)
+    notas, cambio = [], False
+    elevaciones = list(datos.get("elevaciones") or [])
+    plantas = list(datos.get("plantas") or [])
+    for pl in plantas:
+        if pl.get("zonas"):
+            continue
+        nombre = Path(pl["archivo"]).name
+        try:
+            vistas = _vistas_de(d, nombre)
+        except Exception:
+            continue
+        if len(vistas) < 2:
+            continue
+        planta = next(v for v in vistas if v["sugerido"] == "planta")
+        pl["zonas"] = [planta["caja"]]
+        for v in vistas:
+            if v["sugerido"] == "elevacion":
+                elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
+        otras = len(vistas) - 1
+        notas.append(f"{nombre} trae {len(vistas)} vistas: se usa la vista {planta['k'] + 1} como planta de "
+                     f"{pl['nivel']} y las otras {otras} (fachadas, cortes…) no generan estructura. "
+                     "Puedes cambiarlo en Planos.")
+        cambio = True
+    if cambio:
+        texto = py.read_text(encoding="utf-8")
+        texto = _reemplazar_bloque(texto, "plantas", plantas)
+        texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+        py.write_text(texto, encoding="utf-8")
+    return notas
 
 
 def _vistas_con_uso(d: Path, nombre: str, uso: dict) -> list[dict]:
@@ -1106,7 +1143,9 @@ def ejecutar(pid: str, datos: NuevaCorrida):
     resumen = {"n": n, "fecha": _ahora(), "notas": datos.notas, "ok": False, "error": None,
                "conteos": None, "lod": None, "errores_esquema": []}
     try:
+        separadas = _separar_vistas(d)
         modelo = construir_modelo(cargar(d / "entradas" / "proyecto.yaml"))
+        modelo["advertencias"][:0] = separadas
         usados = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))       # sin d: solo nombres
         sin_usar = sorted(f.name for f in (d / "planos").glob("*.dxf") if f.name not in usados)
         if sin_usar:
