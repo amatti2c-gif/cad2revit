@@ -70,6 +70,8 @@ namespace Cad2Revit
         public string Nivel { get; set; }
         public string NivelSuperior { get; set; }
         public double? Altura { get; set; }
+        /// <summary>Muro de buhardilla: su parte superior se une al techo (frontón).</summary>
+        public bool UnirTecho { get; set; }
         public double[] Inicio { get; set; }
         public double[] Fin { get; set; }
         public double Espesor { get; set; }

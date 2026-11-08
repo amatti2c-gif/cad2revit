@@ -491,7 +491,8 @@ async function cargarEstructura() {
     api("GET", P("/ediciones"))]);
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
-  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [], marcos: ed.marcos || [], editar: ed.editar || [] };
+  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [], marcos: ed.marcos || [], editar: ed.editar || [],
+    buhardilla: !!ed.buhardilla };
   const tramos = est.modelo.tramos || [];
   if (!tramos.length && !est.modelo.muros.length && !est.modelo.ejes.length) {
     $("#est-contenido").classList.add("oculto");
@@ -771,7 +772,8 @@ async function guardarEdiciones(nota) {
   est.ocupado = true;
   $("#est-estado").textContent = "Recalculando…";
   try {
-    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar, marcos: est.ed.marcos, editar: est.ed.editar });
+    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar, marcos: est.ed.marcos, editar: est.ed.editar,
+      buhardilla: !!est.ed.buhardilla });
     mostrarErroresEntradas(r.errores);
     const c = await api("POST", P("/corridas"), { notas: nota });
     await cargarCorridas(c.n);
@@ -1029,7 +1031,14 @@ function pintarDetalleEst() {
           if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
           est.ed = { ejes: {}, muros: [], quitar: [], marcos: [], editar: [] };
           guardarEdiciones("Ejes y muros: vuelven a los del plano");
-        } }, "Deshacer todos mis cambios")) : null, notaEjes);
+        } }, "Deshacer todos mis cambios")) : null, notaEjes,
+      h("label", { style: "display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px" },
+        h("input", { type: "checkbox", checked: !!est.ed.buhardilla, disabled: est.ocupado, onchange: ev => {
+          est.ed.buhardilla = ev.target.checked;
+          guardarEdiciones(ev.target.checked ? "Nivel buhardilla: muros hasta la cubierta" : "Nivel buhardilla: libre");
+        } }),
+        h("span", {}, h("strong", {}, "Nivel buhardilla"), " — completar los muros del último piso hasta la cubierta (frontones), ",
+          "con su entramado siguiendo la pendiente. Por defecto queda libre: los muros llegan horizontales a su nivel.")));
     return;
   }
   const niveles = Object.keys(t.niveles);

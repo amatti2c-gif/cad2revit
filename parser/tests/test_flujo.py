@@ -658,3 +658,29 @@ def test_entramado_de_fronton_sigue_el_techo():
     assert any(p["rol"] == "cadeneta" and p["inicio"][2] > 2.6 for p in e["piezas"])   # dentro del frontón
     plano = entramado.generar(fronton, [fronton], conf, 0.0, 2.5, [])
     assert all(p["fin"][2] <= 2.5 for p in plano["piezas"])                            # sin techo: hasta el nivel
+
+
+def test_nivel_buhardilla_opcional(proyecto, tmp_path):
+    """Por defecto los muros llegan horizontales al nivel de cubierta (bajo el techo queda libre); con el nivel
+    buhardilla se agregan los frontones (muros desde la cubierta hasta el techo, unidos al techo en Revit)."""
+    from cad2revit import vistas
+    from cad2revit.dxf_reader import leer
+    ruta = tmp_path / "edificio.dxf"
+    _dxf_edificio(ruta)
+    v = vistas.detectar(leer(str(ruta)), es_abertura=lambda i: i.nombre == "P80", patron_nivel=r"(?i)NPT\s*[±+-]?\s*(\d+[.,]\d+)")
+    por_tipo = {x["tipo"]: x for x in v}
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["A-MURO"], "puertas": ["A-PUERTA"]}
+    py["niveles"] = [{"nombre": "N1", "cota": 0.0}, {"nombre": "Cubierta", "cota": 3.0}]
+    py["plantas"] = [{"nivel": "N1", "archivo": str(ruta), "zonas": [por_tipo["planta"]["caja"]]}]
+    py["elevaciones"] = [{"archivo": str(ruta), "zona": por_tipo[t]["caja"]} for t in ("corte A", "fachada")]
+    py["techo"] = {"archivo": str(ruta), "zona": por_tipo["planta de techo"]["caja"]}
+    base = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert not any(m.get("buhardilla") or m.get("unir_techo") for m in base["muros"])
+    py["buhardilla"] = True
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert validar(modelo) == []
+    buh = [m for m in modelo["muros"] if m.get("buhardilla")]
+    assert len(buh) == 2 and all(m["nivel"] == "Cubierta" and m["unir_techo"] and m["nivel_superior"] is None for m in buh)
+    assert all(abs(m["inicio"][1] - m["fin"][1]) > 5 for m in buh)       # los frontones (perpendiculares a la cumbrera)
+    assert all(1.6 < m["altura"] < 2.0 for m in buh)                       # hasta la cumbrera (1,75 m sobre el alero)

@@ -490,7 +490,7 @@ def test_ediciones_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
     assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
     cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
-    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": [], "editar": []}
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": [], "editar": [], "buhardilla": False}
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
 
 

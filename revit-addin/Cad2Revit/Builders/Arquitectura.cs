@@ -220,7 +220,8 @@ namespace Cad2Revit
             if (!Enum.IsDefined(tipoUbic, "Top")) return;
             var arriba = Enum.Parse(tipoUbic, "Top");
             int unidos = 0;
-            foreach (var m in _m.Muros.Where(m => m.NivelSuperior == nivelTecho))
+            // solo los muros de buhardilla (opción del proyecto): los demás llegan horizontales a su nivel
+            foreach (var m in _m.Muros.Where(m => m.UnirTecho))
             {
                 if (!_muros.TryGetValue(m.Id, out var w)) continue;
                 if (Intentar(m.Id + " (unir al techo)", () => metodo.Invoke(w, new object[] { techo.Id, arriba }), false))

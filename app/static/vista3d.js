@@ -61,6 +61,8 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
   const conEntramado = new Set((modelo.entramados || []).map(e => e.muro));
   const matTransparente = t => (materiales["~" + t] ||= mat(colores[t] || "#9ca3af",
     { transparent: true, opacity: 0.18, depthWrite: false }));
+  const losaTecho = modelo.losas.find(l => l.cubierta && l.pendiente > 0 && (l.bordes_pendiente || []).length);
+  const alturaTecho = losaTecho ? funcionTecho(losaTecho) : null;
   for (const w of modelo.muros) {
     muroPorId[w.id] = w;
     if (!ver(w.nivel)) continue;
@@ -68,6 +70,24 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
     const alto = w.nivel_superior != null ? cota[w.nivel_superior] - z0 : (w.altura ?? 2.6);
     const [x1, y1] = w.inicio, [x2, y2] = w.fin;
     const L = Math.hypot(x2 - x1, y2 - y1);
+    if (w.buhardilla && alturaTecho) {
+      // muro de buhardilla: desde el nivel de cubierta hasta la línea del techo (frontón)
+      const forma = new THREE.Shape();
+      forma.moveTo(0, 0);
+      const n = 32;
+      for (let k = 0; k <= n; k++) {
+        const t = L * k / n;
+        forma.lineTo(t, alturaTecho([x1 + (x2 - x1) * t / L, y1 + (y2 - y1) * t / L]));
+      }
+      forma.lineTo(L, 0);
+      const geo = new THREE.ExtrudeGeometry(forma, { depth: w.espesor, bevelEnabled: false });
+      geo.translate(0, 0, -w.espesor / 2);
+      const malla = new THREE.Mesh(geo, conEntramado.has(w.id) ? matTransparente(w.tipo) : matTipo(w.tipo));
+      malla.position.set(x1, z0, -y1);
+      malla.rotation.y = Math.atan2(y2 - y1, x2 - x1);
+      grupo.add(malla);
+      continue;
+    }
     caja(grupo, conEntramado.has(w.id) ? matTransparente(w.tipo) : matTipo(w.tipo),
       (x1 + x2) / 2, z0 + alto / 2, -(y1 + y2) / 2, L, alto, w.espesor, Math.atan2(y2 - y1, x2 - x1));
   }
@@ -108,7 +128,7 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
   for (const l of modelo.losas) {
     if (!ver(l.nivel)) continue;
     if (l.cubierta && l.pendiente > 0 && (l.bordes_pendiente || []).length) {
-      techoInclinado(grupo, l, cota[l.nivel], mat("#b45309"), mat("#e7e5e4"));
+      techoInclinado(grupo, l, cota[l.nivel], mat("#b45309"), null);   // frontones: solo como muros de buhardilla
       continue;
     }
     const e = espesorTipo[l.tipo] || 0.15;
@@ -253,11 +273,28 @@ function techoInclinado(grupo, l, z0, mTecho, mFronton) {
       fpos.push(...P3(p, z0), ...P3(q, z0), ...P3(q, z0 + hq), ...P3(p, z0), ...P3(q, z0 + hq), ...P3(p, z0 + hp));
     }
   }
-  if (fpos.length) {
+  if (fpos.length && mFronton) {
     const g2 = new THREE.BufferGeometry();
     g2.setAttribute("position", new THREE.Float32BufferAttribute(fpos, 3));
     g2.computeVertexNormals();
     const mf = mFronton.clone(); mf.side = THREE.DoubleSide;
     grupo.add(new THREE.Mesh(g2, mf));
   }
+}
+
+
+/** Altura del techo inclinado sobre su nivel en un punto de la planta (el menor de los planos de pendiente). */
+function funcionTecho(l) {
+  let pts = l.contorno.map(p => [p[0], p[1]]);
+  const n = pts.length;
+  let bordes = l.bordes_pendiente.slice();
+  const area = pts.reduce((a, p, i) => { const q = pts[(i + 1) % n]; return a + p[0] * q[1] - q[0] * p[1]; }, 0);
+  if (area < 0) { pts = pts.slice().reverse(); bordes = bordes.map(i => (i === n - 1 ? n - 1 : n - 2 - i)); }
+  const t = Math.tan(l.pendiente * Math.PI / 180);
+  const planos = bordes.map(i => {
+    const a = pts[i], b = pts[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
+    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t };
+  });
+  return p => Math.max(0, Math.min(...planos.map(pl => pl.c0 + pl.cx * p[0] + pl.cy * p[1])));
 }

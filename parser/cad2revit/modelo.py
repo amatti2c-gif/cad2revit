@@ -503,11 +503,33 @@ def construir_modelo(cfg: Configuracion) -> dict:
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,
                                                cota, adv, marcos_mod)
 
+    # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
+    # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit
+    buhardilla = []
+    cub_nivel = next((l["nivel"] for l in modelo["losas"] if l.get("cubierta")), None)
+    planos_cub = _planos_techo(modelo, cub_nivel) if cub_nivel else []
+    if cfg.proyecto.get("buhardilla") and planos_cub:
+        # solo los muros perimetrales (frontones); los interiores siguen llegando horizontales a su nivel
+        for d in [x for x in modelo["muros"] if x.get("nivel_superior") == cub_nivel and x.get("perimetral")]:
+            ts, h = marcos_mod._perfil_techo(tuple(d["inicio"]), tuple(d["fin"]), planos_cub, 0.0, [])
+            alto = max(h(t) for t in ts) if ts else 0.0
+            if alto < 0.5:
+                continue                       # muros de alero: el techo apenas sube sobre ellos (no es frontón)
+            nuevo = dict(d, id=f"{d['id']}-B", nivel=cub_nivel, nivel_superior=None, altura=round(alto + 0.05, 3),
+                         unir_techo=True, buhardilla=True)
+            buhardilla.append(nuevo)
+        modelo["muros"] += buhardilla
+        if buhardilla:
+            adv.append(f"Nivel buhardilla: {len(buhardilla)} muros desde {cub_nivel} hasta el techo (frontones)")
+        else:
+            adv.append("Nivel buhardilla activado, pero ningún muro queda bajo una zona inclinada del techo")
+    elif cfg.proyecto.get("buhardilla"):
+        adv.append("Nivel buhardilla activado, pero la cubierta no es inclinada: no hay muros que completar")
+
     # Entramado de madera (tipos de muro con sección "entramado"), con el tipo final de cada muro
     if lod.get("entramado"):
         for nivel, sup_e, z0, z1 in pendiente_entramado:
-            # bajo un techo inclinado los muros se unen al techo en Revit: el entramado sigue el techo
-            planos = _planos_techo(modelo, sup_e)
+            planos = None                      # muros del piso: horizontales hasta el nivel superior
             muros = [Muro(id=d["id"], a=tuple(d["inicio"]), b=tuple(d["fin"]), espesor=d["espesor"],
                           capa_cad=d["capa_cad"], tipo=d["tipo"], estructural=d["estructural"])
                      for d in modelo["muros"] if d["nivel"] == nivel]
@@ -520,6 +542,21 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if e["piezas"]:
                     e["nivel"] = nivel
                     modelo["entramados"].append(e)
+
+        # muros de buhardilla: entramado desde el nivel de cubierta hasta la línea del techo
+        for d in buhardilla:
+            conf = (cfg.tipo_muro(d["tipo"]) or {}).get("entramado")
+            if not conf:
+                continue
+            m = Muro(id=d["id"], a=tuple(d["inicio"]), b=tuple(d["fin"]), espesor=d["espesor"], capa_cad=d["capa_cad"],
+                     tipo=d["tipo"], estructural=d["estructural"])
+            otros = [Muro(id=x["id"], a=tuple(x["inicio"]), b=tuple(x["fin"]), espesor=x["espesor"], capa_cad=x["capa_cad"])
+                     for x in buhardilla]
+            z0 = cota[cub_nivel]
+            e = entramado_mod.generar(m, otros, conf, z0, z0, [], planos_techo=planos_cub)
+            if e["piezas"]:
+                e["nivel"] = cub_nivel
+                modelo["entramados"].append(e)
 
     # Marcos dibujados en la app (momento o arriostrado, con su lego)
     dibujados = cfg.proyecto.get("marcos_usuario") or []
