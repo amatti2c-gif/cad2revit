@@ -181,9 +181,15 @@ namespace Cad2Revit
         public void Advertencia(string s) => Advertencias.Add(s);
         public void Error(string s) => Errores.Add(s);
 
+        /// <summary>Versión del complemento (commit con que se compiló).</summary>
+        public static string Version =>
+            (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(
+                typeof(Informe).Assembly)?.InformationalVersion) ?? "?";
+
         public string Resumen()
         {
             var sb = new StringBuilder();
+            sb.AppendLine($"Complemento cad2revit {Version} · {DateTime.Now:yyyy-MM-dd HH:mm}");
             foreach (var kv in Creados) sb.AppendLine($"{kv.Key}: {kv.Value}");
             sb.AppendLine($"Advertencias: {Advertencias.Count}   Errores: {Errores.Count}   " +
                           $"No creados por familia faltante: {CantidadFaltantes}");

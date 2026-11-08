@@ -17,6 +17,10 @@
     <AssemblyName>Cad2Revit</AssemblyName>
     <RootNamespace>Cad2Revit</RootNamespace>
     <Version>0.1.0</Version>
+    <!-- en GitHub Actions se estampa el commit, para saber qué versión está corriendo en Revit -->
+    <InformationalVersion Condition="'$(GITHUB_SHA)' != ''">0.1.0 · $(GITHUB_SHA.Substring(0, 7))</InformationalVersion>
+    <InformationalVersion Condition="'$(GITHUB_SHA)' == ''">0.1.0 · local</InformationalVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <PlatformTarget>x64</PlatformTarget>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <EnableDynamicLoading>true</EnableDynamicLoading>

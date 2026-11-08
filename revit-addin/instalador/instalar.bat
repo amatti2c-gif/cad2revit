@@ -18,6 +18,14 @@ copy /Y "%~dp0Cad2Revit.addin" "%DEST%\" >nul
 rem Windows marca como "bloqueados" los archivos descargados de internet; se desbloquean.
 powershell -NoProfile -Command "Get-ChildItem -Recurse -LiteralPath '%DEST%\Cad2Revit' | Unblock-File; Unblock-File -LiteralPath '%DEST%\Cad2Revit.addin'" >nul 2>&1
 
+rem Otra copia instalada para todos los usuarios: Revit podria cargar esa (antigua) en vez de esta.
+if exist "%ProgramData%\Autodesk\Revit\Addins\%VER%\Cad2Revit.addin" (
+  echo.
+  echo  ATENCION: hay otra copia de cad2revit en
+  echo    %ProgramData%\Autodesk\Revit\Addins\%VER%
+  echo  Revit podria cargar esa version antigua. Borra de esa carpeta Cad2Revit.addin y la carpeta Cad2Revit.
+)
+
 echo.
 echo  cad2revit instalado en:
 echo    %DEST%
