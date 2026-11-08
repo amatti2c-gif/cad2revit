@@ -134,7 +134,10 @@ namespace Cad2Revit
                 bordes.Append(Line.CreateBound(a, b));
                 extremos.Add((a, b, i));
             }
-            var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out ModelCurveArray curvas);
+            if (tipo == null) throw new Exception("no hay tipo de techo");
+            var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out ModelCurveArray curvas)
+                        ?? throw new Exception("Revit no pudo crear el techo con ese contorno");
+            if (curvas == null || curvas.Size == 0) throw new Exception("Revit no devolvió los bordes del techo");
             double tangente = Math.Tan(l.Pendiente * Math.PI / 180.0);
             foreach (ModelCurve mc in curvas)
             {
@@ -149,7 +152,8 @@ namespace Cad2Revit
             }
             Marcar(techo, l.Id);
             _inf.Contar($"Cubiertas inclinadas ({l.Forma})");
-            UnirMurosAlTecho(techo, l.Nivel);
+            try { UnirMurosAlTecho(techo, l.Nivel); }          // opcional: nunca debe deshacer el techo
+            catch (Exception ex) { _inf.Advertencia($"{l.Id}: el techo se creó, pero no se pudieron unir los muros a él ({ex.Message})"); }
         }
 
         private RoofType TipoTecho(string nombre)
@@ -178,9 +182,11 @@ namespace Cad2Revit
         /// Wall.AddAttachment existe desde Revit 2024; se invoca por reflexión para no fallar si cambia.</summary>
         private void UnirMurosAlTecho(RoofBase techo, string nivelTecho)
         {
-            var metodo = typeof(Wall).GetMethod("AddAttachment");
+            var metodo = typeof(Wall).GetMethods().FirstOrDefault(m => m.Name == "AddAttachment" && m.GetParameters().Length == 2
+                                                                       && m.GetParameters()[1].ParameterType.IsEnum);
             if (metodo == null) return;
             var tipoUbic = metodo.GetParameters()[1].ParameterType;
+            if (!Enum.IsDefined(tipoUbic, "Top")) return;
             var arriba = Enum.Parse(tipoUbic, "Top");
             int unidos = 0;
             foreach (var m in _m.Muros.Where(m => m.NivelSuperior == nivelTecho))

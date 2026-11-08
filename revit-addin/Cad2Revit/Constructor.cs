@@ -169,6 +169,21 @@ namespace Cad2Revit
         private string _etapa = "";
         private string _ultimoFallo = "";
 
+        /// <summary>Mensaje de una excepción con lo necesario para diagnosticarla desde el informe:
+        /// tipo, parámetro (si es de argumentos) y la línea del add-in donde ocurrió.</summary>
+        private static string Detalle(Exception ex)
+        {
+            var e = ex is System.Reflection.TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            var txt = e.Message;
+            if (e is ArgumentException ae && !string.IsNullOrEmpty(ae.ParamName) && !txt.Contains(ae.ParamName))
+                txt += $" (parámetro '{ae.ParamName}')";
+            var donde = (e.StackTrace ?? "").Split('\n').Select(l => l.Trim())
+                        .FirstOrDefault(l => l.Contains("Cad2Revit."));
+            if (!string.IsNullOrEmpty(donde))
+                txt += $" [{e.GetType().Name} en {donde.Replace("at ", "").Split(" in ")[0]}]";
+            return txt;
+        }
+
         // ElementId de Revit -> id cad2revit (para traducir los rechazos de Revit al informe)
         private readonly Dictionary<ElementId, string> _origen = new();
         // Elementos que Revit eliminó al confirmar una etapa, con el motivo
@@ -236,7 +251,7 @@ namespace Cad2Revit
                     if (st.HasStarted() && !st.HasEnded()) st.RollBack();
                     _inf.Creados.Clear();
                     foreach (var kv in conteo) _inf.Creados[kv.Key] = kv.Value;
-                    _ultimoFallo = ex.Message;
+                    _ultimoFallo = Detalle(ex);
                     if (registrarError) _inf.Error($"{id}: {ex.Message}");
                     return false;
                 }
