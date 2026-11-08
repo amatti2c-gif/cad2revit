@@ -40,9 +40,19 @@
       <div id="zona-subida" class="zona-subida">
         <p><strong>Arrastra aquí tus planos .dwg o .dxf</strong> o <label class="link">elígelos<input id="inp-planos" type="file" accept=".dxf,.dwg" multiple hidden></label></p>
         <p class="tenue" id="nota-dwg">Los DWG se convierten solos a DXF, el formato de trabajo de la app (el original queda guardado).
-          Luego asígnalos a un nivel en <em>Lineamientos → proyecto.yaml</em> usando la ruta que aparece en la tabla.</p>
+          Al subir tus planos se quitan los de ejemplo y cada uno se asigna solo a un nivel; puedes cambiarlo abajo.</p>
       </div>
       <div id="aviso-planos" class="aviso oculto"></div>
+      <div class="panel" id="panel-planos">
+        <div class="panel-tit"><span>Planos de este proyecto: <span id="tit-proyecto-planos"></span></span></div>
+        <p class="tenue">Cada proyecto tiene sus propios planos. En la columna <strong>¿Para qué se usa?</strong> elige
+          «Planta de N1», «Planta de N2»… para las plantas, «Elevación / corte» para las elevaciones, o «No usar» para
+          dejarlo fuera. Se guarda al elegir. Los planos que no quieras, bórralos con <em>Eliminar</em>.</p>
+        <div class="tabla-wrap"><table class="tabla" id="tabla-planos">
+          <thead><tr><th>Archivo</th><th>¿Para qué se usa?</th><th>Capas</th><th>Bloques</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </div>
       <div class="panel" id="panel-niveles">
         <div class="panel-tit"><span>Niveles del proyecto</span>
           <span class="acciones"><button class="sec" id="btn-agregar-nivel">+ Nivel</button>
@@ -58,10 +68,6 @@
           este proyecto. Si no marcas nada se usa la regla general (Lineamientos → capas_cad.yaml).</p>
         <div id="lista-capas"></div>
       </div>
-      <div class="tabla-wrap"><table class="tabla" id="tabla-planos">
-        <thead><tr><th>Archivo</th><th>Uso en el proyecto</th><th>Capas</th><th>Bloques</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table></div>
       <div id="vista-plano" class="panel oculto">
         <div class="panel-tit"><span id="tit-vista-plano"></span><button class="sec" id="cerrar-vista-plano">Cerrar</button></div>
         <svg id="svg-plano" class="lienzo"></svg>

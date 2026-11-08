@@ -850,8 +850,8 @@ def listar_planos(pid: str):
                     "ruta_en_proyecto": f"../planos/{f.name}", "error": err,
                     "desde_dwg": original.name if original.exists() else None,
                     "uso": uso.get(f.name, "no"),
-                    "parece_elevacion": bool(patron_nivel and not err and
-                                             any(re.search(patron_nivel, t.texto) for t in dib.textos))})
+                    "ejemplo": f.name in PLANOS_EJEMPLO,
+                    "parece_elevacion": not err and _parece_elevacion(dib, patron_nivel)})
     return out
 
 
@@ -888,7 +888,62 @@ async def subir_planos(pid: str, archivos: list[UploadFile] = File(...)):
             continue
         (d / "planos" / nombre).write_bytes(contenido)
         guardados.append(nombre)
-    return {"guardados": guardados}
+    return {"guardados": guardados, **_acomodar_planos(d, guardados)}
+
+
+PLANOS_EJEMPLO = {"planta_n1.dxf", "planta_n2.dxf", "elevacion_norte.dxf"}
+
+
+def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
+    """Al subir planos propios: se quitan los de ejemplo y cada plano nuevo queda asignado solo
+    (elevación si tiene textos de nivel; si no, planta del primer nivel libre). Se cambia en la tabla."""
+    quitados = []
+    if any(n not in PLANOS_EJEMPLO for n in nuevos):
+        for n in sorted(PLANOS_EJEMPLO - set(nuevos)):
+            if (d / "planos" / n).exists():
+                _borrar_archivo_plano(d / "planos" / n)
+                quitados.append(n)
+    py = d / "entradas" / "proyecto.yaml"
+    datos = _leer_yaml_seguro(py)
+    existe = {f.name for f in (d / "planos").glob("*.dxf")}
+    plantas = [x for x in datos.get("plantas") or [] if Path(x["archivo"]).name in existe]
+    elevaciones = [x for x in datos.get("elevaciones") or [] if Path(x).name in existe]
+    niveles = sorted(datos.get("niveles") or [], key=lambda n: n.get("cota", 0))
+    candidatos = [n["nombre"] for n in (niveles[:-1] if len(niveles) > 1 else niveles)]
+    patron = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
+    usados = {Path(x["archivo"]).name for x in plantas} | {Path(x).name for x in elevaciones}
+    asignados = {}
+    for n in sorted(set(nuevos) & existe - usados):
+        try:
+            dib = leer(str(d / "planos" / n))
+        except Exception:
+            continue
+        if _parece_elevacion(dib, patron):
+            elevaciones.append(f"../planos/{n}")
+            asignados[n] = "elevacion"
+            continue
+        libres = [c for c in candidatos if c not in {x["nivel"] for x in plantas}]
+        if libres:
+            plantas.append({"nivel": libres[0], "archivo": f"../planos/{n}"})
+            asignados[n] = f"planta:{libres[0]}"
+    orden = [n["nombre"] for n in niveles]
+    plantas.sort(key=lambda x: orden.index(x["nivel"]) if x["nivel"] in orden else 99)
+    texto = py.read_text(encoding="utf-8")
+    texto = _reemplazar_bloque(texto, "plantas", plantas)
+    texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+    py.write_text(texto, encoding="utf-8")
+    return {"asignados": asignados, "ejemplos_quitados": quitados}
+
+
+def _parece_elevacion(dib, patron) -> bool:
+    return bool(patron and any(re.search(patron, t.texto) for t in dib.textos))
+
+
+def _borrar_archivo_plano(f: Path) -> None:
+    f.unlink()
+    (f.parent / "originales" / (f.stem + ".dwg")).unlink(missing_ok=True)
+    for c in (f.parent / ".cad2revit").glob(f"{f.name}.*"):        # formato interno del plano
+        c.unlink(missing_ok=True)
 
 
 @app.delete("/api/proyectos/{pid}/planos/{nombre}", status_code=204)
@@ -896,10 +951,7 @@ def borrar_plano(pid: str, nombre: str):
     f = _proyecto(pid) / "planos" / _seguro(nombre)
     if not f.exists():
         raise HTTPException(404, "No existe el plano")
-    f.unlink()
-    (f.parent / "originales" / (f.stem + ".dwg")).unlink(missing_ok=True)
-    for c in (f.parent / ".cad2revit").glob(f"{f.name}.*"):        # formato interno del plano
-        c.unlink(missing_ok=True)
+    _borrar_archivo_plano(f)
 
 
 @app.get("/api/proyectos/{pid}/planos/{nombre}/geometria")

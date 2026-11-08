@@ -181,6 +181,7 @@ async function cargarCapas() {
 }
 
 async function cargarPlanos() {
+  $("#tit-proyecto-planos").textContent = $("#sel-proyecto").selectedOptions[0]?.textContent.replace(/\s*\(\d+ corridas?\)$/, "") ?? "";
   // niveles primero (respuesta inmediata); luego capas y planos, que leen los archivos
   const d = await api("GET", P("/distribucion"));
   dist.niveles = d.niveles; dist.usos = d.usos;
@@ -209,7 +210,8 @@ async function cargarPlanos() {
     return;
   }
   tb.replaceChildren(...planos.map(pl => h("tr", {},
-    h("td", {}, h("strong", {}, pl.nombre), h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB` +
+    h("td", {}, h("strong", {}, pl.nombre), pl.ejemplo ? h("span", { class: "chip", style: "margin-left:6px" }, "ejemplo") : null,
+      h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB` +
         (pl.desde_dwg ? ` · convertido desde ${pl.desde_dwg}` : "")),
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
     h("td", {}, (() => {
@@ -245,7 +247,9 @@ async function subir(files) {
   [...files].forEach(f => fd.append("archivos", f));
   await intentar(async () => {
     const r = await api("POST", P("/planos"), fd);
-    toast(`Subidos: ${r.guardados.join(", ")}`);
+    const usos = Object.entries(r.asignados || {}).map(([n, u]) => `${n} → ${u === "elevacion" ? "elevación" : "planta de " + u.slice(7)}`);
+    toast([`Subidos: ${r.guardados.join(", ")}.`, usos.length ? `Asignados: ${usos.join("; ")}.` : "",
+      r.ejemplos_quitados?.length ? "Se quitaron los planos de ejemplo." : ""].join(" "));
     r.guardados.forEach(n => delete estado.cadCache[n]);
     await cargarPlanos();
     await cargarLegos();

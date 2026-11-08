@@ -224,6 +224,23 @@ def test_subir_dwg_con_convertidor(cliente, tmp_path, monkeypatch):
     assert not list((base / ".cad2revit").glob("Planta Piso 1.dxf.*"))
 
 
+def test_subir_planos_propios_quita_ejemplos_y_asigna(cliente, tmp_path):
+    pid = _crear(cliente)                      # proyecto con los 3 planos de ejemplo
+    fuente = tmp_path / "fuente"
+    from generar_ejemplo import generar
+    generar(fuente)
+    archivos = [("archivos", ("Mi Planta 1.dxf", (fuente / "planta_n1.dxf").read_bytes())),
+                ("archivos", ("Mi Planta 2.dxf", (fuente / "planta_n2.dxf").read_bytes())),
+                ("archivos", ("Mi Corte.dxf", (fuente / "elevacion_norte.dxf").read_bytes()))]
+    r = cliente.post(f"/api/proyectos/{pid}/planos", files=archivos).json()
+    assert sorted(r["ejemplos_quitados"]) == sorted(["planta_n1.dxf", "planta_n2.dxf", "elevacion_norte.dxf"])
+    assert r["asignados"] == {"Mi Corte.dxf": "elevacion", "Mi Planta 1.dxf": "planta:N1", "Mi Planta 2.dxf": "planta:N2"}
+    planos = {p["nombre"]: p for p in cliente.get(f"/api/proyectos/{pid}/planos").json()}
+    assert set(planos) == {"Mi Planta 1.dxf", "Mi Planta 2.dxf", "Mi Corte.dxf"}
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r["ok"] and r["conteos"]["muros"] > 0 and not r.get("planos_sin_usar")
+
+
 def test_distribucion_de_planos(cliente, tmp_path):
     pid = _crear(cliente)
     planos = {p["nombre"]: p for p in cliente.get(f"/api/proyectos/{pid}/planos").json()}
