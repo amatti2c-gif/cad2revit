@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import binascii
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -30,7 +31,7 @@ from pathlib import Path
 
 import yaml
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1114,13 +1115,49 @@ def _error_cfg(_, exc: ErrorConfiguracion):
 
 
 # ---------------------------------------------------------------- interfaz
+ESTATICOS = RAIZ / "app" / "static"
+
+
+def _version_web() -> str:
+    """Huella del contenido de la interfaz: cambia en cada despliegue que toque la página."""
+    h = hashlib.sha1()
+    for f in sorted(ESTATICOS.glob("*")):
+        h.update(f.name.encode() + f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+VERSION_WEB = _version_web()
+
+
+@app.get("/", include_in_schema=False)
+@app.get("/index.html", include_in_schema=False)
+def inicio():
+    """La página apunta a los scripts de ESTA versión (v/<huella>/app.js): el navegador no puede
+    mezclar una página nueva con un script viejo guardado."""
+    html = (ESTATICOS / "index.html").read_text(encoding="utf-8")
+    html = html.replace('href="estilos.css"', f'href="v/{VERSION_WEB}/estilos.css"')
+    html = html.replace('src="app.js"', f'src="v/{VERSION_WEB}/app.js"')
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/v/{version}/{archivo}", include_in_schema=False)
+def estatico_versionado(version: str, archivo: str):
+    f = ESTATICOS / _seguro(archivo, "archivo")
+    if not f.is_file() or f.name == "index.html":
+        raise HTTPException(404, "No existe")
+    # la huella va en la ruta: si es la actual se puede guardar para siempre; si no, que no se guarde
+    cache = "public, max-age=31536000, immutable" if version == VERSION_WEB else "no-store"
+    return FileResponse(f, headers={"Cache-Control": cache})
+
+
 @app.middleware("http")
 async def _sin_cache_estatico(request, call_next):
-    """La página y sus scripts se revalidan siempre: tras un despliegue nunca queda una versión vieja."""
+    """Todo lo que no es la API ni un archivo versionado se revalida siempre."""
     r = await call_next(request)
-    if not request.url.path.startswith("/api/"):
+    ruta = request.url.path
+    if not ruta.startswith("/api/") and not ruta.startswith("/v/") and ruta not in ("/", "/index.html"):
         r.headers["Cache-Control"] = "no-cache"
     return r
 
 
-app.mount("/", StaticFiles(directory=RAIZ / "app" / "static", html=True), name="static")
+app.mount("/", StaticFiles(directory=ESTATICOS, html=True), name="static")

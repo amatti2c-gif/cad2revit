@@ -1,6 +1,8 @@
 """Pruebas de la API web con un directorio de datos temporal."""
 from __future__ import annotations
 
+import re
+
 import base64
 import importlib
 import sys
@@ -355,3 +357,15 @@ def test_railway_sin_credenciales_bloquea(tmp_path, monkeypatch):
 
 def test_local_sin_credenciales_abierto(tmp_path, monkeypatch):
     assert _cliente_con(tmp_path, monkeypatch).get("/api/proyectos").status_code == 200
+
+
+def test_pagina_con_scripts_versionados(cliente):
+    r = cliente.get("/")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+    m = re.search(r'src="v/(\w+)/app.js"', r.text)
+    assert m and 'href="v/' + m.group(1) + '/estilos.css"' in r.text
+    js = cliente.get(f"/v/{m.group(1)}/app.js")
+    assert js.status_code == 200 and "immutable" in js.headers["cache-control"]
+    assert cliente.get(f"/v/{m.group(1)}/vista3d.js").status_code == 200        # import relativo
+    assert cliente.get("/v/vieja/app.js").headers["cache-control"] == "no-store"
+    assert cliente.get("/v/x/..%2Fservidor.py").status_code in (400, 404)
