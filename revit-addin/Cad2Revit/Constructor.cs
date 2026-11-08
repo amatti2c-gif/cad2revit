@@ -180,10 +180,12 @@ namespace Cad2Revit
             var txt = e.Message;
             if (e is ArgumentException ae && !string.IsNullOrEmpty(ae.ParamName) && !txt.Contains(ae.ParamName))
                 txt += $" (parámetro '{ae.ParamName}')";
-            var donde = (e.StackTrace ?? "").Split('\n').Select(l => l.Trim())
-                        .FirstOrDefault(l => l.Contains("Cad2Revit."));
+            var lineas = (e.StackTrace ?? "").Split('\n').Select(l => l.Trim().Replace("at ", "").Split(" in ")[0])
+                                             .Where(l => l.Length > 0).ToList();
+            var donde = lineas.FirstOrDefault(l => l.Contains("Cad2Revit."));
+            var interna = lineas.FirstOrDefault();          // la función (de Revit o .NET) que lanzó el error
             if (!string.IsNullOrEmpty(donde))
-                txt += $" [{e.GetType().Name} en {donde.Replace("at ", "").Split(" in ")[0]}]";
+                txt += $" [{e.GetType().Name} en {donde}" + (interna != null && interna != donde ? $" ← {interna}" : "") + "]";
             return txt;
         }
 

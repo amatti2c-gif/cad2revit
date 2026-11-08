@@ -163,7 +163,10 @@ namespace Cad2Revit
                 extremos.Add((a, b, i));
             }
             if (tipo == null) throw new Exception("no hay tipo de techo");
-            var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out ModelCurveArray curvas)
+            // la API de Revit espera el arreglo ya creado (aunque sea un parámetro de salida): sin esto,
+            // «Value cannot be null» (así lo hace el ejemplo oficial de Autodesk)
+            ModelCurveArray curvas = new ModelCurveArray();
+            var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out curvas)
                         ?? throw new Exception("Revit no pudo crear el techo con ese contorno");
             if (curvas == null || curvas.Size == 0) throw new Exception("Revit no devolvió los bordes del techo");
             double tangente = Math.Tan(l.Pendiente * Math.PI / 180.0);
