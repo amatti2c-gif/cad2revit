@@ -42,7 +42,9 @@ def _recortes_extremos(m: Muro, otros: list[Muro]) -> tuple[float, float]:
 
 
 def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: float,
-            aberturas: list[dict]) -> dict:
+            aberturas: list[dict], planos_techo: list | None = None) -> dict:
+    """planos_techo: si el muro llega a un techo inclinado (en Revit se une al techo), el entramado lo sigue:
+    pies derechos hasta la línea del techo, solera superior inclinada y cadenetas dentro del frontón."""
     sec = conf.get("pie_derecho") or {"b": 0.050, "h": 0.076}
     b, h = float(sec["b"]), float(sec["h"])
     sep_v = float(conf.get("separacion_pies_derechos", 0.40))
@@ -61,6 +63,17 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
 
     piezas: list[dict] = []
 
+    # altura superior a lo largo del muro (constante, o siguiendo el techo inclinado)
+    if planos_techo:
+        from .marcos import _perfil_techo
+        quiebres, h_techo = _perfil_techo(muro.a, muro.b, planos_techo, 0.0, [s0, s1])
+        quiebres = [t for t in quiebres if s0 - TOL <= t <= s1 + TOL]
+    else:
+        quiebres, h_techo = [s0, s1], (lambda t: 0.0)
+
+    def tope(t: float) -> float:
+        return z_tope + h_techo(min(max(t, s0), s1))
+
     def vertical(t, z0, z1, rol):
         if z1 - z0 > 0.02:
             piezas.append({"rol": rol, "inicio": punto(t, z0), "fin": punto(t, z1), "ancho": b, "profundidad": h})
@@ -77,11 +90,13 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
         if t1 - t0 < 0.05:
             continue
         zi = z_base + a["antepecho"]
-        zs = min(z_tope - (b if con_soleras else 0) - b, zi + a["alto"])
+        zs = min(min(tope(t0), tope(t1)) - (b if con_soleras else 0) - b, zi + a["alto"])
         vanos.append((t0, t1, zi, zs, a["antepecho"] < 0.01))
 
     zb = z_base + (b if con_soleras else 0)      # cara superior de la solera inferior
-    zt = z_tope - (b if con_soleras else 0)      # cara inferior de la solera superior
+    def zt_en(t: float) -> float:                 # cara inferior de la solera superior en t
+        return tope(t) - (b if con_soleras else 0)
+    zt = max(zt_en(t) for t in quiebres)          # la más alta (para recorrer las cadenetas)
 
     # Soleras (la inferior se interrumpe en las puertas)
     if con_soleras:
@@ -91,14 +106,18 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
             horizontal(t, c0, z_base + b / 2, "solera_inferior")
             t = c1
         horizontal(t, s1, z_base + b / 2, "solera_inferior")
-        horizontal(s0, s1, z_tope - b / 2, "solera_superior")
+        # solera superior: un tramo por cada pendiente del techo (horizontal si el techo es plano)
+        for t0, t1 in zip(quiebres, quiebres[1:]):
+            if t1 - t0 > 0.02:
+                piezas.append({"rol": "solera_superior", "inicio": punto(t0, tope(t0) - b / 2),
+                               "fin": punto(t1, tope(t1) - b / 2), "ancho": b, "profundidad": h})
 
     # Pies derechos
-    verticales: list[_Vertical] = [_Vertical(s0 + b / 2, zb, zt, "pie_derecho"),
-                                   _Vertical(s1 - b / 2, zb, zt, "pie_derecho")]
+    verticales: list[_Vertical] = [_Vertical(s0 + b / 2, zb, zt_en(s0 + b / 2), "pie_derecho"),
+                                   _Vertical(s1 - b / 2, zb, zt_en(s1 - b / 2), "pie_derecho")]
     t = s0 + sep_v
     while t < s1 - b / 2 - b:
-        verticales.append(_Vertical(t, zb, zt, "pie_derecho"))
+        verticales.append(_Vertical(t, zb, zt_en(t), "pie_derecho"))
         t += sep_v
 
     if con_refuerzo:
@@ -112,10 +131,10 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
                     # pie derecho cortado por el vano: trozos bajo el alféizar y sobre el dintel
                     if not puerta:
                         nuevos.append(_Vertical(v.t, zb, zi - b, "pie_derecho_corto"))
-                    nuevos.append(_Vertical(v.t, zs + b, zt, "pie_derecho_corto"))
+                    nuevos.append(_Vertical(v.t, zs + b, zt_en(v.t), "pie_derecho_corto"))
                     continue
                 nuevos.append(v)
-            nuevos += [_Vertical(j, zb, zt, "jamba") for j in jambas]
+            nuevos += [_Vertical(j, zb, zt_en(j), "jamba") for j in jambas]
             verticales = nuevos
             horizontal(t0, t1, zs + b / 2, "dintel")
             if not puerta:

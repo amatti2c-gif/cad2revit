@@ -426,7 +426,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         es_ultima = idx == len(plantas) - 1
         losa_sup = (cub_def if es_ultima else losa_def) if lod["losas"] and sup else None
         z0 = cota[nivel]
-        pendiente_entramado.append((nivel, z0, (cota[sup] - espesor_tipo(losa_sup)) if sup else z0 + ALTURA_POR_DEFECTO))
+        pendiente_entramado.append((nivel, sup, z0, (cota[sup] - espesor_tipo(losa_sup)) if sup else z0 + ALTURA_POR_DEFECTO))
 
         # 10) Marcos de acero (líneas en capas de marcos)
         if lod.get("marcos"):
@@ -505,7 +505,9 @@ def construir_modelo(cfg: Configuracion) -> dict:
 
     # Entramado de madera (tipos de muro con sección "entramado"), con el tipo final de cada muro
     if lod.get("entramado"):
-        for nivel, z0, z1 in pendiente_entramado:
+        for nivel, sup_e, z0, z1 in pendiente_entramado:
+            # bajo un techo inclinado los muros se unen al techo en Revit: el entramado sigue el techo
+            planos = _planos_techo(modelo, sup_e)
             muros = [Muro(id=d["id"], a=tuple(d["inicio"]), b=tuple(d["fin"]), espesor=d["espesor"],
                           capa_cad=d["capa_cad"], tipo=d["tipo"], estructural=d["estructural"])
                      for d in modelo["muros"] if d["nivel"] == nivel]
@@ -514,7 +516,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if not conf:
                     continue
                 abs_muro = [a for a in modelo["aberturas"] if a["muro"] == m.id]
-                e = entramado_mod.generar(m, muros, conf, z0, z1, abs_muro)
+                e = entramado_mod.generar(m, muros, conf, z0, z1, abs_muro, planos_techo=planos)
                 if e["piezas"]:
                     e["nivel"] = nivel
                     modelo["entramados"].append(e)

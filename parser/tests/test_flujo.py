@@ -637,3 +637,24 @@ def test_dos_aguas_sin_pilar_es_vano_libre_aunque_el_vano_maximo_pida_columnas()
     con = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pilar_central=True), "N1", "C", {"N1": 0.0, "C": 3.0},
                          "N1", [], planos_techo=planos)[0]
     assert [round(c["punto"][1], 3) for c in con["columnas"]] == [0.0, 4.0, 6.2]
+
+
+def test_entramado_de_fronton_sigue_el_techo():
+    """Muro de frontón (perpendicular a la cumbrera) bajo un techo a dos aguas: los pies derechos llegan a la
+    línea del techo, la solera superior va inclinada en dos tramos y hay cadenetas dentro del triángulo."""
+    from cad2revit import entramado, marcos
+    from cad2revit.muros import Muro
+    cub = {"contorno": [[-0.5, -0.5], [10.5, -0.5], [10.5, 6.5], [-0.5, 6.5]], "bordes_pendiente": [0, 2],
+           "pendiente": math.degrees(math.atan(0.5))}
+    planos = marcos.planos_de_cubierta(cub)
+    fronton = Muro(id="M1", a=(0.0, 0.0), b=(0.0, 6.0), espesor=0.076, capa_cad="T", tipo="TM")
+    conf = {"pie_derecho": {"b": 0.05, "h": 0.076}, "separacion_pies_derechos": 0.4, "separacion_horizontales": 0.4}
+    e = entramado.generar(fronton, [fronton], conf, 0.0, 2.5, [], planos_techo=planos)
+    pies = [p for p in e["piezas"] if p["rol"] == "pie_derecho"]
+    alto = {round(p["inicio"][1], 2): p["fin"][2] for p in pies}
+    assert max(alto.values()) > 4.0 and min(alto.values()) < 2.8          # más altos al centro (cumbrera en y=3)
+    soleras = [p for p in e["piezas"] if p["rol"] == "solera_superior"]
+    assert len(soleras) == 2 and all(abs(p["inicio"][2] - p["fin"][2]) > 1.0 for p in soleras)
+    assert any(p["rol"] == "cadeneta" and p["inicio"][2] > 2.6 for p in e["piezas"])   # dentro del frontón
+    plano = entramado.generar(fronton, [fronton], conf, 0.0, 2.5, [])
+    assert all(p["fin"][2] <= 2.5 for p in plano["piezas"])                            # sin techo: hasta el nivel
