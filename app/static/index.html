@@ -111,8 +111,15 @@
           <div class="leyenda-tramos" id="est-leyenda"></div>
           <span id="est-estado" class="tenue"></span>
         </div>
+        <div class="est-modos" id="est-modos">
+          <button data-modo="tramo" class="activo">Seleccionar tramo / eje / muro</button>
+          <button data-modo="eje">＋ Agregar eje</button>
+          <button data-modo="muro">✎ Dibujar muro</button>
+          <span id="est-ayuda" class="tenue"></span>
+        </div>
         <p class="tenue">La app propone una tipología para cada tramo de eje según lo que hay en el plano.
-          Haz clic en un tramo para cambiarla: el modelo se recalcula solo. ✎ = elegido por ti.</p>
+          Haz clic en un tramo para cambiarla, en la burbuja de un eje para moverlo o cambiar hasta dónde llega, o dibuja ejes y muros
+          nuevos: el modelo se recalcula solo. ✎ = elegido por ti.</p>
         <div class="est-grid">
           <svg id="est-planta" class="lienzo est-lienzo"></svg>
           <div class="panel" id="est-detalle"><p class="tenue">Selecciona un tramo en la planta o en la tabla.</p></div>

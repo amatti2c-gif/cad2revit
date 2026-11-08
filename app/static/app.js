@@ -464,7 +464,8 @@ const TIPOLOGIA = {
   arriostrado: { nombre: "Marco arriostrado en X", color: "#2563eb" },
   ninguno: { nombre: "Sin elemento", color: "#cbd5e1" },
 };
-const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false };
+const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false,
+  modo: "tramo", pend: [], eje: null, muroSel: null, nuevo: null, ed: { ejes: {}, muros: [] }, ultimoLego: null };
 /** "tabique:TM-11 …" -> "Tabique (no estructural) · TM-11 …" */
 const nombreTipologia = (v, tipo) => {
   const [base, ...resto] = (v || "").split(":");
@@ -486,11 +487,13 @@ async function cargarEstructura() {
       : "Presiona ▶ Ejecutar para que la app proponga la estructuración.";
     return;
   }
-  const [r, el] = await Promise.all([api("GET", P(`/corridas/${ultima.n}`)), api("GET", P("/tramos"))]);
+  const [r, el, ed] = await Promise.all([api("GET", P(`/corridas/${ultima.n}`)), api("GET", P("/tramos")),
+    api("GET", P("/ediciones"))]);
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
+  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [] };
   const tramos = est.modelo.tramos || [];
-  if (!tramos.length) {
+  if (!tramos.length && !est.modelo.muros.length && !est.modelo.ejes.length) {
     $("#est-contenido").classList.add("oculto");
     $("#est-vacio").classList.remove("oculto");
     const m = est.modelo;
@@ -502,7 +505,9 @@ async function cargarEstructura() {
         : "Los ejes encontrados no se cruzan entre sí, por lo que no forman tramos. Revisa la capa de ejes en Planos.";
     return;
   }
-  const niveles = [...new Set(tramos.flatMap(t => Object.keys(t.niveles)))];
+  $("#est-vacio").classList.add("oculto");
+  $("#est-contenido").classList.remove("oculto");
+  const niveles = [...new Set([...tramos.flatMap(t => Object.keys(t.niveles)), ...est.modelo.muros.map(w => w.nivel)])];
   if (!niveles.includes(est.nivel)) est.nivel = niveles[0];
   $("#est-nivel").replaceChildren(...niveles.map(n => h("option", { value: n, selected: n === est.nivel }, n)));
   $("#est-leyenda").replaceChildren(...Object.keys(TIPOLOGIA).map(t => chipTipo(t)));
@@ -537,11 +542,34 @@ function pintarPlantaEst() {
       fill: "var(--cad)", "fill-opacity": 0.35 }));
     puntos.push(w.inicio, w.fin);
   }
+  for (const w of m.muros.filter(x => x.nivel === nivel && x.capa_cad === "dibujado en la app")) {
+    const sel = w.id === est.muroSel;
+    const l = s("line", { x1: w.inicio[0], y1: w.inicio[1], x2: w.fin[0], y2: w.fin[1], stroke: sel ? "var(--acento)" : "#7c3aed",
+      "stroke-width": sel ? 6 : 4, "stroke-opacity": 0.8, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tt = s("title"); tt.textContent = `${w.id} · dibujado en la app · ${w.tipo}`; l.append(tt);
+    l.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.muroSel = w.id; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(l);
+  }
   for (const e of m.ejes) {
-    raiz.append(s("line", { x1: e.inicio[0], y1: e.inicio[1], x2: e.fin[0], y2: e.fin[1], stroke: "var(--tenue)",
-      "stroke-dasharray": "12 3 2 3", "stroke-width": 0.8, "vector-effect": "non-scaling-stroke" }));
-    raiz.append(s("circle", { cx: e.inicio[0], cy: e.inicio[1], r: 0.35, fill: "var(--superficie)", stroke: "var(--tenue)", "vector-effect": "non-scaling-stroke" }));
-    raiz.append(texto(e.inicio[0], e.inicio[1], e.nombre, { "font-weight": 600 }));
+    const selE = e.nombre === est.eje;
+    raiz.append(s("line", { x1: e.inicio[0], y1: e.inicio[1], x2: e.fin[0], y2: e.fin[1], stroke: selE ? "var(--acento)" : "var(--tenue)",
+      "stroke-dasharray": "12 3 2 3", "stroke-width": selE ? 2 : 0.8, "vector-effect": "non-scaling-stroke" }));
+    // franja invisible para poder hacer clic en el eje
+    const hit = s("line", { x1: e.inicio[0], y1: e.inicio[1], x2: e.fin[0], y2: e.fin[1], stroke: "transparent",
+      "stroke-width": 10, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tt = s("title"); tt.textContent = `Eje ${e.nombre}${e.origen ? ` · ${e.origen}` : ""} (clic para editar)`; hit.append(tt);
+    hit.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(hit);
+    const burbuja = s("circle", { cx: e.inicio[0], cy: e.inicio[1], r: 0.35, fill: selE ? "var(--acento)" : "var(--superficie)",
+      stroke: selE ? "var(--acento)" : "var(--tenue)", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tb = s("title"); tb.textContent = `Eje ${e.nombre}: clic para moverlo, cambiar hasta dónde llega o borrarlo`; burbuja.append(tb);
+    burbuja.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(burbuja);
+    raiz.append(texto(e.inicio[0], e.inicio[1], e.nombre, { "font-weight": 600, "pointer-events": "none",
+      fill: selE ? "var(--acento-texto)" : "var(--texto)" }));
     puntos.push(e.inicio, e.fin);
   }
   for (const t of m.tramos) {
@@ -551,7 +579,8 @@ function pintarPlantaEst() {
       stroke: TIPOLOGIA[inf.final].color, "stroke-width": sel ? 11 : 7, "stroke-linecap": "butt",
       "stroke-dasharray": inf.final === "ninguno" ? "6 4" : "", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
     const tit = s("title"); tit.textContent = `${t.id} · ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; linea.append(tit);
-    linea.addEventListener("click", ev => { ev.stopPropagation(); est.tramo = t.id; pintarEstructura(); });
+    linea.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(linea);
     if (sel) raiz.append(s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1], stroke: "var(--texto)",
       "stroke-width": 2, "stroke-dasharray": "2 3", "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
@@ -566,11 +595,257 @@ function pintarPlantaEst() {
       "stroke-width": 4, "stroke-opacity": 0.5, "vector-effect": "non-scaling-stroke" }));
     puntos.push(f.inicio, f.fin);
   }
+  // dibujo en curso (puntos ya marcados y línea guía hasta el cursor)
+  const guia = s("g", { "pointer-events": "none" });
+  raiz.append(guia);
+  est.guia = guia;
+  pintarGuia();
   svg.replaceChildren(raiz);
+  est.raiz = raiz;
+  svg.classList.toggle("dibujando", est.modo !== "tramo");
   if (svg.dataset.clave !== `${m.proyecto}|${nivel}` && puntos.length) {
     encuadrar(svg, puntos);
     svg.dataset.clave = `${m.proyecto}|${nivel}`;
   }
+}
+
+// ---- dibujo de ejes y muros sobre la planta
+function puntoModelo(ev) {
+  const ctm = est.raiz?.getScreenCTM();
+  if (!ctm) return null;
+  const pt = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(ctm.inverse());
+  return { p: [pt.x, pt.y], escala: Math.abs(ctm.a) };     // px por metro
+}
+
+function cruces() {
+  const m = est.modelo, out = [];
+  const ej = m.ejes;
+  for (let i = 0; i < ej.length; i++) for (let j = i + 1; j < ej.length; j++) {
+    const [a1, b1] = [ej[i].inicio, ej[i].fin], [a2, b2] = [ej[j].inicio, ej[j].fin];
+    const d1 = [b1[0] - a1[0], b1[1] - a1[1]], d2 = [b2[0] - a2[0], b2[1] - a2[1]];
+    const den = d1[0] * d2[1] - d1[1] * d2[0];
+    if (Math.abs(den) < 1e-9) continue;
+    const t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / den;
+    const u = ((a2[0] - a1[0]) * d1[1] - (a2[1] - a1[1]) * d1[0]) / den;
+    if (t > -0.05 && t < 1.05 && u > -0.05 && u < 1.05) out.push([a1[0] + d1[0] * t, a1[1] + d1[1] * t]);
+  }
+  for (const w of m.muros.filter(x => x.nivel === est.nivel)) out.push(w.inicio, w.fin);
+  return out;
+}
+
+/** Ajuste: a un cruce de ejes o extremo de muro (14 px); si no, ortogonal al punto anterior. */
+function ajustar(p, escala) {
+  const radio = 14 / escala;
+  let mejor = null;
+  for (const q of cruces()) {
+    const d = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    if (d <= radio && (!mejor || d < mejor.d)) mejor = { q, d };
+  }
+  if (mejor) return { p: [...mejor.q], ajustado: true };
+  const prev = est.pend[0];
+  if (prev) {
+    const dx = p[0] - prev[0], dy = p[1] - prev[1];
+    if (Math.abs(dx) < Math.abs(dy) * 0.14) return { p: [prev[0], p[1]] };
+    if (Math.abs(dy) < Math.abs(dx) * 0.14) return { p: [p[0], prev[1]] };
+  }
+  return { p: [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100] };
+}
+
+function pintarGuia(cursor) {
+  const g = est.guia; if (!g) return;
+  g.replaceChildren();
+  const color = est.modo === "eje" ? "var(--tenue)" : "#7c3aed";
+  for (const p of est.pend) g.append(s("circle", { cx: p[0], cy: p[1], r: 0.18, fill: "var(--acento)" }));
+  if (est.pend.length === 1 && cursor) {
+    g.append(s("line", { x1: est.pend[0][0], y1: est.pend[0][1], x2: cursor.p[0], y2: cursor.p[1], stroke: color,
+      "stroke-width": est.modo === "eje" ? 1.5 : 5, "stroke-dasharray": est.modo === "eje" ? "8 4" : "", "vector-effect": "non-scaling-stroke" }));
+    const L = Math.hypot(cursor.p[0] - est.pend[0][0], cursor.p[1] - est.pend[0][1]);
+    const t = s("text", { x: cursor.p[0] + 0.3, y: -(cursor.p[1] + 0.3), transform: "scale(1,-1)", "font-size": 0.35, fill: "var(--texto)" });
+    t.textContent = `${L.toFixed(2)} m`; g.append(t);
+  }
+  if (cursor?.ajustado) g.append(s("circle", { cx: cursor.p[0], cy: cursor.p[1], r: 0.3, fill: "none", stroke: "var(--acento)",
+    "stroke-width": 2, "vector-effect": "non-scaling-stroke" }));
+}
+
+$("#est-planta").addEventListener("mousemove", ev => {
+  if (est.modo === "tramo" || !est.modelo) return;
+  const r = puntoModelo(ev); if (!r) return;
+  pintarGuia(ajustar(r.p, r.escala));
+});
+$("#est-planta").addEventListener("click", ev => {
+  if (est.modo === "tramo" || !est.modelo || est.ocupado) return;
+  const r = puntoModelo(ev); if (!r) return;
+  const q = ajustar(r.p, r.escala).p;
+  est.pend.push(q);
+  if (est.pend.length === 2) {
+    const [a, b] = est.pend;
+    est.pend = [];
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.3) { toast("El trazo es muy corto", true); pintarGuia(); return; }
+    est.nuevo = { tipo: est.modo, inicio: a, fin: b };
+    est.tramo = null; est.eje = null; est.muroSel = null;
+    pintarDetalleEst();
+  }
+  pintarGuia();
+});
+$$("#est-modos button").forEach(b => b.addEventListener("click", () => {
+  est.modo = b.dataset.modo; est.pend = []; est.nuevo = null;
+  $$("#est-modos button").forEach(x => x.classList.toggle("activo", x === b));
+  $("#est-ayuda").textContent = { tramo: "", eje: "Haz clic en el inicio y en el fin del eje (se ajusta a cruces y en horizontal/vertical).",
+    muro: "Haz clic en el inicio y en el fin del muro (se ajusta a cruces de ejes y extremos de muros)." }[est.modo];
+  if (est.modelo) pintarEstructura();
+}));
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && est.modo !== "tramo") { est.pend = []; est.nuevo = null; pintarGuia(); pintarDetalleEst(); }
+});
+
+/** Clave de ejes_usuario para un eje mostrado (puede haber sido renombrado). */
+function claveEje(nombre) {
+  for (const [k, c] of Object.entries(est.ed.ejes)) if (c && c.nombre === nombre) return k;
+  return nombre;
+}
+
+async function guardarEdiciones(nota) {
+  est.ocupado = true;
+  $("#est-estado").textContent = "Recalculando…";
+  try {
+    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros });
+    mostrarErroresEntradas(r.errores);
+    const c = await api("POST", P("/corridas"), { notas: nota });
+    await cargarCorridas(c.n);
+    await cargarEntradas();
+    toast(c.ok ? `${nota} · corrida ${c.n}` : `Corrida ${c.n} con errores`, !c.ok);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    est.ocupado = false; est.nuevo = null;
+    $("#est-estado").textContent = "";
+    await intentar(cargarEstructura);
+  }
+}
+
+function siguienteNombreEje(vertical) {
+  const usados = new Set(est.modelo.ejes.map(e => e.nombre));
+  if (vertical) { let n = 1; while (usados.has(String(n))) n++; return String(n); }
+  const letras = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  for (const l of letras) if (!usados.has(l)) return l;
+  let n = 1; while (usados.has(`E${n}`)) n++; return `E${n}`;
+}
+
+function selectorLego(actual) {
+  const muros = estado.catalogo?.muros || [];
+  const def = actual ?? est.ultimoLego ?? muros.find(m => !m.estructural)?.nombre ?? muros[0]?.nombre;
+  return h("select", {}, muros.map(m => h("option", { value: m.nombre, selected: m.nombre === def }, m.nombre)));
+}
+
+/** Panel cuando hay algo recién dibujado, un eje o un muro dibujado seleccionado. Devuelve true si lo pintó. */
+function pintarPanelEdicion(box) {
+  const m = est.modelo;
+  if (est.nuevo?.tipo === "eje") {
+    const { inicio: a, fin: b } = est.nuevo;
+    const vertical = Math.abs(b[0] - a[0]) < Math.abs(b[1] - a[1]);
+    const nombre = h("input", { value: siguienteNombreEje(vertical) });
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, "Nuevo eje"),
+      h("div", { class: "tenue" }, `${Math.hypot(b[0] - a[0], b[1] - a[1]).toFixed(2)} m · ${vertical ? "vertical" : "horizontal"}`),
+      h("label", {}, "Nombre", nombre),
+      h("div", { class: "fila" },
+        h("button", { class: "pri", onclick: () => {
+          const n = nombre.value.trim();
+          if (!n) return toast("Ponle un nombre al eje", true);
+          if (m.ejes.some(e => e.nombre === n)) return toast(`Ya existe un eje ${n}`, true);
+          est.ed.ejes[n] = { inicio: a.map(v => +v.toFixed(4)), fin: b.map(v => +v.toFixed(4)) };
+          guardarEdiciones(`Eje ${n} agregado`);
+        } }, "Agregar eje"),
+        h("button", { class: "sec", onclick: () => { est.nuevo = null; pintarDetalleEst(); } }, "Cancelar"))));
+    return true;
+  }
+  if (est.nuevo?.tipo === "muro") {
+    const { inicio: a, fin: b } = est.nuevo;
+    const lego = selectorLego();
+    const caracter = h("select", {}, h("option", { value: "tabique" }, "Tabique (no estructural)"), h("option", { value: "muro" }, "Muro estructural"));
+    const sinc = () => { const t = (estado.catalogo?.muros || []).find(x => x.nombre === lego.value); caracter.value = t?.estructural ? "muro" : "tabique"; };
+    lego.addEventListener("change", sinc); sinc();
+    const pisos = h("select", {}, h("option", { value: "uno" }, `Solo ${est.nivel}`), h("option", { value: "todos" }, "Todos los pisos con planta"));
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, "Nuevo muro"),
+      h("div", { class: "tenue" }, `${Math.hypot(b[0] - a[0], b[1] - a[1]).toFixed(2)} m`),
+      h("label", {}, "Lego", lego), h("label", {}, "Carácter", caracter), h("label", {}, "Pisos", pisos),
+      h("div", { class: "fila" },
+        h("button", { class: "pri", onclick: () => {
+          const niveles = pisos.value === "todos" ? [...new Set(m.muros.map(w => w.nivel))] : [est.nivel];
+          for (const n of niveles) est.ed.muros.push({ nivel: n, inicio: a, fin: b, tipo: lego.value, estructural: caracter.value === "muro" });
+          est.ultimoLego = lego.value;
+          guardarEdiciones(`Muro ${lego.value} dibujado (${niveles.join(", ")})`);
+        } }, "Agregar muro"),
+        h("button", { class: "sec", onclick: () => { est.nuevo = null; pintarDetalleEst(); } }, "Cancelar"))));
+    return true;
+  }
+  if (est.muroSel) {
+    const w = m.muros.find(x => x.id === est.muroSel);
+    const i = w ? +w.id.split("-D").pop() - 1 : -1;
+    if (!w || !est.ed.muros[i]) { est.muroSel = null; return false; }
+    const lego = selectorLego(w.tipo);
+    const caracter = h("select", {}, h("option", { value: "tabique", selected: !w.estructural }, "Tabique (no estructural)"),
+      h("option", { value: "muro", selected: w.estructural }, "Muro estructural"));
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, `Muro dibujado ${w.id}`),
+      h("div", { class: "tenue" }, `${Math.hypot(w.fin[0] - w.inicio[0], w.fin[1] - w.inicio[1]).toFixed(2)} m · ${w.nivel}`),
+      h("label", {}, "Lego", lego), h("label", {}, "Carácter", caracter),
+      h("div", { class: "fila" },
+        h("button", { class: "pri", onclick: () => {
+          Object.assign(est.ed.muros[i], { tipo: lego.value, estructural: caracter.value === "muro" });
+          guardarEdiciones(`Muro ${w.id}: ${lego.value}`);
+        } }, "Guardar"),
+        h("button", { class: "sec", onclick: () => {
+          est.ed.muros.splice(i, 1); est.muroSel = null;
+          guardarEdiciones(`Muro ${w.id} eliminado`);
+        } }, "Eliminar muro"))));
+    return true;
+  }
+  if (est.eje) {
+    const e = m.ejes.find(x => x.nombre === est.eje);
+    if (!e) { est.eje = null; return false; }
+    const clave = claveEje(e.nombre);
+    const previo = est.ed.ejes[clave] || {};
+    const vertical = Math.abs(e.fin[0] - e.inicio[0]) < Math.abs(e.fin[1] - e.inicio[1]);
+    const pos = vertical ? (e.inicio[0] + e.fin[0]) / 2 : (e.inicio[1] + e.fin[1]) / 2;
+    const nombre = h("input", { value: e.nombre });
+    const mover = h("input", { type: "number", step: "0.05", value: "0" });
+    const cruzan = m.ejes.filter(o => o !== e && Math.abs((e.fin[0] - e.inicio[0]) * (o.fin[1] - o.inicio[1]) -
+      (e.fin[1] - e.inicio[1]) * (o.fin[0] - o.inicio[0])) > 1e-6);
+    const opcionesEje = actual => [h("option", { value: "" }, "(como está)"),
+      ...cruzan.map(o => h("option", { value: o.nombre, selected: o.nombre === actual }, `eje ${o.nombre}`))];
+    const desde = h("select", {}, opcionesEje(previo.desde)), hasta = h("select", {}, opcionesEje(previo.hasta));
+    const deUsuario = !!previo.inicio && !(e.origen || "").startsWith("editado");
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, `Eje ${e.nombre}`),
+      h("div", { class: "tenue" }, `${e.origen || "plano"} · ${vertical ? "vertical, x" : "horizontal, y"} = ${pos.toFixed(2)} m · ` +
+        `${Math.hypot(e.fin[0] - e.inicio[0], e.fin[1] - e.inicio[1]).toFixed(2)} m de largo`),
+      h("label", {}, "Nombre", nombre),
+      h("label", {}, `Mover (m, ${vertical ? "+ a la derecha" : "+ hacia arriba"})`, mover),
+      h("div", { class: "fila" }, h("label", {}, "Desde el eje", desde), h("label", {}, "Hasta el eje", hasta)),
+      h("div", { class: "tenue" }, "El eje se extiende o recorta para empezar y terminar en esos ejes (sobresale 60 cm)."),
+      h("div", { class: "fila" },
+        h("button", { class: "pri", onclick: () => {
+          const c = { ...previo };
+          const dm = +mover.value || 0;
+          if (dm) c.posicion = +(pos + dm).toFixed(4);
+          if (desde.value) c.desde = desde.value; else delete c.desde;
+          if (hasta.value) c.hasta = hasta.value; else delete c.hasta;
+          const n = nombre.value.trim();
+          if (n && n !== e.nombre) { if (m.ejes.some(o => o.nombre === n)) return toast(`Ya existe un eje ${n}`, true); c.nombre = n; }
+          est.ed.ejes[clave] = c;
+          est.eje = n || e.nombre;
+          guardarEdiciones(`Eje ${e.nombre} editado`);
+        } }, "Guardar cambios"),
+        h("button", { class: "sec", onclick: () => {
+          if (deUsuario) delete est.ed.ejes[clave]; else est.ed.ejes[clave] = null;
+          est.eje = null;
+          guardarEdiciones(`Eje ${e.nombre} eliminado`);
+        } }, "Eliminar eje"),
+        clave in est.ed.ejes && !deUsuario ? h("button", { class: "sec", onclick: () => {
+          delete est.ed.ejes[clave]; est.eje = null;
+          guardarEdiciones(`Eje ${e.nombre}: vuelve a como viene del plano`);
+        } }, "Volver al del plano") : null)));
+    return true;
+  }
+  return false;
 }
 
 function opcionesTramo(t, actual, conIgual, propuestaTxt) {
@@ -585,8 +860,26 @@ function opcionesTramo(t, actual, conIgual, propuestaTxt) {
 
 function pintarDetalleEst() {
   const box = $("#est-detalle");
+  if (pintarPanelEdicion(box)) return;
   const t = est.modelo.tramos.find(x => x.id === est.tramo);
-  if (!t) { box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo en la planta o en la tabla.")); return; }
+  if (!t) {
+    const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length;
+    box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo, un eje o un muro dibujado en la planta, o usa ",
+      h("strong", {}, "＋ Agregar eje"), " / ", h("strong", {}, "✎ Dibujar muro"), "."),
+      nEjes || nMuros ? h("div", {}, h("strong", {}, "Tus cambios sobre el plano"),
+        h("ul", { class: "lista-dibujados" },
+          ...Object.entries(est.ed.ejes).map(([k, c]) => h("li", {}, c === null ? `Eje ${k}: eliminado` :
+            c.inicio && !est.modelo.ejes.some(e => e.nombre === k && (e.origen || "").startsWith("editado")) ? `Eje ${c.nombre || k}: agregado` :
+            `Eje ${k}: ${[c.posicion != null && "movido", (c.desde || c.hasta) && `entre ${c.desde || "…"} y ${c.hasta || "…"}`,
+              c.nombre && `renombrado ${c.nombre}`].filter(Boolean).join(", ")}`)),
+          ...est.ed.muros.map((w, i) => h("li", {}, `Muro ${w.nivel}-D${String(i + 1).padStart(3, "0")}: ${w.tipo} (${w.nivel})`))),
+        h("button", { class: "sec", style: "margin-top:6px", onclick: () => {
+          if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
+          est.ed = { ejes: {}, muros: [] };
+          guardarEdiciones("Ejes y muros: vuelven a los del plano");
+        } }, "Deshacer todos mis cambios")) : null);
+    return;
+  }
   const niveles = Object.keys(t.niveles);
   const propuestas = [...new Set(niveles.map(n => nombreTipologia(t.niveles[n].propuesta)))].join(" / ");
   const todos = h("select", { disabled: est.ocupado }, opcionesTramo(t, est.elecciones[t.id], false, propuestas));
@@ -671,7 +964,7 @@ function pintarElevacionEst() {
         stroke: "var(--acento)", "stroke-width": 2.5, "vector-effect": "non-scaling-stroke" }));
       const r = s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "transparent", style: "cursor:pointer" });
       const tit = s("title"); tit.textContent = `${t.id} · ${n}: ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; r.append(tit);
-      r.addEventListener("click", () => { est.tramo = t.id; pintarEstructura(); });
+      r.addEventListener("click", () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
       g.append(r);
     }
     for (const [x, nombre] of [[pos(t.inicio), t.entre[0]], [pos(t.fin), t.entre[1]]]) {
@@ -696,7 +989,7 @@ function pintarTablaEst() {
   $("#est-tabla thead").replaceChildren(h("tr", {}, h("th", {}, "Tramo"), h("th", {}, "Largo"), h("th", {}, "Dir."),
     ...niveles.map(n => h("th", {}, n)), h("th", {}, `Motivo (${est.nivel})`)));
   $("#est-tabla tbody").replaceChildren(...m.tramos.map(t => h("tr", { class: t.id === est.tramo ? "sel" : "",
-      onclick: () => { est.tramo = t.id; pintarEstructura(); } },
+      onclick: () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); } },
     h("td", {}, h("strong", {}, t.id)), h("td", {}, `${t.largo.toFixed(2)} m`), h("td", {}, t.direccion),
     ...niveles.map(n => h("td", {}, t.niveles[n] ? chipTipo(t.niveles[n].final, t.niveles[n].eleccion !== "auto", t.niveles[n].tipo_muro) : "—")),
     h("td", { class: "tenue" }, t.niveles[est.nivel]?.motivo ?? ""))));

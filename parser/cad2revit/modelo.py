@@ -413,6 +413,25 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 d["altura"] = ALTURA_POR_DEFECTO
             modelo["muros"].append(d)
 
+    # Ediciones hechas en la app: ejes (mover, extender, agregar, borrar) y muros dibujados
+    if cfg.proyecto.get("ejes_usuario"):
+        modelo["ejes"] = ejes_mod.editar(modelo["ejes"], cfg.proyecto["ejes_usuario"], adv)
+    for i, w in enumerate(cfg.proyecto.get("muros_usuario") or [], 1):
+        if w.get("nivel") not in orden:
+            adv.append(f"Muro dibujado {i}: el nivel '{w.get('nivel')}' no existe; se omite")
+            continue
+        t = cfg.tipo_muro(w.get("tipo")) if w.get("tipo") else None
+        if w.get("tipo") and t is None:
+            adv.append(f"Muro dibujado {i}: el lego '{w['tipo']}' no está en el catálogo; se usa espesor 15 cm")
+        d = dict(id=f"{w['nivel']}-D{i:03d}", nivel=w["nivel"], nivel_superior=siguiente(w["nivel"]),
+                 inicio=[float(v) for v in w["inicio"]], fin=[float(v) for v in w["fin"]],
+                 espesor=(t or {}).get("espesor_total", 0.15), tipo=w.get("tipo") or "Genérico 15 cm",
+                 estructural=bool(w.get("estructural", (t or {}).get("estructural", False))),
+                 perimetral=False, capa_cad="dibujado en la app")
+        if d["nivel_superior"] is None:
+            d["altura"] = ALTURA_POR_DEFECTO
+        modelo["muros"].append(d)
+
     # Propuesta de estructuración por tramos de eje (y elecciones del proyecto)
     if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,

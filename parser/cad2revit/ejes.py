@@ -85,3 +85,99 @@ def nombrar(lineas: list[tuple], ecfg: dict, origen: str) -> list[dict]:
     out += [dict(nombre=n, inicio=list(a), fin=list(b), origen=origen) for n, (a, b) in zip(nombres_h, hori)]
     out += [dict(nombre=f"D{i + 1}", inicio=list(a), fin=list(b), origen=origen) for i, (a, b) in enumerate(otras)]
     return out
+
+
+# ---------------------------------------------------------------- ediciones desde la app
+MARGEN_EXTREMO = 0.6        # m que el eje sobresale del eje donde empieza o termina
+
+
+def _cruce(a1, b1, a2, b2):
+    """Intersección de las rectas (infinitas) a1-b1 y a2-b2, o None si son paralelas."""
+    d1 = (b1[0] - a1[0], b1[1] - a1[1])
+    d2 = (b2[0] - a2[0], b2[1] - a2[1])
+    den = d1[0] * d2[1] - d1[1] * d2[0]
+    if abs(den) < 1e-9:
+        return None
+    t = ((a2[0] - a1[0]) * d2[1] - (a2[1] - a1[1]) * d2[0]) / den
+    return (a1[0] + d1[0] * t, a1[1] + d1[1] * t)
+
+
+def editar(ejes: list[dict], cambios: dict, advertencias: list[str]) -> list[dict]:
+    """Aplica las ediciones de ejes hechas en la app (proyecto.yaml -> ejes_usuario), por nombre de eje:
+         "1": null                                   # borrar
+         "1": {posicion: 12.5}                       # mover (x de un eje vertical / y de uno horizontal)
+         "1": {desde: "A", hasta: "D"}               # extender o recortar entre esos ejes
+         "1": {nombre: "1'"}                         # renombrar
+         "X": {inicio: [x, y], fin: [x, y]}          # eje nuevo (o reemplazar su trazado)
+    """
+    por = {e["nombre"]: dict(e) for e in ejes}
+    renombres = {}
+    for nombre, c in (cambios or {}).items():
+        if c is None:
+            if por.pop(nombre, None) is None:
+                advertencias.append(f"Ejes: el eje '{nombre}' que se pidió borrar no existe")
+            continue
+        if c.get("inicio") and c.get("fin"):
+            base = por.get(nombre, {"nombre": nombre})
+            por[nombre] = dict(base, inicio=[float(v) for v in c["inicio"]], fin=[float(v) for v in c["fin"]],
+                               origen="app" if nombre not in {e["nombre"] for e in ejes} else "editado en la app")
+        e = por.get(nombre)
+        if e is None:
+            advertencias.append(f"Ejes: el eje '{nombre}' editado en la app ya no existe en el plano; se ignora")
+            continue
+        if c.get("posicion") is not None:
+            (x1, y1), (x2, y2) = e["inicio"], e["fin"]
+            v = float(c["posicion"])
+            if abs(x2 - x1) < abs(y2 - y1):             # vertical: se mueve en X
+                dx = v - (x1 + x2) / 2
+                e["inicio"], e["fin"] = [x1 + dx, y1], [x2 + dx, y2]
+            else:                                       # horizontal: se mueve en Y
+                dy = v - (y1 + y2) / 2
+                e["inicio"], e["fin"] = [x1, y1 + dy], [x2, y2 + dy]
+            e["origen"] = "editado en la app"
+        if c.get("nombre") and c["nombre"] != nombre:
+            renombres[nombre] = c["nombre"]
+    # extensión entre ejes: después de mover, con la posición final de todos
+    for nombre, c in (cambios or {}).items():
+        if not c or not (c.get("desde") or c.get("hasta")) or nombre not in por:
+            continue
+        e = por[nombre]
+        a, b = tuple(e["inicio"]), tuple(e["fin"])
+        L = math.dist(a, b) or 1.0
+        u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+        puntos = {}
+        for clave in ("desde", "hasta"):
+            o = por.get(c.get(clave)) if c.get(clave) else None
+            if c.get(clave) and o is None:
+                advertencias.append(f"Ejes: '{nombre}' {clave} '{c[clave]}': ese eje no existe")
+                continue
+            if o is not None:
+                p = _cruce(a, b, tuple(o["inicio"]), tuple(o["fin"]))
+                if p is None:
+                    advertencias.append(f"Ejes: '{nombre}' y '{o['nombre']}' son paralelos; no se puede extender hasta él")
+                else:
+                    puntos[clave] = p
+        t = lambda p: (p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1]      # noqa: E731
+        t0, t1 = 0.0, L
+        if "desde" in puntos and "hasta" in puntos:
+            t0, t1 = sorted((t(puntos["desde"]), t(puntos["hasta"])))
+            t0, t1 = t0 - MARGEN_EXTREMO, t1 + MARGEN_EXTREMO
+        elif puntos:
+            tp = t(next(iter(puntos.values())))
+            # se reemplaza el extremo más cercano a ese eje
+            if abs(tp - 0) <= abs(tp - L):
+                t0 = tp - MARGEN_EXTREMO if tp <= L / 2 else tp + MARGEN_EXTREMO
+            else:
+                t1 = tp + MARGEN_EXTREMO if tp >= L / 2 else tp - MARGEN_EXTREMO
+            t0, t1 = sorted((t0, t1))
+        e["inicio"] = [round(a[0] + u[0] * t0, 4), round(a[1] + u[1] * t0, 4)]
+        e["fin"] = [round(a[0] + u[0] * t1, 4), round(a[1] + u[1] * t1, 4)]
+        e["origen"] = "editado en la app"
+    for viejo, nuevo in renombres.items():
+        if nuevo in por:
+            advertencias.append(f"Ejes: no se puede renombrar '{viejo}' a '{nuevo}': ese nombre ya existe")
+            continue
+        e = por.pop(viejo)
+        e["nombre"] = nuevo
+        por[nuevo] = e
+    return list(por.values())

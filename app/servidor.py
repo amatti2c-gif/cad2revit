@@ -735,6 +735,46 @@ class EleccionesTramos(BaseModel):
     elecciones: dict[str, str] = {}
 
 
+class Ediciones(BaseModel):
+    ejes: dict[str, dict | None] | None = None      # ejes_usuario (por nombre de eje)
+    muros: list[dict] | None = None                  # muros_usuario (dibujados en la app)
+
+
+@app.get("/api/proyectos/{pid}/ediciones")
+def leer_ediciones(pid: str):
+    py = _leer_yaml_seguro(_proyecto(pid) / "entradas" / "proyecto.yaml")
+    return {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or []}
+
+
+@app.put("/api/proyectos/{pid}/ediciones")
+def guardar_ediciones(pid: str, datos: Ediciones):
+    """Ejes editados y muros dibujados en la pestaña Estructuración (se aplican sobre lo leído del plano)."""
+    d = _proyecto(pid)
+    py = d / "entradas" / "proyecto.yaml"
+    niveles = {n.get("nombre") for n in _leer_yaml_seguro(py).get("niveles") or []}
+    texto = py.read_text(encoding="utf-8")
+    if datos.ejes is not None:
+        for nombre, c in datos.ejes.items():
+            if c is None:
+                continue
+            for k in ("inicio", "fin"):
+                if k in c and not (isinstance(c[k], list) and len(c[k]) == 2):
+                    raise HTTPException(400, f"Eje {nombre}: {k} debe ser [x, y]")
+        texto = _reemplazar_bloque(texto, "ejes_usuario", datos.ejes or {})
+    if datos.muros is not None:
+        for i, w in enumerate(datos.muros, 1):
+            if w.get("nivel") not in niveles:
+                raise HTTPException(400, f"Muro dibujado {i}: el nivel '{w.get('nivel')}' no existe")
+            if not all(isinstance(w.get(k), list) and len(w[k]) == 2 for k in ("inicio", "fin")):
+                raise HTTPException(400, f"Muro dibujado {i}: inicio y fin deben ser [x, y]")
+        limpios = [{"nivel": w["nivel"], "inicio": [round(float(v), 4) for v in w["inicio"]],
+                    "fin": [round(float(v), 4) for v in w["fin"]], "tipo": w.get("tipo"),
+                    "estructural": bool(w.get("estructural"))} for w in datos.muros]
+        texto = _reemplazar_bloque(texto, "muros_usuario", limpios)
+    py.write_text(texto, encoding="utf-8")
+    return {"guardado": True, "errores": _validar_entradas(d)}
+
+
 @app.get("/api/proyectos/{pid}/tramos")
 def leer_tramos(pid: str):
     d = _proyecto(pid)

@@ -237,3 +237,11 @@ legend { padding: 0 4px; }
 
 .agregar-muro { margin-top: 10px; padding: 10px; border: 1px dashed var(--acento); border-radius: 10px;
   display: flex; flex-direction: column; gap: 6px; }
+
+.est-modos { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 6px 0; }
+.est-modos button.activo { background: var(--acento); color: var(--acento-texto); border-color: var(--acento); }
+.est-lienzo.dibujando { cursor: crosshair; }
+.form-est { display: flex; flex-direction: column; gap: 8px; }
+.form-est label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
+.form-est .fila { display: flex; gap: 6px; flex-wrap: wrap; }
+.lista-dibujados { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }

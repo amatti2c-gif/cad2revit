@@ -473,3 +473,22 @@ def test_lineamientos_antiguos_se_completan(tmp_path, monkeypatch):
     assert nuevo["tipos_muro"][0]["nombre_editado_por_usuario"] is True
     from cad2revit.config import _validar_materialidades
     assert _validar_materialidades(nuevo) == []
+
+
+def test_ediciones_api(cliente):
+    pid = _crear(cliente)
+    r = cliente.put(f"/api/proyectos/{pid}/ediciones", json={
+        "ejes": {"3": None, "C": {"inicio": [-1, 4], "fin": [11, 4]}},
+        "muros": [{"nivel": "N1", "inicio": [0.1, 4], "fin": [6, 4], "tipo": "TB-10 Tabique metalcon 10", "estructural": False}]})
+    assert r.status_code == 200 and r.json()["errores"] == []
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["ejes"]["3"] is None
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    assert "C" in {e["nombre"] for e in m["ejes"]} and "3" not in {e["nombre"] for e in m["ejes"]}
+    assert any(w["id"] == "N1-D001" for w in m["muros"])
+    # convive con los tramos y se puede vaciar
+    cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
+    cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": []}
+    assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400

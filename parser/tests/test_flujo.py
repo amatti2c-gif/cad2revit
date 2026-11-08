@@ -592,3 +592,32 @@ def test_agregar_muro_en_tramo_vacio(proyecto):
     assert not n1["estructural"] and n1["tipo"] == t["N1"]["tipo_muro"]
     assert n2["estructural"] and n2["tipo"] == "MH-20 Hormigón 20 + estuco" and n2["espesor"] == 0.23   # espesor del lego
     assert len(modelo["muros"]) == len(modelo0["muros"]) + 2
+
+
+def test_ejes_y_muros_editados_en_la_app(proyecto):
+    """Mover, extender, agregar y borrar ejes; dibujar muros. Los tramos se arman con los ejes editados."""
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    base = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    ejes0 = {e["nombre"]: e for e in base["ejes"]}
+    x2 = (ejes0["2"]["inicio"][0] + ejes0["2"]["fin"][0]) / 2
+    py["ejes_usuario"] = {
+        "2": {"posicion": x2 + 0.5, "nombre": "2'"},          # mover 50 cm y renombrar
+        "3": None,                                            # borrar
+        "C": {"inicio": [-1.0, 4.0], "fin": [11.0, 4.0]},     # eje nuevo a media altura
+        "1": {"desde": "A", "hasta": "C"},                    # el eje 1 solo entre A y C
+    }
+    py["muros_usuario"] = [{"nivel": "N1", "inicio": [0.1, 4.0], "fin": [6.0, 4.0],
+                            "tipo": "TM-11 Tabique madera 2x3 bruto + yeso cartón", "estructural": False}]
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert validar(modelo) == []
+    ejes = {e["nombre"]: e for e in modelo["ejes"]}
+    assert "3" not in ejes and "2" not in ejes and "2'" in ejes and "C" in ejes
+    assert abs(ejes["2'"]["inicio"][0] - (x2 + 0.5)) < 1e-6
+    y_a, y_c = ejes["A"]["inicio"][1], 4.0
+    ys = sorted((ejes["1"]["inicio"][1], ejes["1"]["fin"][1]))
+    assert abs(ys[0] - (y_a - 0.6)) < 1e-3 and abs(ys[1] - (y_c + 0.6)) < 1e-3
+    ids = {t["id"] for t in modelo["tramos"]}
+    assert "1:A-C" in ids and "C:1-2'" in ids and not any(i.startswith("3:") for i in ids)
+    dib = next(m for m in modelo["muros"] if m["capa_cad"] == "dibujado en la app")
+    assert dib["id"] == "N1-D001" and dib["tipo"].startswith("TM-11") and not dib["estructural"]
+    assert any(e["muro"] == "N1-D001" for e in modelo["entramados"])          # el tabique de madera con su entramado
