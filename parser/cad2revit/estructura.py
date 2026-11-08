@@ -54,9 +54,17 @@ def huella_muros(muros: list[Muro]):
     return unary_union(polys) if polys else None
 
 
+CIERRE = 0.75    # m: brechas de hasta 2 x CIERRE entre muros (puertas, un muro que no alcanza a cerrar) se cierran
+
+
 def contorno_exterior(muros: list[Muro]) -> Polygon | None:
+    """Contorno exterior del edificio: la huella de los muros con un cierre morfológico (ensanchar y
+    volver a reducir), para que un muro que no alcanza a tocar al otro no deje fuera un pasillo o un hall."""
     h = huella_muros(muros)
     if h is None or h.is_empty:
+        return None
+    h = h.buffer(CIERRE, join_style="mitre").buffer(-CIERRE, join_style="mitre")
+    if h.is_empty:
         return None
     geoms = list(h.geoms) if hasattr(h, "geoms") else [h]
     mayor = max(geoms, key=lambda g: Polygon(g.exterior).area)

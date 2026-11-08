@@ -112,6 +112,33 @@ def _alero_de_cortes(vistas_altura: list[dict]) -> float | None:
     return round(aleros[len(aleros) // 2], 2) if aleros else None
 
 
+def _calzar(techo: list, planta: list) -> tuple[float, float]:
+    """Desplazamiento que lleva el contorno del techo sobre el de la planta con la mayor coincidencia
+    (área común / área unida): búsqueda gruesa de ±4 m cada 10 cm alrededor de los centros y luego fina."""
+    from shapely import affinity
+    t0, p0 = Polygon(techo).buffer(0), Polygon(planta).buffer(0)
+    if t0.is_empty or p0.is_empty:
+        return 0.0, 0.0
+    (ax0, ay0, ax1, ay1), (bx0, by0, bx1, by1) = t0.bounds, p0.bounds
+    cx, cy = (bx0 + bx1 - ax0 - ax1) / 2, (by0 + by1 - ay0 - ay1) / 2
+
+    def calce(dx, dy):
+        t = affinity.translate(t0, dx, dy)
+        u = t.union(p0).area
+        return t.intersection(p0).area / u if u else 0.0
+
+    mejor = (calce(cx, cy), cx, cy)
+    for paso, radio in ((0.1, 4.0), (0.01, 0.1)):
+        n = int(round(radio / paso))
+        bx, by = mejor[1], mejor[2]
+        for i in range(-n, n + 1):
+            for j in range(-n, n + 1):
+                c = calce(bx + i * paso, by + j * paso)
+                if c > mejor[0] + 1e-9:
+                    mejor = (c, bx + i * paso, by + j * paso)
+    return round(mejor[1], 3), round(mejor[2], 3)
+
+
 def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> dict:
     """Forma de la cubierta: contorno de la planta de techo (alineado con la planta) o de la planta,
     pendiente desde cortes/fachadas y cumbrera desde la planta de techo o desde el corte más inclinado."""
@@ -119,11 +146,9 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
     cont = [list(p) for p in contorno]
     cumbreras, limatones = [], 0
     if techo_cad:
-        # la planta de techo está dibujada en otro lugar: se centra sobre la planta (contorno + aleros)
-        cx = lambda pts: ((min(p[0] for p in pts) + max(p[0] for p in pts)) / 2,  # noqa: E731
-                          (min(p[1] for p in pts) + max(p[1] for p in pts)) / 2)
-        (ax, ay), (bx, by) = cx(techo_cad["contorno"]), cx(contorno)
-        dx, dy = bx - ax, by - ay
+        # la planta de techo está dibujada en otro lugar: se lleva sobre la planta buscando el desplazamiento
+        # con el que más calza su forma (no basta centrar: alas y accesos sobresalen distinto en cada una)
+        dx, dy = _calzar(techo_cad["contorno"], contorno)
         cont = [[round(x + dx, 3), round(y + dy, 3)] for x, y in techo_cad["contorno"]]
         cumbreras = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad["cumbreras"]]
         limatones = techo_cad["limatones"]
