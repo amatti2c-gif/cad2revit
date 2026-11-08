@@ -121,7 +121,8 @@ async function cargarPlanos() {
     return;
   }
   tb.replaceChildren(...planos.map(pl => h("tr", {},
-    h("td", {}, h("strong", {}, pl.nombre), h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB`),
+    h("td", {}, h("strong", {}, pl.nombre), h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB` +
+        (pl.desde_dwg ? ` · convertido desde ${pl.desde_dwg}` : "")),
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
     h("td", {}, h("code", {}, pl.ruta_en_proyecto), " ",
       h("button", { class: "sec", title: "Copiar", onclick: () => navigator.clipboard?.writeText(pl.ruta_en_proyecto).then(() => toast("Ruta copiada")) }, "⧉")),
@@ -1166,6 +1167,8 @@ $("#cerrar-comparacion").addEventListener("click", () => $("#comparacion").class
 
 // ------------------------------------------------------------------ inicio
 fetch("/salud").then(r => r.json()).then(v => {
+  if (!v.dwg) $("#nota-dwg").textContent = "Este servidor aún no tiene el convertidor de DWG: por ahora sube los planos como DXF " +
+    "(AutoCAD: GUARDARCOMO → DXF).";
   $("#version").textContent = `v${v.version} · ${v.commit}`;
   $("#version").title = "Versión publicada (commit de GitHub)";
 }).catch(() => {});

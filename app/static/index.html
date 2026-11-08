@@ -38,8 +38,8 @@
     <!-- ======================= PLANOS ======================= -->
     <section id="tab-planos" class="tab activa">
       <div id="zona-subida" class="zona-subida">
-        <p><strong>Arrastra aquí tus planos .dxf</strong> o <label class="link">elígelos<input id="inp-planos" type="file" accept=".dxf" multiple hidden></label></p>
-        <p class="tenue">¿Tienes DWG? En AutoCAD: GUARDARCOMO → DXF, o conviértelos en lote con ODA File Converter.
+        <p><strong>Arrastra aquí tus planos .dwg o .dxf</strong> o <label class="link">elígelos<input id="inp-planos" type="file" accept=".dxf,.dwg" multiple hidden></label></p>
+        <p class="tenue" id="nota-dwg">Los DWG se convierten solos a DXF, el formato de trabajo de la app (el original queda guardado).
           Luego asígnalos a un nivel en <em>Lineamientos → proyecto.yaml</em> usando la ruta que aparece en la tabla.</p>
       </div>
       <div class="tabla-wrap"><table class="tabla" id="tabla-planos">

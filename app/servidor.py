@@ -96,12 +96,35 @@ async def _autenticacion_basica(request: Request, call_next):
     return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="cad2revit"'})
 
 
+def _convertidor_dwg() -> str | None:
+    """Ruta del convertidor DWG→DXF (LibreDWG, instalado en la imagen de Railway)."""
+    return shutil.which("dwg2dxf")
+
+
+def _convertir_dwg(origen: Path, destino: Path) -> None:
+    """Convierte un DWG a DXF (formato de trabajo de la app). Lanza HTTPException si falla."""
+    import subprocess
+    exe = _convertidor_dwg()
+    if not exe:
+        raise HTTPException(400, f"{origen.name}: este servidor todavía no tiene el convertidor de DWG instalado. "
+                                 "Sube el plano como DXF (AutoCAD: GUARDARCOMO → DXF) o espera a que se publique "
+                                 "la versión con soporte DWG.")
+    try:
+        r = subprocess.run([exe, "-y", "-o", str(destino), str(origen)], capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(400, f"{origen.name}: la conversión DWG→DXF tardó demasiado")
+    if r.returncode != 0 or not destino.exists() or destino.stat().st_size == 0:
+        detalle = (r.stderr or r.stdout or "").strip().splitlines()[-3:]
+        raise HTTPException(400, f"{origen.name}: no se pudo convertir el DWG. " + " ".join(detalle))
+
+
 @app.get("/salud")
 def salud():
     # Railway informa el commit desplegado; sirve para saber qué versión está en línea
     commit = (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or os.environ.get("GIT_COMMIT") or "")[:7]
     return {"ok": True, "version": __version__, "commit": commit or "local",
-            "tipos_madera": "entramado" in (RAIZ / "entradas" / "materialidades.yaml").read_text(encoding="utf-8")}
+            "tipos_madera": "entramado" in (RAIZ / "entradas" / "materialidades.yaml").read_text(encoding="utf-8"),
+            "dwg": bool(_convertidor_dwg())}
 
 
 # ---------------------------------------------------------------- utilidades
@@ -686,8 +709,10 @@ def listar_planos(pid: str):
             err = None
         except Exception as e:
             capas, bloques, err = [], [], f"No se pudo leer: {e}"
+        original = d / "planos" / "originales" / (f.stem + ".dwg")
         out.append({"nombre": f.name, "bytes": f.stat().st_size, "capas": capas, "bloques": bloques,
-                    "ruta_en_proyecto": f"../planos/{f.name}", "error": err})
+                    "ruta_en_proyecto": f"../planos/{f.name}", "error": err,
+                    "desde_dwg": original.name if original.exists() else None})
     return out
 
 
@@ -698,14 +723,30 @@ async def subir_planos(pid: str, archivos: list[UploadFile] = File(...)):
     for up in archivos:
         nombre = _seguro(Path(up.filename or "").name, "nombre de archivo")
         ext = Path(nombre).suffix.lower()
-        if ext == ".dwg":
-            raise HTTPException(400, f"{nombre}: los DWG deben convertirse a DXF antes de subirlos "
-                                     "(AutoCAD: GUARDARCOMO → DXF, o ODA File Converter)")
-        if ext != ".dxf":
-            raise HTTPException(400, f"{nombre}: solo se aceptan archivos .dxf")
+        if ext not in (".dxf", ".dwg"):
+            raise HTTPException(400, f"{nombre}: solo se aceptan planos .dwg o .dxf")
         contenido = await up.read()
         if len(contenido) > MAX_SUBIDA:
             raise HTTPException(413, f"{nombre}: supera {MAX_SUBIDA // 1024 // 1024} MB")
+        if ext == ".dwg":
+            # Formato de trabajo: DXF. El DWG original se guarda tal cual en planos/originales/.
+            originales = d / "planos" / "originales"
+            originales.mkdir(exist_ok=True)
+            origen = originales / (Path(nombre).stem + ".dwg")
+            origen.write_bytes(contenido)
+            destino = d / "planos" / (Path(nombre).stem + ".dxf")
+            try:
+                _convertir_dwg(origen, destino)
+                leer(str(destino))             # valida y deja listo el formato interno
+            except HTTPException:
+                origen.unlink(missing_ok=True)
+                raise
+            except Exception as e:
+                origen.unlink(missing_ok=True)
+                destino.unlink(missing_ok=True)
+                raise HTTPException(400, f"{nombre}: el DXF convertido no se pudo leer ({e})")
+            guardados.append(destino.name)
+            continue
         (d / "planos" / nombre).write_bytes(contenido)
         guardados.append(nombre)
     return {"guardados": guardados}
@@ -717,6 +758,9 @@ def borrar_plano(pid: str, nombre: str):
     if not f.exists():
         raise HTTPException(404, "No existe el plano")
     f.unlink()
+    (f.parent / "originales" / (f.stem + ".dwg")).unlink(missing_ok=True)
+    for c in (f.parent / ".cad2revit").glob(f"{f.name}.*"):        # formato interno del plano
+        c.unlink(missing_ok=True)
 
 
 @app.get("/api/proyectos/{pid}/planos/{nombre}/geometria")

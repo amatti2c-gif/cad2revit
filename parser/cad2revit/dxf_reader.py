@@ -82,8 +82,81 @@ def _factor(doc, unidades: str) -> float:
     return 1.0
 
 
-def leer(archivo: str, unidades: str = "auto") -> DibujoCAD:
-    doc = ezdxf.readfile(archivo)
+# ---------------------------------------------------------------- formato interno (caché)
+# La primera lectura de un DXF extrae solo lo que el parser usa (segmentos, polilíneas
+# cerradas, bloques y textos, ya en metros) a un JSON comprimido junto al plano:
+#   <carpeta>/.cad2revit/<archivo>.<unidades>.geo.json.gz
+# Las lecturas siguientes usan ese archivo (mucho más chico y rápido que el DXF) mientras
+# el plano no cambie (mismo tamaño y fecha) y la versión del formato sea la misma.
+FORMATO_INTERNO = 1
+
+
+def _ruta_cache(archivo: str, unidades: str):
+    from pathlib import Path
+    a = Path(archivo)
+    return a.parent / ".cad2revit" / f"{a.name}.{unidades or 'auto'}.geo.json.gz"
+
+
+def _firma(archivo: str) -> dict:
+    import os
+    st = os.stat(archivo)
+    return {"tam": st.st_size, "mtime": int(st.st_mtime_ns), "formato": FORMATO_INTERNO}
+
+
+def _a_dict(d: "DibujoCAD") -> dict:
+    return {
+        "factor": d.factor,
+        "segmentos": [[s.a, s.b, s.capa] for s in d.segmentos],
+        "polilineas": [[p, c] for p, c in d.polilineas_cerradas],
+        "inserciones": [[i.nombre, i.capa, i.punto, i.rotacion, i.extremos, i.esquinas, i.atributos] for i in d.inserciones],
+        "textos": [[t.texto, t.capa, t.punto] for t in d.textos],
+    }
+
+
+def _de_dict(archivo: str, x: dict) -> "DibujoCAD":
+    tp = lambda v: (v[0], v[1])   # noqa: E731
+    d = DibujoCAD(archivo=str(archivo), factor=x["factor"])
+    d.segmentos = [Segmento(tp(a), tp(b), c) for a, b, c in x["segmentos"]]
+    d.polilineas_cerradas = [([tp(q) for q in pts], c) for pts, c in x["polilineas"]]
+    d.inserciones = [Insercion(n, c, tp(p), r, (tp(e[0]), tp(e[1])) if e else None, [tp(q) for q in esq], at or {})
+                     for n, c, p, r, e, esq, at in x["inserciones"]]
+    d.textos = [Texto(t, c, tp(p)) for t, c, p in x["textos"]]
+    return d
+
+
+def leer(archivo: str, unidades: str = "auto", usar_cache: bool = True) -> DibujoCAD:
+    """Lee un DXF usando el formato interno si está vigente; si no, lo crea."""
+    if not usar_cache:
+        return _leer_dxf(archivo, unidades)
+    import gzip
+    import json
+    ruta = _ruta_cache(archivo, unidades)
+    firma = _firma(archivo)
+    try:
+        with gzip.open(ruta, "rt", encoding="utf-8") as f:
+            datos = json.load(f)
+        if datos.get("firma") == firma:
+            return _de_dict(archivo, datos)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    dib = _leer_dxf(archivo, unidades)
+    try:
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        tmp = ruta.with_suffix(".tmp")
+        with gzip.open(tmp, "wt", encoding="utf-8", compresslevel=6) as f:
+            json.dump(dict(_a_dict(dib), firma=firma), f, separators=(",", ":"))
+        tmp.replace(ruta)
+    except OSError:
+        pass                         # sin permiso de escritura: se sigue sin caché
+    return dib
+
+
+def _leer_dxf(archivo: str, unidades: str = "auto") -> DibujoCAD:
+    try:
+        doc = ezdxf.readfile(archivo)
+    except ezdxf.DXFStructureError:
+        from ezdxf import recover          # DXF con errores de estructura (p.ej. convertido desde DWG)
+        doc, _ = recover.readfile(archivo)
     msp = doc.modelspace()
     k = _factor(doc, unidades)
     dib = DibujoCAD(archivo=str(archivo), factor=k)

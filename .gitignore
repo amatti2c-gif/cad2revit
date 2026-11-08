@@ -16,3 +16,4 @@ modelo.json
 *.informe.txt
 ejemplos/*.dxf
 datos/
+.cad2revit/

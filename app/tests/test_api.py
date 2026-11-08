@@ -199,6 +199,31 @@ def test_tramos_api(cliente):
     assert cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"x": "acero"}}).status_code == 400
 
 
+def test_subir_dwg_con_convertidor(cliente, tmp_path, monkeypatch):
+    """Con un convertidor (simulado) el DWG queda como DXF de trabajo + original guardado."""
+    import app.servidor as srv
+    pid = _crear(cliente, ejemplo=False)
+    ejemplo = tmp_path / "fuente"
+    from generar_ejemplo import generar
+    generar(ejemplo)
+
+    def convertir_falso(origen, destino):
+        destino.write_bytes((ejemplo / "planta_n1.dxf").read_bytes())
+    monkeypatch.setattr(srv, "_convertir_dwg", convertir_falso)
+    r = cliente.post(f"/api/proyectos/{pid}/planos", files=[("archivos", ("Planta Piso 1.dwg", b"AC1032..."))])
+    assert r.status_code == 201 and r.json()["guardados"] == ["Planta Piso 1.dxf"]
+    planos = cliente.get(f"/api/proyectos/{pid}/planos").json()
+    p = next(x for x in planos if x["nombre"] == "Planta Piso 1.dxf")
+    assert p["desde_dwg"] == "Planta Piso 1.dwg" and "A-MURO-HA" in p["capas"]
+    base = tmp_path / "proyectos" / pid / "planos"
+    assert (base / "originales" / "Planta Piso 1.dwg").exists()
+    assert list((base / ".cad2revit").glob("Planta Piso 1.dxf.*.geo.json.gz"))      # formato interno
+    # borrar el plano borra también el original y el formato interno
+    assert cliente.delete(f"/api/proyectos/{pid}/planos/Planta Piso 1.dxf").status_code == 204
+    assert not (base / "originales" / "Planta Piso 1.dwg").exists()
+    assert not list((base / ".cad2revit").glob("Planta Piso 1.dxf.*"))
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})
@@ -219,8 +244,11 @@ def test_planos_y_seguridad(cliente):
     corrida = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
     assert not corrida["ok"] and "No se encuentran" in corrida["error"]
 
-    r = cliente.post(f"/api/proyectos/{pid}/planos", files=[("archivos", ("plano.dwg", b"x"))])
-    assert r.status_code == 400 and "DXF" in r.json()["detail"]
+    import app.servidor as srv
+    if not srv._convertidor_dwg():
+        r = cliente.post(f"/api/proyectos/{pid}/planos", files=[("archivos", ("plano.dwg", b"x"))])
+        assert r.status_code == 400 and "DXF" in r.json()["detail"]
+    assert cliente.post(f"/api/proyectos/{pid}/planos", files=[("archivos", ("plano.pdf", b"x"))]).status_code == 400
     r = cliente.post(f"/api/proyectos/{pid}/planos", files=[("archivos", ("../x.dxf", b"x"))])
     assert r.status_code == 201 and r.json()["guardados"] == ["x.dxf"]   # se descarta la ruta
     assert cliente.get("/api/proyectos/..%2F..%2Fetc/planos").status_code in (400, 404)

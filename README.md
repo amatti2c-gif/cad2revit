@@ -62,9 +62,15 @@ python -m cad2revit ../entradas/proyecto.yaml -o modelo.json --validar
 Imprime un resumen (muros, aberturas, losas, etc.) y una lista de **advertencias** sobre lo que
 no se pudo interpretar o lo que conviene revisar.
 
-**DWG → DXF:** el parser lee DXF. Para convertir DWG en lote usa
-[ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter) (gratuito),
-o en AutoCAD: `GUARDARCOMO → DXF`.
+**DWG y formato interno:** la app acepta `.dwg` y `.dxf`.
+- Los DWG se convierten a DXF (el formato de trabajo) con [LibreDWG](https://github.com/LibreDWG/libredwg),
+  que se compila en la imagen de Docker; el DWG original queda en `planos/originales/`. Si el
+  servidor no tiene el convertidor, la app lo indica y acepta solo DXF.
+- La primera lectura de cada DXF extrae la geometría útil (líneas, bloques, textos, en metros) a un
+  archivo comprimido propio (`planos/.cad2revit/*.geo.json.gz`); las lecturas siguientes usan ese
+  archivo mientras el plano no cambie.
+- Sin la app, un DWG se convierte en AutoCAD con `GUARDARCOMO → DXF` o con
+  [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter).
 
 ### Cómo interpreta los planos
 1. **Muros:** busca pares de líneas paralelas en capas de muro, separadas entre `espesor_min` y
