@@ -479,6 +479,25 @@ def construir_modelo(cfg: Configuracion) -> dict:
             modelo["aberturas"] = [a for a in modelo["aberturas"] if a["muro"] not in fuera]
             adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
 
+    # Muros del plano editados en la app: otro lego y/o carácter (se reconocen por su posición)
+    for i, q in enumerate(cfg.proyecto.get("muros_editar") or [], 1):
+        qa, qb = tuple(q.get("inicio") or ()), tuple(q.get("fin") or ())
+        hallados = [d for d in modelo["muros"] if d["nivel"] == q.get("nivel") and len(qa) == 2 and len(qb) == 2
+                    and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
+                         or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2))]
+        if not hallados:
+            adv.append(f"Muro editado {i} ({q.get('nivel')}): ya no está en el plano; no se aplica")
+            continue
+        t = cfg.tipo_muro(q["tipo"]) if q.get("tipo") else None
+        if q.get("tipo") and t is None:
+            adv.append(f"Muro editado {i}: el lego '{q['tipo']}' no está en el catálogo; se mantiene el tipo")
+        for d in hallados:
+            if t:
+                d["tipo"] = q["tipo"]
+            if q.get("estructural") is not None:
+                d["estructural"] = bool(q["estructural"])
+            d["editado"] = True
+
     # Propuesta de estructuración por tramos de eje (y elecciones del proyecto)
     if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,

@@ -831,13 +831,15 @@ class Ediciones(BaseModel):
     muros: list[dict] | None = None                  # muros_usuario (dibujados en la app)
     quitar: list[dict] | None = None                 # muros_quitar (muros del plano quitados en la app)
     marcos: list[dict] | None = None                 # marcos_usuario (marcos dibujados en la app)
+    editar: list[dict] | None = None                 # muros_editar (muros del plano con otro lego / carácter)
 
 
 @app.get("/api/proyectos/{pid}/ediciones")
 def leer_ediciones(pid: str):
     py = _leer_yaml_seguro(_proyecto(pid) / "entradas" / "proyecto.yaml")
     return {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or [],
-            "quitar": py.get("muros_quitar") or [], "marcos": py.get("marcos_usuario") or []}
+            "quitar": py.get("muros_quitar") or [], "marcos": py.get("marcos_usuario") or [],
+            "editar": py.get("muros_editar") or []}
 
 
 @app.put("/api/proyectos/{pid}/ediciones")
@@ -871,6 +873,12 @@ def guardar_ediciones(pid: str, datos: Ediciones):
               "fin": [round(float(v), 4) for v in w["fin"]], **({"id": w["id"]} if w.get("id") else {})}
              for w in datos.quitar if isinstance(w.get("inicio"), list) and isinstance(w.get("fin"), list)]
         texto = _reemplazar_bloque(texto, "muros_quitar", q)
+    if datos.editar is not None:
+        texto = _reemplazar_bloque(texto, "muros_editar", [
+            {"nivel": w.get("nivel"), "inicio": [round(float(v), 4) for v in w["inicio"]],
+             "fin": [round(float(v), 4) for v in w["fin"]], "tipo": w.get("tipo"),
+             "estructural": bool(w.get("estructural")), **({"id": w["id"]} if w.get("id") else {})}
+            for w in datos.editar if isinstance(w.get("inicio"), list) and isinstance(w.get("fin"), list)])
     if datos.marcos is not None:
         for i, f in enumerate(datos.marcos, 1):
             if f.get("nivel") not in niveles:

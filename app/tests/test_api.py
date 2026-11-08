@@ -490,7 +490,7 @@ def test_ediciones_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
     assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
     cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
-    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": []}
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": [], "editar": []}
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
 
 
@@ -583,3 +583,19 @@ def test_ejes_fijados_no_cambian_al_cambiar_capas(cliente):
     c3 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
     m3 = cliente.get(f"/api/proyectos/{pid}/corridas/{c3['n']}").json()["modelo"]
     assert len(m3["ejes"]) < len(m2["ejes"])
+
+
+def test_editar_muro_del_plano(cliente):
+    pid = _crear(cliente)
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    w = next(x for x in m["muros"] if x["nivel"] == "N1" and x["estructural"])
+    madera = "TM-11 Tabique madera 2x3 bruto + yeso cartón"
+    cliente.put(f"/api/proyectos/{pid}/ediciones", json={"editar": [
+        {"nivel": "N1", "inicio": w["inicio"], "fin": w["fin"], "id": w["id"], "tipo": madera, "estructural": False}]})
+    c2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert c2["ok"]
+    m2 = cliente.get(f"/api/proyectos/{pid}/corridas/{c2['n']}").json()["modelo"]
+    w2 = next(x for x in m2["muros"] if x["id"] == w["id"])
+    assert w2["tipo"] == madera and not w2["estructural"] and w2["editado"]
+    assert any(e["muro"] == w["id"] for e in m2["entramados"])            # el tabique de madera con su entramado
