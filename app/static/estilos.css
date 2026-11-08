@@ -234,3 +234,4 @@ legend { padding: 0 4px; }
 .tarjeta-vista.usada { border-color: var(--acento); box-shadow: 0 0 0 1px var(--acento); }
 .tarjeta-vista select { width: 100%; }
 .mini-vista { width: 100%; height: 140px; color: var(--texto); background: var(--fondo); border-radius: 6px; }
+a.boton { text-decoration: none; color: var(--texto); display: inline-block; }

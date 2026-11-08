@@ -1136,6 +1136,15 @@ def borrar_plano(pid: str, nombre: str):
     _borrar_archivo_plano(f)
 
 
+@app.get("/api/proyectos/{pid}/planos/{nombre}/archivo")
+def descargar_plano(pid: str, nombre: str):
+    """El plano en el formato de trabajo (DXF; si se subió un DWG, el DXF convertido)."""
+    f = _proyecto(pid) / "planos" / _seguro(nombre)
+    if not f.is_file():
+        raise HTTPException(404, "No existe el plano")
+    return FileResponse(f, filename=f.name, media_type="application/dxf")
+
+
 @app.get("/api/proyectos/{pid}/planos/{nombre}/geometria")
 def geometria_plano(pid: str, nombre: str):
     """Líneas del CAD (en metros) para dibujar el plano de fondo en la vista 2D."""

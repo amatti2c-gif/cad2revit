@@ -248,6 +248,8 @@ async function cargarPlanos() {
     h("td", {}, h("div", { class: "chips" }, pl.bloques.map(c => h("span", { class: "chip" }, c)))),
     h("td", {}, h("div", { class: "acciones" },
       h("button", { class: "sec", onclick: () => intentar(() => verPlano(pl.nombre)) }, "Ver"),
+      h("a", { class: "boton sec", href: P(`/planos/${encodeURIComponent(pl.nombre)}/archivo`), download: pl.nombre,
+               title: "Descargar el DXF con que trabaja la app" }, "DXF"),
       h("button", { class: "sec", onclick: () => intentar(async () => {
         if (!confirm(`¿Eliminar ${pl.nombre}?`)) return;
         await api("DELETE", P(`/planos/${encodeURIComponent(pl.nombre)}`));

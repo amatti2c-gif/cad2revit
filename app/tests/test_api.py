@@ -417,3 +417,10 @@ def test_plano_con_planta_y_fachada(cliente, tmp_path):
     vistas = {x["k"]: x["uso"] for x in cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["vistas"]}
     assert vistas == {k_pl: "planta:N1", k_el: "no"}
     assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["muros"] == muros_vista
+
+
+def test_descargar_plano(cliente):
+    pid = _crear(cliente)
+    r = cliente.get(f"/api/proyectos/{pid}/planos/planta_n1.dxf/archivo")
+    assert r.status_code == 200 and r.content.startswith(b"  0") and "planta_n1.dxf" in r.headers["content-disposition"]
+    assert cliente.get(f"/api/proyectos/{pid}/planos/no.dxf/archivo").status_code == 404
