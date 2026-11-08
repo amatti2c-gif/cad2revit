@@ -508,3 +508,24 @@ def test_quitar_muro_del_plano(cliente):
     assert len(m2["muros"]) == len(m["muros"]) - 1 and not any(w["id"] == tab["id"] for w in m2["muros"])
     assert len(m2["aberturas"]) == len(m["aberturas"]) - n_ab            # sus vanos se van con él
     assert any("Muros quitados" in a for a in m2["advertencias"])
+
+
+def test_proyecto_danado_se_recupera_de_la_ultima_corrida(cliente, tmp_path):
+    pid = _crear(cliente)
+    cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"2:A-B": "arriostrado"}})
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["ok"]
+    d = tmp_path / "proyectos" / pid
+    py = d / "entradas" / "proyecto.yaml"
+    bueno = py.read_text(encoding="utf-8")
+    # 1) archivo vacío (leído justo mientras otra consulta lo escribía): se recupera de la corrida, no de la plantilla
+    py.write_text("", encoding="utf-8")
+    assert cliente.get(f"/api/proyectos/{pid}/tramos").json()["elecciones"] == {"2:A-B": "arriostrado"}
+    assert py.read_text(encoding="utf-8") == bueno
+    # 2) proyecto que una versión anterior «reparó» con la plantilla (planos de ejemplo que no existen)
+    plantilla = bueno.replace("../planos/planta_n1.dxf", "../planos/no_existe_n1.dxf")
+    py.write_text(plantilla, encoding="utf-8")
+    (d / "reparado.txt").write_text("x", encoding="utf-8")
+    assert cliente.get(f"/api/proyectos/{pid}/planos").status_code == 200
+    assert "no_existe_n1.dxf" not in py.read_text(encoding="utf-8")
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["ok"]
+    assert list((d / "entradas").glob("proyecto.dañado-*.yaml"))

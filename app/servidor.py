@@ -25,6 +25,8 @@ import re
 import secrets
 import shutil
 import sys
+import threading
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -201,7 +203,7 @@ def _completar_lineamientos(d: Path) -> list[str]:
         if agregados and any(x.startswith(a) for x in agregados):
             buf = io.StringIO()
             y.dump(actual, buf)
-            ruta.write_text(buf.getvalue(), encoding="utf-8")
+            _escribir(ruta, buf.getvalue())
     if agregados:
         (d / "actualizaciones.txt").open("a", encoding="utf-8").write(
             f"{_ahora()}: se agregó de los valores por defecto: " + "; ".join(agregados) + "\n")
@@ -228,7 +230,7 @@ def _enlazar_lineamientos(d: Path) -> None:
         else:
             texto = texto.rstrip() + "\n" + linea + "\n"
     if texto != original:
-        py.write_text(texto, encoding="utf-8")
+        _escribir(py, texto)
     for a in LINEAMIENTOS:                       # las copias antiguas ya no se usan
         (d / "entradas" / a).unlink(missing_ok=True)
 
@@ -238,7 +240,65 @@ def _texto_proyecto_inicial(nombre: str) -> str:
     return re.sub(r"^nombre:.*$", f"nombre: {json.dumps(nombre, ensure_ascii=False)}", texto, count=1, flags=re.M)
 
 
+def _escribir(ruta: Path, texto: str) -> None:
+    """Escritura atómica: se escribe a un temporal y se reemplaza de una vez. Así otra consulta que lee
+    el archivo al mismo tiempo nunca lo ve vacío o a medias (eso hacía que proyecto.yaml se «reparara»
+    con la plantilla de ejemplo)."""
+    ruta = Path(ruta)
+    tmp = ruta.with_name(f".{ruta.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(texto, encoding="utf-8")
+    os.replace(tmp, ruta)
+
+
+def _ultima_entrada_valida(d: Path) -> str | None:
+    """proyecto.yaml de la corrida más reciente que tiene niveles y cuyos planos existen."""
+    corridas = sorted((d / "corridas").glob("[0-9]*"), key=lambda c: int(c.name) if c.name.isdigit() else -1, reverse=True)
+    for c in corridas:
+        f = c / "entradas" / "proyecto.yaml"
+        if not f.exists():
+            continue
+        datos = _leer_yaml_seguro(f)
+        planos = [p.get("archivo") for p in datos.get("plantas") or [] if isinstance(p, dict)]
+        if datos.get("niveles") and planos and all((d / "entradas" / x).resolve().exists() for x in planos if x):
+            return f.read_text(encoding="utf-8")
+    return None
+
+
 def _reparar_proyecto(d: Path) -> None:
+    """Si proyecto.yaml perdió sus niveles (archivo dañado), se recupera de la última corrida válida (o, si
+    no hay, de la plantilla conservando los legos). Antes se reintenta la lectura y se guarda una copia."""
+    py = d / "entradas" / "proyecto.yaml"
+    marca = d / "reparado.txt"
+    datos = _leer_yaml_seguro(py) if py.exists() else {}
+    # proyecto reparado antes con la plantilla (versión anterior): apunta a planos de ejemplo que no existen
+    if datos.get("niveles") and marca.exists():
+        planos = [p.get("archivo") for p in datos.get("plantas") or [] if isinstance(p, dict)]
+        if planos and not all((d / "entradas" / x).resolve().exists() for x in planos if x):
+            bueno = _ultima_entrada_valida(d)
+            if bueno:
+                _escribir(d / "entradas" / f"proyecto.dañado-{_ahora().replace(':', '-')}.yaml", py.read_text(encoding="utf-8"))
+                _escribir(py, bueno)
+                marca.rename(d / "reparado-atendido.txt")
+            return
+    if datos.get("niveles"):
+        return
+    for _ in range(3):                      # quizá otra consulta lo estaba escribiendo: reintentar
+        time.sleep(0.15)
+        datos = _leer_yaml_seguro(py) if py.exists() else {}
+        if datos.get("niveles"):
+            return
+    if py.exists() and py.read_text(encoding="utf-8").strip():
+        _escribir(d / "entradas" / f"proyecto.dañado-{_ahora().replace(':', '-')}.yaml", py.read_text(encoding="utf-8"))
+    bueno = _ultima_entrada_valida(d)
+    if bueno:
+        py.parent.mkdir(parents=True, exist_ok=True)
+        _escribir(py, bueno)
+        _escribir(d / "reparado-atendido.txt", f"{_ahora()}: proyecto.yaml dañado; recuperado de la última corrida válida\n")
+        return
+    _reparar_desde_plantilla(d, py, datos)
+
+
+def _reparar_desde_plantilla(d: Path, py: Path, datos: dict) -> None:
     """Si proyecto.yaml perdió sus niveles (archivo dañado), se reconstruye desde la plantilla
     conservando la selección de legos. Las plantas apuntan a los planos del proyecto."""
     py = d / "entradas" / "proyecto.yaml"
@@ -250,9 +310,8 @@ def _reparar_proyecto(d: Path) -> None:
         texto += "\n# Legos elegidos para este proyecto (se editan en la pestaña Legos de la app)\n"
         texto += yaml.safe_dump({"legos": datos["legos"]}, allow_unicode=True, sort_keys=False)
     py.parent.mkdir(parents=True, exist_ok=True)
-    py.write_text(texto, encoding="utf-8")
-    (d / "reparado.txt").write_text(f"{_ahora()}: proyecto.yaml sin niveles; reconstruido desde la plantilla\n",
-                                    encoding="utf-8")
+    _escribir(py, texto)
+    _escribir(d / "reparado.txt", f"{_ahora()}: proyecto.yaml sin niveles; reconstruido desde la plantilla\n")
 
 
 def _proyecto(pid: str) -> Path:
@@ -321,13 +380,13 @@ def crear_proyecto(datos: NuevoProyecto):
     (d / "entradas").mkdir()
     # Solo proyecto.yaml es propio del proyecto; los lineamientos son los comunes de la app
     py = d / "entradas" / "proyecto.yaml"
-    py.write_text(_texto_proyecto_inicial(nombre), encoding="utf-8")
+    _escribir(py, _texto_proyecto_inicial(nombre))
     if datos.con_ejemplo:
         from generar_ejemplo import generar
         generar(d / "planos")
     _enlazar_lineamientos(d)
     meta = {"id": pid, "nombre": nombre, "creado": _ahora(), "con_ejemplo": datos.con_ejemplo}
-    (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    _escribir((d / "meta.json"), json.dumps(meta, ensure_ascii=False, indent=2))
     return meta
 
 
@@ -365,7 +424,7 @@ def guardar_entrada(pid: str, archivo: str, datos: TextoEntrada):
         raise HTTPException(400, "proyecto.yaml debe tener la lista 'niveles' (con al menos un nivel); no se guardó")
     if archivo != "proyecto.yaml" and not isinstance(contenido, dict):
         raise HTTPException(400, f"{archivo} quedaría vacío; no se guardó")
-    _ruta_entrada(d, archivo).write_text(datos.texto, encoding="utf-8")
+    _escribir(_ruta_entrada(d, archivo), datos.texto)
     if archivo == "proyecto.yaml":
         _enlazar_lineamientos(d)
     return {"guardado": True, "errores": _validar_entradas(d)}
@@ -441,7 +500,7 @@ def _guardar_mat_rt(ruta: Path, datos) -> None:
         raise HTTPException(400, "El lego no es válido:\n• " + "\n• ".join(errores))
     buf = io.StringIO()
     _ry().dump(datos, buf)
-    ruta.write_text(_reubicar_titulos(buf.getvalue()), encoding="utf-8")
+    _escribir(ruta, _reubicar_titulos(buf.getvalue()))
 
 
 def _reubicar_titulos(texto: str) -> str:
@@ -723,7 +782,7 @@ def guardar_legos(pid: str, datos: Legos):
         bloque["cubierta"] = datos.cubierta
     texto += "\n# Legos elegidos para este proyecto (se editan en la pestaña Legos de la app)\n"
     texto += yaml.safe_dump({"legos": bloque}, allow_unicode=True, sort_keys=False)
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
@@ -778,7 +837,7 @@ def guardar_ediciones(pid: str, datos: Ediciones):
               "fin": [round(float(v), 4) for v in w["fin"]], **({"id": w["id"]} if w.get("id") else {})}
              for w in datos.quitar if isinstance(w.get("inicio"), list) and isinstance(w.get("fin"), list)]
         texto = _reemplazar_bloque(texto, "muros_quitar", q)
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
@@ -806,7 +865,7 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
     if elegidas:
         texto += "\n# Tipologías elegidas por tramo de eje (se editan en la pestaña Estructuración de la app)\n"
         texto += yaml.safe_dump({"tramos": elegidas}, allow_unicode=True, sort_keys=False)
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
@@ -954,7 +1013,7 @@ def guardar_capas(pid: str, datos: CapasCategoria):
         texto = _reemplazar_bloque(texto, "capas", propias)
     else:
         texto = re.sub(r"^capas:.*?(?=^[^\s-]|\Z)", "", texto, flags=re.M | re.S)
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
@@ -1032,7 +1091,7 @@ def guardar_distribucion(pid: str, datos: Distribucion):
     if revisados:     # el usuario eligió las vistas de estos planos: la app ya no las cambia sola
         previos = set(_leer_yaml_seguro(py).get("vistas_revisadas") or []) if py.exists() else set()
         texto = _reemplazar_bloque(texto, "vistas_revisadas", sorted(previos | set(revisados)))
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
@@ -1167,7 +1226,7 @@ def _separar_vistas(d: Path) -> list[str]:
         texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
         texto = _reemplazar_bloque(texto, "techo", techo)
         texto = _reemplazar_bloque(texto, "vistas_revisadas", sorted(revisados))
-        py.write_text(texto, encoding="utf-8")
+        _escribir(py, texto)
     return notas
 
 
@@ -1238,7 +1297,7 @@ def _acomodar_planos(d: Path, nuevos: list[str]) -> dict:
     texto = _reemplazar_bloque(texto, "plantas", plantas)
     texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
     texto = _reemplazar_bloque(texto, "techo", techo)
-    py.write_text(texto, encoding="utf-8")
+    _escribir(py, texto)
     return {"asignados": asignados, "ejemplos_quitados": quitados}
 
 
@@ -1336,13 +1395,13 @@ def ejecutar(pid: str, datos: NuevaCorrida):
         resumen["ok"] = not resumen["errores_esquema"]
         resumen["conteos"] = _conteos(modelo)
         resumen["lod"] = modelo["lod"]["preset"]
-        (c / "modelo.json").write_text(json.dumps(modelo, ensure_ascii=False, indent=1), encoding="utf-8")
+        _escribir((c / "modelo.json"), json.dumps(modelo, ensure_ascii=False, indent=1))
     except ErrorConfiguracion as e:
         resumen["error"] = str(e)
     except Exception as e:
         resumen["error"] = f"Error inesperado al procesar: {type(e).__name__}: {e}"
         resumen["traza"] = traceback.format_exc(limit=5)
-    (c / "resumen.json").write_text(json.dumps(resumen, ensure_ascii=False, indent=2), encoding="utf-8")
+    _escribir((c / "resumen.json"), json.dumps(resumen, ensure_ascii=False, indent=2))
     return resumen
 
 
@@ -1382,7 +1441,7 @@ def guardar_notas(pid: str, n: int, datos: Notas):
     c = _corrida_dir(_proyecto(pid), n)
     r = json.loads((c / "resumen.json").read_text(encoding="utf-8"))
     r["notas"] = datos.notas
-    (c / "resumen.json").write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+    _escribir((c / "resumen.json"), json.dumps(r, ensure_ascii=False, indent=2))
     return r
 
 
@@ -1454,6 +1513,22 @@ def estatico_versionado(version: str, archivo: str):
     # la huella va en la ruta: si es la actual se puede guardar para siempre; si no, que no se guarde
     cache = "public, max-age=31536000, immutable" if version == VERSION_WEB else "no-store"
     return FileResponse(f, headers={"Cache-Control": cache})
+
+
+_CAMBIOS = None
+
+
+@app.middleware("http")
+async def _de_a_uno(request, call_next):
+    """Los cambios se procesan de a uno: dos clics seguidos ya no escriben proyecto.yaml al mismo tiempo."""
+    global _CAMBIOS
+    if request.method in ("GET", "HEAD") or not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    import asyncio
+    if _CAMBIOS is None:
+        _CAMBIOS = asyncio.Lock()
+    async with _CAMBIOS:
+        return await call_next(request)
 
 
 @app.middleware("http")
