@@ -23,7 +23,18 @@ namespace Cad2Revit
             return sb.ToString().Trim();
         }
 
-        public static XYZ P(double[] p, double z = 0) => new XYZ(M(p[0]), M(p[1]), z);
+        /// <summary>
+        /// Punto del plano que queda en el origen de Revit (m). Los planos suelen estar dibujados lejos del
+        /// origen (coordenadas de terreno, a kilómetros): ahí la vista 3D se ve vacía y Revit pierde precisión.
+        /// </summary>
+        public static double OrigenX, OrigenY;
+
+        public static XYZ P(double[] p, double z = 0) => new XYZ(M(p[0] - OrigenX), M(p[1] - OrigenY), z);
+
+        public static double Dist(double[] a, double[] b) => Math.Sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]));
+
+        /// <summary>Punto 3D del modelo (x, y, z en m) en coordenadas de Revit.</summary>
+        public static XYZ P3(double[] p) => new XYZ(M(p[0] - OrigenX), M(p[1] - OrigenY), M(p[2]));
 
         public static CurveLoop Contorno(List<double[]> pts, double z)
         {

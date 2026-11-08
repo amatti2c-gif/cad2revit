@@ -218,8 +218,24 @@ namespace Cad2Revit
                     {
                         // Techo de Revit por contorno; si Revit lo rechaza, se deja la losa plana y se informa
                         if (Intentar(l.Id + " (techo inclinado)", () => CrearTechoInclinado(l, nivel), false)) return;
+                        var motivo = _ultimoFallo;
+                        // 2º intento: solo los dos bordes con pendiente más largos (el dos aguas del cuerpo principal);
+                        // los encuentros de alas o accesos a otra altura a veces Revit no los resuelve
+                        var principales = l.BordesPendiente.OrderByDescending(i => U.Dist(l.Contorno[i], l.Contorno[(i + 1) % l.Contorno.Count]))
+                                                           .Take(2).ToList();
+                        if (principales.Count < l.BordesPendiente.Count)
+                        {
+                            var simple = new LosaDef { Id = l.Id, Nivel = l.Nivel, Tipo = l.Tipo, Cubierta = true, Forma = l.Forma,
+                                                       Pendiente = l.Pendiente, Contorno = l.Contorno, BordesPendiente = principales };
+                            if (Intentar(l.Id + " (techo simplificado)", () => CrearTechoInclinado(simple, nivel), false))
+                            {
+                                _inf.Advertencia($"{l.Id}: el techo a {l.Forma} completo no se pudo crear ({motivo}); se creó con pendiente " +
+                                                 "solo en los dos bordes principales. Revisa los encuentros en Revit.");
+                                return;
+                            }
+                        }
                         _inf.Faltante("Techo básico", l.Tipo, "Cubiertas", l.Id,
-                                      $"no se pudo crear el techo a {l.Forma} ({l.Pendiente}°); se dejó una losa plana");
+                                      $"no se pudo crear el techo a {l.Forma} ({l.Pendiente}°): {motivo}; se dejó una losa plana");
                     }
                     var est = _m.TiposLosa.FirstOrDefault(t => t.Nombre == l.Tipo)?.Estructural ?? false;
                     var loop = U.Contorno(l.Contorno, nivel.Elevation);
@@ -255,7 +271,7 @@ namespace Cad2Revit
                 Intentar("Recinto " + r.Nombre, () =>
                 {
                     var nivel = Nivel(r.Nivel) ?? throw new System.Exception($"nivel '{r.Nivel}' inexistente");
-                    var room = _doc.Create.NewRoom(nivel, new UV(U.M(r.Punto[0]), U.M(r.Punto[1])));
+                    var room = _doc.Create.NewRoom(nivel, new UV(U.M(r.Punto[0] - U.OrigenX), U.M(r.Punto[1] - U.OrigenY)));
                     room.Name = U.NombreSeguro(r.Nombre);
                     Marcar(room, "recinto");
                     _inf.Contar("Recintos");

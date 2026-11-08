@@ -51,6 +51,60 @@ namespace Cad2Revit
             return sb.Finish();
         }
 
+        // ---------------------------------------------------------------- origen del modelo
+        // Los planos vienen en coordenadas de terreno (a kilómetros del origen). El modelo se traslada para que
+        // la esquina del edificio quede cerca del origen de Revit. El desplazamiento se guarda en el proyecto
+        // y se reutiliza al reimportar, para que todo siga calzando.
+        private static readonly Guid GuidOrigen = new Guid("0b7e3f52-9c4d-4a61-8f2e-6d1a5c3b9e74");
+
+        private static Autodesk.Revit.DB.ExtensibleStorage.Schema EsquemaOrigen()
+        {
+            var esquema = Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(GuidOrigen);
+            if (esquema != null) return esquema;
+            var sb = new Autodesk.Revit.DB.ExtensibleStorage.SchemaBuilder(GuidOrigen);
+            sb.SetSchemaName("cad2revit_origen");
+            sb.SetReadAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+            sb.SetWriteAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+            sb.AddSimpleField("xy", typeof(string));
+            return sb.Finish();
+        }
+
+        private void FijarOrigen()
+        {
+            U.OrigenX = U.OrigenY = 0;
+            try
+            {
+                var ent = _doc.ProjectInformation.GetEntity(EsquemaOrigen());
+                var guardado = ent != null && ent.IsValid() ? ent.Get<string>("xy") : null;
+                if (!string.IsNullOrEmpty(guardado))
+                {
+                    var p = guardado.Split(';');
+                    U.OrigenX = double.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture);
+                    U.OrigenY = double.Parse(p[1], System.Globalization.CultureInfo.InvariantCulture);
+                    _inf.Advertencia($"Coordenadas: se usa el mismo origen de la importación anterior (punto {U.OrigenX:0.##}, {U.OrigenY:0.##} del plano en 0, 0)");
+                    return;
+                }
+            }
+            catch { /* sin origen guardado */ }
+            var xs = _m.Muros.SelectMany(w => new[] { w.Inicio[0], w.Fin[0] }).Concat(_m.Ejes.SelectMany(e => new[] { e.Inicio[0], e.Fin[0] })).ToList();
+            var ys = _m.Muros.SelectMany(w => new[] { w.Inicio[1], w.Fin[1] }).Concat(_m.Ejes.SelectMany(e => new[] { e.Inicio[1], e.Fin[1] })).ToList();
+            if (xs.Count == 0) return;
+            double x0 = xs.Min(), y0 = ys.Min();
+            if (Math.Abs(x0) < 200 && Math.Abs(y0) < 200) return;        // ya está cerca del origen
+            U.OrigenX = Math.Floor(x0 / 10) * 10;                         // múltiplos de 10 m: estable si el plano cambia un poco
+            U.OrigenY = Math.Floor(y0 / 10) * 10;
+            _inf.Advertencia($"Coordenadas: el plano está lejos del origen; el punto ({U.OrigenX:0}, {U.OrigenY:0}) del plano " +
+                             "quedó en el origen de Revit (0, 0). Se reutiliza en las próximas importaciones.");
+            using (var t = new Transaction(_doc, "cad2revit: origen"))
+            {
+                t.Start();
+                var ent = new Autodesk.Revit.DB.ExtensibleStorage.Entity(EsquemaOrigen());
+                ent.Set("xy", string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0};{1}", U.OrigenX, U.OrigenY));
+                _doc.ProjectInformation.SetEntity(ent);
+                t.Commit();
+            }
+        }
+
         public static List<ElementId> EjesPrevios(Document doc)
         {
             var ent = doc.ProjectInformation.GetEntity(EsquemaEjes());
@@ -88,6 +142,7 @@ namespace Cad2Revit
         public Informe Construir()
         {
             foreach (var a in _m.Advertencias) _inf.Advertencia("parser: " + a);
+            FijarOrigen();
 
             using (var grupo = new TransactionGroup(_doc, "cad2revit: construir modelo"))
             {

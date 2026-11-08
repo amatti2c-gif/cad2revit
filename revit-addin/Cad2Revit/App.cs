@@ -80,6 +80,9 @@ namespace Cad2Revit
             }
             var informe = constructor.Construir();
             informe.Guardar(System.IO.Path.ChangeExtension(ruta, ".informe.txt"));
+            // que el modelo se vea: ajustar las vistas abiertas a lo construido
+            try { foreach (var v in data.Application.ActiveUIDocument.GetOpenUIViews()) v.ZoomToFit(); }
+            catch { /* sin vistas abiertas */ }
 
             var td = new TaskDialog("cad2revit")
             {

@@ -9,7 +9,8 @@ namespace Cad2Revit
     public partial class Constructor
     {
         private static readonly string[] NombresBAcero = { "b", "bf", "Width", "Ancho", "Anchura" };
-        private static readonly string[] NombresHAcero = { "d", "h", "Depth", "Height", "Altura", "Profundidad" };
+        // "Ht": alto de las familias HSS (tubos rectangulares) de Revit
+        private static readonly string[] NombresHAcero = { "d", "h", "Ht", "H", "Depth", "Height", "Altura", "Profundidad" };
 
         /// <summary>
         /// Marcos de acero (de momento o arriostrados en X) con familias estándar de Revit:
@@ -41,7 +42,7 @@ namespace Cad2Revit
                     foreach (var c in f.Columnas)
                         if (Intentar($"{f.Id} columna", () =>
                         {
-                            var p = new XYZ(U.M(c.Punto[0]), U.M(c.Punto[1]), nivel.Elevation);
+                            var p = U.P(c.Punto, nivel.Elevation);
                             var fi = _doc.Create.NewFamilyInstance(p, sc, nivel, StructuralType.Column);
                             U.Fijar(fi, BuiltInParameter.FAMILY_BASE_LEVEL_PARAM, nivel.Id);
                             U.Fijar(fi, BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM, U.M(c.Z0) - nivel.Elevation);
@@ -87,7 +88,7 @@ namespace Cad2Revit
             Marcar(fi, id);
         }
 
-        private static XYZ P3(double[] p) => new XYZ(U.M(p[0]), U.M(p[1]), U.M(p[2]));
+        private static XYZ P3(double[] p) => U.P3(p);
 
         /// <summary>
         /// Tipo de Revit para un perfil: si existe un tipo con la designación pedida (en la familia

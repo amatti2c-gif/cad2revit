@@ -114,6 +114,28 @@ def _alero_de_cortes(vistas_altura: list[dict]) -> float | None:
     return round(aleros[len(aleros) // 2], 2) if aleros else None
 
 
+def _limpiar_contorno(cont: list) -> list:
+    """Contorno válido para un techo de Revit: sin puntos repetidos ni alineados, sin bordes de menos de
+    5 cm y en sentido antihorario."""
+    try:
+        poli = Polygon(cont).buffer(0)
+        if poli.geom_type != "Polygon":
+            poli = max(poli.geoms, key=lambda g: g.area)
+        poli = Polygon(poli.exterior).simplify(0.02)
+        pts = [list(map(lambda v: round(v, 4), q)) for q in list(poli.exterior.coords)[:-1]]
+        limpio = []
+        for q in pts:
+            if not limpio or math.dist(q, limpio[-1]) >= 0.05:
+                limpio.append(q)
+        if len(limpio) > 3 and math.dist(limpio[0], limpio[-1]) < 0.05:
+            limpio.pop()
+        if Polygon(limpio).exterior.is_ccw is False:
+            limpio.reverse()
+        return limpio if len(limpio) >= 3 else cont
+    except Exception:
+        return cont
+
+
 def _planos_techo(modelo: dict, sup: str | None) -> list:
     """Planos del techo inclinado si el nivel superior es el de la cubierta (los marcos de ese piso lo siguen)."""
     cub_nivel = next((l["nivel"] for l in modelo["losas"] if l.get("cubierta")), None)
@@ -175,6 +197,7 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
     if inclinados and not cumbreras:
         a, b = lineas[max(inclinados, key=lambda v: v["pendiente"])["letra"]]
         dir_cumbrera = (-(b[1] - a[1]), b[0] - a[0])        # la cumbrera es perpendicular al corte
+    cont = _limpiar_contorno(cont)
     forma = cortes_mod.cubierta(cont, cumbreras, limatones, pendiente, dir_cumbrera)
     if forma["forma"] != "plana" and not forma["bordes_pendiente"]:
         adv.append("Cubierta: no se pudo saber qué bordes llevan pendiente; se deja plana")

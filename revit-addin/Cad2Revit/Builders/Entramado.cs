@@ -84,6 +84,6 @@ namespace Cad2Revit
             Marcar(fi, $"entramado {muro} {p.Rol}");
         }
 
-        private static XYZ Punto(double[] p) => new XYZ(U.M(p[0]), U.M(p[1]), U.M(p[2]));
+        private static XYZ Punto(double[] p) => U.P3(p);
     }
 }

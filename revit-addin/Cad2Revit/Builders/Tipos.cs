@@ -231,7 +231,7 @@ namespace Cad2Revit
 
         private static readonly Dictionary<string, string[]> ClaveForma = new()
         {
-            ["rectangular"] = new[] { "rectangular", "rect", "square", "rhs", "shs", "lumber", "timber" },
+            ["rectangular"] = new[] { "rectangular", "rect", "square", "rhs", "shs", "hss", "hollow", "lumber", "timber" },
             ["circular"] = new[] { "round", "circular", "cylind", "redond" },
             ["C"] = new[] { "c shapes", "channel", "upn", "c-", "mc shapes" },
             ["W"] = new[] { "w shapes", "wide flange", "uc-", "ub-", "ipe", "hea", "heb", "i-beam", "universal" },
@@ -313,17 +313,21 @@ namespace Cad2Revit
         private bool CargarPorMaterial(BuiltInCategory cat, string clase, string forma)
         {
             var carpetaCat = cat == BuiltInCategory.OST_StructuralColumns ? "column" : "framing";
+            var otras = ClaveForma.Where(kv => kv.Key != forma && kv.Key != "rectangular").SelectMany(kv => kv.Value).ToArray();
+            var propias = ClaveForma.TryGetValue(forma, out var kf) ? kf : new[] { forma.ToLowerInvariant() };
             foreach (var raiz in CarpetasFamilias())
             {
-                IEnumerable<string> archivos;
+                List<string> archivos;
                 try { archivos = System.IO.Directory.EnumerateFiles(raiz, "*.rfa", System.IO.SearchOption.AllDirectories).ToList(); }
                 catch { continue; }
-                foreach (var a in archivos)
+                // de la forma pedida (p. ej. HSS para tubo rectangular), y nunca una de otra forma (C, W, L, redonda)
+                var candidatos = archivos.Select(a => (a, n: System.IO.Path.GetFileName(a).ToLowerInvariant(), r: a.ToLowerInvariant()))
+                    .Where(x => x.r.Contains(carpetaCat) && ClaveMaterial[clase].Any(x.r.Contains))
+                    .Where(x => !otras.Any(x.n.Contains) || propias.Any(x.n.Contains))
+                    .Where(x => forma == "rectangular" ? !ClaveForma["circular"].Any(x.n.Contains) : propias.Any(x.n.Contains))
+                    .OrderBy(x => propias.Any(x.n.Contains) ? 0 : 1).ToList();
+                foreach (var (a, _, _) in candidatos)
                 {
-                    var n = a.ToLowerInvariant();
-                    if (!n.Contains(carpetaCat) || !ClaveMaterial[clase].Any(n.Contains)) continue;
-                    if (forma != "rectangular" && !(ClaveForma.TryGetValue(forma, out var kf) ? kf : new[] { forma }).Any(n.Contains)) continue;
-                    if (forma == "rectangular" && ClaveForma["circular"].Any(n.Contains)) continue;
                     if (_doc.LoadFamily(a, out _))
                     {
                         _inf.Advertencia($"Familia de {clase} ({forma}) cargada automáticamente desde {a}");
