@@ -49,6 +49,10 @@ class Configuracion:
 
     # --- accesos cómodos -----------------------------------------------------
     def capa(self, categoria: str) -> re.Pattern | None:
+        """Capas de una categoría: las elegidas en el proyecto (lista exacta) o la regla global."""
+        propias = (self.proyecto.get("capas") or {}).get(categoria)
+        if propias:
+            return re.compile("^(" + "|".join(re.escape(c) for c in propias) + ")$")
         patron = self.capas_cad.get("capas", {}).get(categoria)
         return re.compile(patron) if patron else None
 

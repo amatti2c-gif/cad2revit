@@ -14,6 +14,7 @@ from .aberturas import asignar_a_muros, clasificar_inserciones
 from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
+from . import ejes as ejes_mod
 from . import marcos as marcos_mod
 from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
@@ -219,13 +220,13 @@ def construir_modelo(cfg: Configuracion) -> dict:
         # 8) Ejes (desde la primera planta)
         if lod["ejes"] and idx == 0 and (cfg.estructuracion.get("ejes") or {}).get("leer_del_cad", True):
             ecfg = cfg.estructuracion.get("ejes") or {}
-            lineas = dib.segmentos_en(cfg.capa("ejes"))
-            vert = sorted([s for s in lineas if abs(s.b[0] - s.a[0]) < abs(s.b[1] - s.a[1])], key=lambda s: s.a[0])
-            hori = sorted([s for s in lineas if abs(s.b[0] - s.a[0]) >= abs(s.b[1] - s.a[1])], key=lambda s: s.a[1])
-            for grupo, estilo in ((vert, ecfg.get("nomenclatura_x", "numeros")),
-                                  (hori, ecfg.get("nomenclatura_y", "letras"))):
-                for s, nombre in zip(grupo, _nombres_ejes(len(grupo), estilo)):
-                    modelo["ejes"].append(dict(nombre=nombre, inicio=s.a, fin=s.b))
+            lineas = ejes_mod.desde_cad(dib.segmentos_en(cfg.capa("ejes")))
+            if lineas:
+                modelo["ejes"] += ejes_mod.nombrar(lineas, ecfg, "plano CAD")
+            elif muros and ecfg.get("generar_desde_muros", True):
+                modelo["ejes"] += ejes_mod.nombrar(ejes_mod.desde_muros(muros), ecfg, "desde muros")
+                adv.append(f"No se encontraron ejes en la capa de ejes del plano; se generaron {len(modelo['ejes'])} "
+                           "ejes automáticos por las líneas de muros (elige tu capa de ejes en Planos → Capas de tu plano)")
 
         # 9) Entramado de madera (tipos de muro con sección "entramado")
         if lod.get("entramado"):

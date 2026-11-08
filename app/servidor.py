@@ -714,6 +714,71 @@ def _uso_de_planos(py: dict) -> dict[str, str]:
     return uso
 
 
+CATEGORIAS_CAPA = [("muros", "Muros y tabiques"), ("puertas", "Puertas"), ("ventanas", "Ventanas"),
+                   ("columnas", "Columnas / pilares"), ("ejes", "Ejes"), ("marcos", "Marcos de acero"),
+                   ("losas", "Contorno de losas"), ("recintos", "Nombres de recintos")]
+
+
+def _capas_en_planos(d: Path) -> list[str]:
+    py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    archivos = [Path(p["archivo"]).name for p in py.get("plantas") or []] or [f.name for f in (d / "planos").glob("*.dxf")]
+    capas = set()
+    for nombre in archivos:
+        f = d / "planos" / nombre
+        if f.exists():
+            try:
+                dib = leer(str(f))
+                capas |= {s.capa for s in dib.segmentos} | {i.capa for i in dib.inserciones} | {t.capa for t in dib.textos}
+            except Exception:
+                pass
+    return sorted(capas)
+
+
+@app.get("/api/proyectos/{pid}/capas")
+def leer_capas(pid: str):
+    """Capas de las plantas del proyecto y, por categoría, cuáles se usan (elegidas o por la regla general)."""
+    d = _proyecto(pid)
+    capas = _capas_en_planos(d)
+    propias = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("capas") or {}
+    reglas = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("capas") or {}
+    out = []
+    for clave, nombre in CATEGORIAS_CAPA:
+        elegidas = propias.get(clave)
+        if elegidas:
+            usadas = [c for c in capas if c in elegidas]
+        else:
+            patron = reglas.get(clave)
+            usadas = [c for c in capas if patron and re.search(patron, c)]
+        out.append({"clave": clave, "nombre": nombre, "regla": reglas.get(clave), "elegidas": elegidas or None,
+                    "usadas": usadas})
+    return {"capas_plano": capas, "categorias": out}
+
+
+class CapasCategoria(BaseModel):
+    categoria: str
+    capas: list[str] | None = None        # None o [] = volver a la regla general
+
+
+@app.put("/api/proyectos/{pid}/capas")
+def guardar_capas(pid: str, datos: CapasCategoria):
+    d = _proyecto(pid)
+    if datos.categoria not in dict(CATEGORIAS_CAPA):
+        raise HTTPException(400, f"Categoría desconocida: {datos.categoria}")
+    py = d / "entradas" / "proyecto.yaml"
+    propias = dict(_leer_yaml_seguro(py).get("capas") or {})
+    if datos.capas:
+        propias[datos.categoria] = sorted(set(datos.capas))
+    else:
+        propias.pop(datos.categoria, None)
+    texto = py.read_text(encoding="utf-8")
+    if propias:
+        texto = _reemplazar_bloque(texto, "capas", propias)
+    else:
+        texto = re.sub(r"^capas:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S)
+    py.write_text(texto, encoding="utf-8")
+    return {"guardado": True, "errores": _validar_entradas(d)}
+
+
 class Nivel(BaseModel):
     nombre: str
     cota: float

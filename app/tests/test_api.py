@@ -251,6 +251,27 @@ def test_distribucion_de_planos(cliente, tmp_path):
     assert r.status_code == 400 and "dos plantas" in r.json()["detail"]
 
 
+def test_capas_del_plano(cliente):
+    pid = _crear(cliente)
+    c = cliente.get(f"/api/proyectos/{pid}/capas").json()
+    assert "A-TABIQUE" in c["capas_plano"]
+    cat = {x["clave"]: x for x in c["categorias"]}
+    assert cat["muros"]["usadas"] == ["A-MURO-HA", "A-TABIQUE"] and cat["muros"]["elegidas"] is None
+    # elegir solo el hormigón como muro y una capa de ejes que no existe -> ejes desde muros
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "muros", "capas": ["A-MURO-HA"]})
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "ejes", "capas": ["A-RECINTO"]})
+    cat = {x["clave"]: x for x in cliente.get(f"/api/proyectos/{pid}/capas").json()["categorias"]}
+    assert cat["muros"]["usadas"] == ["A-MURO-HA"] and cat["muros"]["elegidas"] == ["A-MURO-HA"]
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r["ok"] and r["conteos"]["muros"] == 8
+    # volver a la regla general
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "muros", "capas": None})
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "ejes", "capas": []})
+    py = cliente.get(f"/api/proyectos/{pid}/entradas").json()["archivos"]["proyecto.yaml"]
+    assert "\ncapas:" not in py
+    assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["muros"] == 10
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

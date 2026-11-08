@@ -142,7 +142,40 @@ $("#btn-agregar-nivel").addEventListener("click", () => {
 });
 $("#btn-guardar-niveles").addEventListener("click", () => intentar(() => guardarDistribucion("Niveles guardados")));
 
+async function cargarCapas() {
+  const c = await api("GET", P("/capas"));
+  if (!c.capas_plano.length) {
+    $("#lista-capas").replaceChildren(h("p", { class: "tenue" }, "Asigna al menos una planta a un nivel para ver sus capas."));
+    return;
+  }
+  $("#lista-capas").replaceChildren(...c.categorias.map(cat => {
+    const marcadas = new Set(cat.usadas);
+    const chips = c.capas_plano.map(capa => {
+      const chip = h("span", { class: "chip-capa" + (marcadas.has(capa) ? " on" : ""), title: capa }, capa);
+      chip.addEventListener("click", () => intentar(async () => {
+        chip.classList.toggle("on");
+        const elegidas = [...chip.parentElement.querySelectorAll(".chip-capa.on")].map(x => x.textContent);
+        $("#capas-estado").textContent = "guardando…";
+        await api("PUT", P("/capas"), { categoria: cat.clave, capas: elegidas });
+        $("#capas-estado").textContent = "guardado ✓ (presiona ▶ Ejecutar para aplicarlo)";
+        await cargarCapas();
+        await cargarLegos();
+      }));
+      return chip;
+    });
+    return h("div", { class: "cat-capas" },
+      h("div", {}, h("strong", {}, cat.nombre),
+        h("div", { class: "origen" }, cat.elegidas ? "elegidas por ti" : (cat.usadas.length ? "según la regla general" : "ninguna reconocida")),
+        cat.elegidas ? h("button", { class: "sec", style: "margin-top:4px;padding:2px 8px;font-size:12px", onclick: () => intentar(async () => {
+          await api("PUT", P("/capas"), { categoria: cat.clave, capas: null });
+          await cargarCapas();
+        }) }, "Usar regla general") : null),
+      h("div", { class: "chips" }, chips));
+  }));
+}
+
 async function cargarPlanos() {
+  intentar(cargarCapas);
   const [planos, d] = await Promise.all([api("GET", P("/planos")), api("GET", P("/distribucion"))]);
   dist.niveles = d.niveles; dist.usos = d.usos;
   $("#tabla-niveles tbody").replaceChildren(...d.niveles.map(filaNivel));
@@ -351,7 +384,13 @@ async function cargarEstructura() {
   const ultima = estado.corridas.find(c => c.ok);
   $("#est-vacio").classList.toggle("oculto", !!ultima);
   $("#est-contenido").classList.toggle("oculto", !ultima);
-  if (!ultima) return;
+  if (!ultima) {
+    const fallida = estado.corridas[0];
+    $("#est-vacio").textContent = fallida
+      ? `La última corrida tuvo errores, así que no hay estructuración que mostrar: ${fallida.error ?? "revisa la pestaña Resultado"}`
+      : "Presiona ▶ Ejecutar para que la app proponga la estructuración.";
+    return;
+  }
   const [r, el] = await Promise.all([api("GET", P(`/corridas/${ultima.n}`)), api("GET", P("/tramos"))]);
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
@@ -359,7 +398,13 @@ async function cargarEstructura() {
   if (!tramos.length) {
     $("#est-contenido").classList.add("oculto");
     $("#est-vacio").classList.remove("oculto");
-    $("#est-vacio").textContent = "No hay tramos: el plano necesita ejes que se crucen (capa de ejes) para proponer la estructuración.";
+    const m = est.modelo;
+    $("#est-vacio").textContent = !m.muros.length
+      ? `La corrida ${ultima.n} no encontró muros ni ejes en tus plantas. Ve a Planos: revisa que cada planta esté asignada a un ` +
+        "nivel y, en «Capas de tu plano», marca cuáles son tus capas de muros y de ejes. Luego presiona ▶ Ejecutar."
+      : !m.ejes.length
+        ? "No hay ejes: marca tu capa de ejes en Planos → «Capas de tu plano» (o activa la generación desde muros) y ejecuta de nuevo."
+        : "Los ejes encontrados no se cruzan entre sí, por lo que no forman tramos. Revisa la capa de ejes en Planos.";
     return;
   }
   const niveles = [...new Set(tramos.flatMap(t => Object.keys(t.niveles)))];

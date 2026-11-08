@@ -104,5 +104,6 @@ fundaciones:
 # -----------------------------------------------------------------------------
 ejes:
   leer_del_cad: true                 # líneas de la capa de ejes -> Grid de Revit
+  generar_desde_muros: true          # si el plano no tiene ejes, se generan por las líneas de muros
   nomenclatura_x: numeros            # numeros | letras
   nomenclatura_y: letras

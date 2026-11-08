@@ -243,6 +243,38 @@ def test_eleccion_por_tramo_y_piso(proyecto):
     assert sum(1 for o, _, s in origenes if o == "tramo A:1-2" and s == "momento") == 2
 
 
+def test_ejes_automaticos_desde_muros(proyecto):
+    """Plano sin capa de ejes: se generan ejes por los muros y la estructuración funciona igual."""
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"ejes": ["CAPA-QUE-NO-EXISTE"]}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert modelo["ejes"] and all(e["origen"] == "desde muros" for e in modelo["ejes"])
+    assert {e["nombre"] for e in modelo["ejes"]} == {"1", "2", "3", "A", "B"}
+    assert any("ejes automáticos" in a for a in modelo["advertencias"])
+    ids = {t["id"] for t in modelo["tramos"]}
+    assert {"1:A-B", "2:A-B", "A:1-2", "B:2-3"} <= ids
+
+
+def test_capas_del_proyecto(proyecto):
+    """El proyecto puede decir cuál es su capa de muros: si se omite el tabique, no hay tabique."""
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["A-MURO-HA"]}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert {m["capa_cad"] for m in modelo["muros"]} == {"A-MURO-HA"}
+
+
+def test_ejes_partidos_se_unen():
+    from cad2revit import ejes as ejes_mod
+    from cad2revit.dxf_reader import Segmento
+    segs = [Segmento((0, 0), (0, 4), "EJE"), Segmento((0, 4.01), (0, 10), "EJE"),   # eje 1 en 2 trozos
+            Segmento((5, 0), (5, 10), "EJE"), Segmento((5.02, 2), (5.02, 6), "EJE"),  # eje 2 + trozo repetido
+            Segmento((-1, 3), (8, 3), "EJE")]
+    ejes = ejes_mod.nombrar(ejes_mod.desde_cad(segs), {}, "plano CAD")
+    assert sorted(e["nombre"] for e in ejes) == ["1", "2", "A"]
+    e1 = next(e for e in ejes if e["nombre"] == "1")
+    assert e1["inicio"][1] == 0 and e1["fin"][1] == 10
+
+
 def test_lod100_simplifica(proyecto):
     ruta = proyecto("nivel_detalle.yaml", {"preset": 100, "ajustes": {}})
     modelo = construir_modelo(cargar(ruta))
