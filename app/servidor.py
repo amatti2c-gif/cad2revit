@@ -148,7 +148,64 @@ def _lineamientos() -> Path:
         d.mkdir(parents=True)
         for a in LINEAMIENTOS:
             shutil.copy2(RAIZ / "entradas" / a, d / a)
+    if str(d) not in _COMPLETADOS:
+        _COMPLETADOS.add(str(d))
+        try:
+            _completar_lineamientos(d)
+        except Exception:          # nunca impedir que la app arranque por esto
+            traceback.print_exc()
     return d
+
+
+_COMPLETADOS: set[str] = set()
+
+
+def _completar_lineamientos(d: Path) -> list[str]:
+    """Los lineamientos comunes se copian una sola vez; cuando la app trae secciones nuevas (p. ej. los
+    legos de marco) se AGREGAN sin tocar lo que el usuario ya editó: secciones y claves que faltan, y
+    los materiales que esas secciones nuevas necesitan."""
+    import io
+    agregados = []
+    y = _ry()
+    for a in LINEAMIENTOS:
+        ruta, base = d / a, RAIZ / "entradas" / a
+        if not ruta.exists():
+            shutil.copy2(base, ruta)
+            continue
+        with ruta.open(encoding="utf-8") as f:
+            actual = y.load(f)
+        with base.open(encoding="utf-8") as f:
+            defecto = y.load(f)
+        if not isinstance(actual, dict) or not isinstance(defecto, dict):
+            continue
+        nuevas = []
+        for clave, valor in defecto.items():
+            if clave not in actual:
+                actual[clave] = valor
+                nuevas.append(clave)
+                agregados.append(f"{a}: {clave}")
+            elif isinstance(valor, dict) and isinstance(actual[clave], dict):
+                for sub, v in valor.items():
+                    if sub not in actual[clave]:
+                        actual[clave][sub] = v
+                        agregados.append(f"{a}: {clave}.{sub}")
+        if a == "materialidades.yaml" and nuevas:
+            # materiales que usan las secciones nuevas (p. ej. el acero de los marcos)
+            usados = set(re.findall(r"material:\s*([^\n,}]+)", json.dumps(
+                {k: json.loads(json.dumps(actual[k])) for k in nuevas}, ensure_ascii=False).replace('"', "")))
+            tiene = {m.get("nombre") for m in actual.get("materiales") or []}
+            for m in defecto.get("materiales") or []:
+                if m.get("nombre") in usados - tiene:
+                    actual["materiales"].append(m)
+                    agregados.append(f"{a}: material {m.get('nombre')}")
+        if agregados and any(x.startswith(a) for x in agregados):
+            buf = io.StringIO()
+            y.dump(actual, buf)
+            ruta.write_text(buf.getvalue(), encoding="utf-8")
+    if agregados:
+        (d / "actualizaciones.txt").open("a", encoding="utf-8").write(
+            f"{_ahora()}: se agregó de los valores por defecto: " + "; ".join(agregados) + "\n")
+    return agregados
 
 
 def _ruta_entrada(d: Path, archivo: str) -> Path:

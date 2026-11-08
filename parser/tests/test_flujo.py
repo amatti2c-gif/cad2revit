@@ -478,3 +478,12 @@ def test_puertas_por_arco_y_ventanas_por_rotulo(proyecto, tmp_path):
     assert (v["ancho"], v["alto"], v["antepecho"]) == (1.2, 1.5, 1.0) and abs(v["centro"][1] - 5.9) < 0.05
     # el muro inferior queda continuo sobre la puerta (un solo muro aloja la puerta)
     assert len([w for w in modelo["muros"] if abs(w["inicio"][1] - 0.1) < 0.02 and abs(w["fin"][1] - 0.1) < 0.02]) == 1
+
+
+def test_muro_dentro_de_otro_se_descarta():
+    from cad2revit.muros import Muro, quitar_encimados
+    real = Muro(id="M1", a=(0, 0), b=(10, 0), espesor=0.20, capa_cad="MURO")
+    vidrio = Muro(id="M2", a=(2, 0.02), b=(3.2, 0.02), espesor=0.05, capa_cad="VENTANA")    # dentro del muro
+    tabique = Muro(id="M3", a=(5, 0.1), b=(5, 4), espesor=0.10, capa_cad="MURO")           # perpendicular: queda
+    quedan, quitados = quitar_encimados([real, vidrio, tabique])
+    assert [m.id for m in quedan] == ["M1", "M3"] and [m.id for m in quitados] == ["M2"]

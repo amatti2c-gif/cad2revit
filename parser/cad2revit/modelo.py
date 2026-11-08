@@ -22,7 +22,7 @@ from . import marcos as marcos_mod
 from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
-from .muros import sugerir_capas_muro, Muro, detectar_muros
+from .muros import quitar_encimados, sugerir_capas_muro, Muro, detectar_muros
 from .niveles import ajustar_niveles, leer_cotas
 
 ALTURA_POR_DEFECTO = 2.60
@@ -304,6 +304,10 @@ def construir_modelo(cfg: Configuracion) -> dict:
                     muros = detectar_muros(segs_muro, det, puntos_vano, pref)     # el muro continúa sobre la ventana
                     adv.append(f"{nivel}: {len(vent)} ventanas leídas de los rótulos de medidas "
                                f"({len(rotulos)} rótulos en el plano)")
+        muros, encimados = quitar_encimados(muros)
+        if encimados:
+            adv.append(f"{nivel}: {len(encimados)} 'muros' quedaban dentro de otros más gruesos (vidrios, marcos o muebles "
+                       f"dibujados en el muro) y se descartaron: {', '.join(sorted({m.capa_cad for m in encimados}))}")
         if not muros:
             adv.append(f"{planta['archivo']}: no se detectaron muros (¿capas correctas en capas_cad.yaml?)")
         for m in muros:

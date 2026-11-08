@@ -447,3 +447,29 @@ def test_vistas_obsoletas_se_reasignan(cliente, tmp_path):
     assert any("versión anterior" in a for a in modelo["advertencias"])
     vistas = cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["vistas"]
     assert sorted(v["uso"] for v in vistas) == ["elevacion", "planta:N1"]
+
+
+def test_lineamientos_antiguos_se_completan(tmp_path, monkeypatch):
+    """Lineamientos copiados antes de que existieran los legos de marco: se agregan sin tocar lo editado."""
+    import yaml as _y
+    import app.servidor as srv
+    datos = tmp_path / "datos"
+    lin = datos / "lineamientos"
+    lin.mkdir(parents=True)
+    for a in srv.LINEAMIENTOS:
+        (lin / a).write_text((srv.RAIZ / "entradas" / a).read_text(encoding="utf-8"), encoding="utf-8")
+    mat = _y.safe_load((lin / "materialidades.yaml").read_text(encoding="utf-8"))
+    for k in ("tipos_marco", "reglas_marco", "tipo_marco_por_defecto"):
+        mat.pop(k, None)
+    mat["materiales"] = [m for m in mat["materiales"] if "Acero" not in m["nombre"]]
+    mat["tipos_muro"][0]["nombre_editado_por_usuario"] = True
+    (lin / "materialidades.yaml").write_text(_y.safe_dump(mat, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    monkeypatch.setenv("CAD2REVIT_DATOS", str(datos))
+    srv._COMPLETADOS.clear()
+    srv._lineamientos()
+    nuevo = _y.safe_load((lin / "materialidades.yaml").read_text(encoding="utf-8"))
+    assert {t["nombre"].split()[0] for t in nuevo["tipos_marco"]} >= {"MM-1", "MA-1"}
+    assert any("Acero" in m["nombre"] for m in nuevo["materiales"])
+    assert nuevo["tipos_muro"][0]["nombre_editado_por_usuario"] is True
+    from cad2revit.config import _validar_materialidades
+    assert _validar_materialidades(nuevo) == []

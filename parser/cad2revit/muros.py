@@ -353,3 +353,28 @@ def sugerir_capas_muro(segs: list[Segmento], det: dict) -> list[tuple[str, float
         return []
     mejor = max(m for _, m in cand)
     return sorted([c for c in cand if c[1] >= 0.15 * mejor], key=lambda c: -c[1])
+
+
+def quitar_encimados(muros: list[Muro]) -> tuple[list[Muro], list[Muro]]:
+    """Muros contenidos en otro más grueso (paralelos, dentro de su espesor y superpuestos en >= 80 % de
+    su largo): son líneas de vidrio, marcos o muebles dibujados dentro del muro. Revit los superpone
+    ("walls overlap") y aloja las ventanas en ellos en vez del muro real. Devuelve (quedan, quitados)."""
+    quedan: list[Muro] = []
+    for m in sorted(muros, key=lambda x: (-x.espesor, -x.largo)):
+        u = m.direccion
+        contenido = False
+        for n in quedan:
+            v = n.direccion
+            if abs(u[0] * v[1] - u[1] * v[0]) > 0.05:
+                continue
+            banda = n.espesor / 2 + 0.03
+            if dist_perp(m.a, n.a, v) > banda or dist_perp(m.b, n.a, v) > banda:
+                continue
+            t = sorted((proyectar(m.a, n.a, v), proyectar(m.b, n.a, v)))
+            if min(t[1], n.largo) - max(t[0], 0.0) >= 0.8 * m.largo:
+                contenido = True
+                break
+        if not contenido:
+            quedan.append(m)
+    ids = {id(m) for m in quedan}
+    return [m for m in muros if id(m) in ids], [m for m in muros if id(m) not in ids]

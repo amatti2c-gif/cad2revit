@@ -33,6 +33,49 @@ namespace Cad2Revit
                 .Where(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(Marca) == true)
                 .Select(e => e.Id).ToList();
 
+        // ---------------------------------------------------------------- registro de ejes
+        // Los ejes (Grid) no tienen parámetro "Comentarios", así que no se pueden marcar como el resto.
+        // Se guarda la lista de los ejes creados en la información del proyecto (almacenamiento del add-in)
+        // para poder borrarlos al reimportar.
+        private static readonly Guid GuidEjes = new Guid("6f1c2a8e-3b7d-4c51-9a0e-2d4b8e7f1c39");
+
+        private static Autodesk.Revit.DB.ExtensibleStorage.Schema EsquemaEjes()
+        {
+            var esquema = Autodesk.Revit.DB.ExtensibleStorage.Schema.Lookup(GuidEjes);
+            if (esquema != null) return esquema;
+            var sb = new Autodesk.Revit.DB.ExtensibleStorage.SchemaBuilder(GuidEjes);
+            sb.SetSchemaName("cad2revit_ejes");
+            sb.SetReadAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+            sb.SetWriteAccessLevel(Autodesk.Revit.DB.ExtensibleStorage.AccessLevel.Public);
+            sb.AddSimpleField("ids", typeof(string));
+            return sb.Finish();
+        }
+
+        public static List<ElementId> EjesPrevios(Document doc)
+        {
+            var ent = doc.ProjectInformation.GetEntity(EsquemaEjes());
+            if (ent == null || !ent.IsValid()) return new List<ElementId>();
+            var texto = ent.Get<string>("ids") ?? "";
+            return texto.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(u => doc.GetElement(u)).Where(e => e is Grid).Select(e => e.Id).ToList();
+        }
+
+        private static void RegistrarEjes(Document doc, List<Grid> ejes)
+        {
+            var esquema = EsquemaEjes();
+            var ent = new Autodesk.Revit.DB.ExtensibleStorage.Entity(esquema);
+            ent.Set("ids", string.Join(";", ejes.Select(g => g.UniqueId)));
+            doc.ProjectInformation.SetEntity(ent);
+        }
+
+        private string NombreLibre(string nombre)
+        {
+            var usados = new HashSet<string>(U.De<Grid>(_doc).Select(g => g.Name));
+            var n = nombre;
+            for (int i = 2; usados.Contains(n); i++) n = $"{nombre} {i}";
+            return n;
+        }
+
         /// <summary>Si es true, se borra la importación anterior antes de construir.</summary>
         public bool ReemplazarAnterior { get; set; }
 
@@ -148,6 +191,7 @@ namespace Cad2Revit
         private void EliminarAnterior() => Intentar("eliminar importación anterior", () =>
         {
             var ids = ElementosPrevios(_doc);
+            ids.AddRange(EjesPrevios(_doc));          // los ejes no tienen "Comentarios": se guardan aparte
             // primero lo alojado (puertas/ventanas), luego el resto; los ya borrados en cascada se ignoran
             int n = 0;
             foreach (var id in ids)
@@ -208,6 +252,7 @@ namespace Cad2Revit
             }
 
             var ejes = U.De<Grid>(_doc).GroupBy(g => g.Name).ToDictionary(g => g.Key, g => g.First());
+            var creados = new List<Grid>();
             foreach (var e in _m.Ejes)
             {
                 Intentar("Eje " + e.Nombre, () =>
@@ -220,16 +265,21 @@ namespace Cad2Revit
                         var c = existente.Curve;
                         var mismo = c is Line l && l.Direction.CrossProduct(linea.Direction).GetLength() < 1e-6
                                     && linea.Distance(new XYZ(c.GetEndPoint(0).X, c.GetEndPoint(0).Y, 0)) < U.M(0.01);
-                        if (!mismo)
-                            _inf.Advertencia($"Ya existe un eje '{nombre}' en otra posición; no se creó. Renómbralo o bórralo si sobra.");
-                        return;
+                        if (mismo) { creados.Add(existente); return; }
+                        // eje viejo con el mismo nombre (de una importación anterior, sin registro): se renombra
+                        existente.Name = NombreLibre(nombre + " (anterior)");
+                        _inf.Advertencia($"El eje '{nombre}' existente estaba en otra posición; se renombró a " +
+                                         $"'{existente.Name}' y se creó el nuevo. Bórralo si sobra.");
+                        ejes.Remove(nombre);
                     }
                     var g = Grid.Create(_doc, linea);
                     g.Name = nombre;
                     ejes[nombre] = g;
+                    creados.Add(g);
                     _inf.Contar("Ejes");
                 });
             }
+            Intentar("registro de ejes", () => RegistrarEjes(_doc, creados), false);
         }
     }
 }
