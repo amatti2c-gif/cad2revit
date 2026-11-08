@@ -233,9 +233,26 @@ def test_propuesta_por_tramos(proyecto):
     assert tramos["1:A-B"]["niveles"]["N1"]["propuesta"] == "muro"
     assert tramos["A:1-2"]["niveles"]["N1"]["propuesta"] == "muro"           # puerta: 15% del tramo
     t2 = tramos["2:A-B"]["niveles"]["N1"]
-    assert t2["propuesta"] == "momento" and "vanos" in t2["motivo"]          # tabique con puerta
-    desde_tramo = [f for f in modelo["marcos"] if f["origen"] == "tramo 2:A-B"]
-    assert len(desde_tramo) == 2 and all(f["sistema"] == "momento" for f in desde_tramo)
+    assert t2["propuesta"] == "tabique" and "Tabiquería" in t2["motivo"]     # tabique con puerta: sin marco
+    assert not [f for f in modelo["marcos"] if f["origen"] == "tramo 2:A-B"]
+
+
+def test_tramo_con_tabique_de_madera(proyecto):
+    """En Estructuración se elige el lego de tabique de madera para un tramo: sus muros pasan a ese tipo
+    y se genera el entramado; en un tramo sin muro en el plano, el tabique se crea."""
+    madera = "TM-11 Tabique madera 2x3 bruto + yeso cartón"
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["tramos"] = {"2:A-B": f"tabique:{madera}", "B:2-3@N1": f"tabique:{madera}"}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert validar(modelo) == []
+    tramos = {t["id"]: t for t in modelo["tramos"]}
+    t2 = tramos["2:A-B"]["niveles"]["N1"]
+    assert t2["final"] == "tabique" and t2["tipo_muro"] == madera
+    muros = {m["id"]: m for m in modelo["muros"]}
+    assert all(muros[i]["tipo"] == madera and not muros[i]["estructural"] for i in t2["muros"])
+    con_entramado = {e["muro"] for e in modelo["entramados"]}
+    assert set(t2["muros"]) <= con_entramado
+    assert any(t["nombre"] == madera for t in modelo["tipos_muro"])
 
 
 def test_eleccion_por_tramo_y_piso(proyecto):

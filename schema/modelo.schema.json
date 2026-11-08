@@ -880,6 +880,7 @@
                 "final": {
                   "enum": [
                     "muro",
+                    "tabique",
                     "momento",
                     "arriostrado",
                     "ninguno"
@@ -888,10 +889,24 @@
                 "propuesta": {
                   "enum": [
                     "muro",
+                    "tabique",
                     "momento",
                     "arriostrado",
                     "ninguno"
                   ]
+                },
+                "tipo_muro": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "Lego de muro del tramo (muro o tabique)"
+                },
+                "muros": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               }
             }

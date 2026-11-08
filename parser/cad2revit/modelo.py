@@ -266,6 +266,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     losa_def = legos.get("losa") or cfg.materialidades.get("tipo_losa_por_defecto")
     cub_def = legos.get("cubierta") or cfg.materialidades.get("tipo_cubierta_por_defecto")
 
+    pendiente_entramado: list[tuple[str, float, float]] = []
     for idx, planta in enumerate(plantas):
         nivel = planta["nivel"]
         sup = siguiente(nivel)
@@ -386,21 +387,12 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 adv.append(f"No se encontraron ejes en la capa de ejes del plano; se generaron {len(modelo['ejes'])} "
                            "ejes automáticos por las líneas de muros (elige tu capa de ejes en Planos → Capas de tu plano)")
 
-        # 9) Entramado de madera (tipos de muro con sección "entramado")
-        if lod.get("entramado"):
-            es_ultima = idx == len(plantas) - 1
-            losa_sup = (cub_def if es_ultima else losa_def) if lod["losas"] and sup else None
-            for m in muros:
-                conf = (cfg.tipo_muro(m.tipo) or {}).get("entramado")
-                if not conf:
-                    continue
-                z0 = cota[nivel]
-                z1 = (cota[sup] - espesor_tipo(losa_sup)) if sup else z0 + ALTURA_POR_DEFECTO
-                abs_muro = [a for a in modelo["aberturas"] if a["muro"] == m.id]
-                e = entramado_mod.generar(m, muros, conf, z0, z1, abs_muro)
-                if e["piezas"]:
-                    e["nivel"] = nivel
-                    modelo["entramados"].append(e)
+        # 9) Entramado de madera: se genera al final, cuando ya se aplicaron las elecciones de los
+        #    tramos (un tramo puede pasar a "tabique de madera")
+        es_ultima = idx == len(plantas) - 1
+        losa_sup = (cub_def if es_ultima else losa_def) if lod["losas"] and sup else None
+        z0 = cota[nivel]
+        pendiente_entramado.append((nivel, z0, (cota[sup] - espesor_tipo(losa_sup)) if sup else z0 + ALTURA_POR_DEFECTO))
 
         # 10) Marcos de acero (líneas en capas de marcos)
         if lod.get("marcos"):
@@ -418,6 +410,22 @@ def construir_modelo(cfg: Configuracion) -> dict:
     if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,
                                                cota, adv, marcos_mod)
+
+    # Entramado de madera (tipos de muro con sección "entramado"), con el tipo final de cada muro
+    if lod.get("entramado"):
+        for nivel, z0, z1 in pendiente_entramado:
+            muros = [Muro(id=d["id"], a=tuple(d["inicio"]), b=tuple(d["fin"]), espesor=d["espesor"],
+                          capa_cad=d["capa_cad"], tipo=d["tipo"], estructural=d["estructural"])
+                     for d in modelo["muros"] if d["nivel"] == nivel]
+            for m in muros:
+                conf = (cfg.tipo_muro(m.tipo) or {}).get("entramado")
+                if not conf:
+                    continue
+                abs_muro = [a for a in modelo["aberturas"] if a["muro"] == m.id]
+                e = entramado_mod.generar(m, muros, conf, z0, z1, abs_muro)
+                if e["piezas"]:
+                    e["nivel"] = nivel
+                    modelo["entramados"].append(e)
 
     if lod["escaleras"]:
         adv.append("Escaleras: aún no se generan automáticamente (pendiente en hoja de ruta)")

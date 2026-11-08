@@ -16,8 +16,23 @@ import math
 
 from .dxf_reader import Segmento
 
-OPCIONES = {"auto", "muro", "momento", "arriostrado", "ninguno"}
+OPCIONES = {"auto", "muro", "tabique", "momento", "arriostrado", "ninguno"}
 SISTEMA = {"momento": "momento", "arriostrado": "arriostrado_x"}
+
+
+def separar(eleccion: str) -> tuple[str, str | None]:
+    """'tabique:TM-11 Tabique madera' -> ('tabique', 'TM-11 Tabique madera'); 'momento' -> ('momento', None)."""
+    base, _, tipo = (eleccion or "").partition(":")
+    return base, (tipo.strip() or None)
+
+
+def valida(eleccion: str, tipos_muro: set[str] | None = None) -> bool:
+    base, tipo = separar(eleccion)
+    if base not in OPCIONES:
+        return False
+    if tipo is None:
+        return True
+    return base in ("muro", "tabique") and (tipos_muro is None or tipo in tipos_muro)
 
 
 def _interseccion(a1, b1, a2, b2):
@@ -74,6 +89,7 @@ def _analizar(tr: dict, muros: list[dict], aberturas: list[dict]) -> dict:
 
     cub_est = cub_todo = 0.0
     tipo_est = None
+    tipos_tab: dict[str, float] = {}
     muros_tramo = set()
     for m in muros:
         mx, my = m["fin"][0] - m["inicio"][0], m["fin"][1] - m["inicio"][1]
@@ -92,6 +108,8 @@ def _analizar(tr: dict, muros: list[dict], aberturas: list[dict]) -> dict:
         if m["estructural"]:
             cub_est += solape
             tipo_est = tipo_est or m["tipo"]
+        else:
+            tipos_tab[m["tipo"]] = tipos_tab.get(m["tipo"], 0) + solape
     vanos = sum(ab["ancho"] for ab in aberturas
                 if ab["muro"] in muros_tramo and -0.01 <= proy(ab["centro"]) <= L + 0.01)
     cob_e, cob_t, rv = min(1, cub_est / L), min(1, cub_todo / L), min(1, vanos / L)
@@ -103,14 +121,49 @@ def _analizar(tr: dict, muros: list[dict], aberturas: list[dict]) -> dict:
     elif cob_e >= 0.8:
         prop, motivo = "momento", (f"Muro estructural con vanos que ocupan el {rv:.0%}: "
                                    "el marco de momento deja libres los vanos")
+    elif cob_t >= 0.5:
+        tipo_tab = max(tipos_tab, key=tipos_tab.get) if tipos_tab else "tabique"
+        prop, motivo = "tabique", (f"Tabiquería no estructural ({tipo_tab}) cubre el {cob_t:.0%} del tramo: "
+                                   "no se pone marco (elige un marco si este eje debe resistir)")
     elif rv > 0:
-        prop, motivo = "momento", (f"{'Tabique' if cob_t >= 0.5 else 'Tramo libre'} con vanos ({rv:.0%} del largo): "
+        prop, motivo = "momento", (f"Tramo libre con vanos ({rv:.0%} del largo): "
                                    "el marco de momento deja libres los vanos")
     else:
         prop, motivo = "arriostrado", ("Sin muro estructural ni vanos: el marco arriostrado en X "
                                        "es más rígido y liviano")
     return {"propuesta": prop, "motivo": motivo, "cobertura_muro_estructural": round(cob_e, 2),
-            "cobertura_muros": round(cob_t, 2), "vanos": round(rv, 2)}
+            "cobertura_muros": round(cob_t, 2), "vanos": round(rv, 2), "muros": sorted(muros_tramo)}
+
+
+def _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias) -> str | None:
+    """Muro estructural o tabique en el tramo: con lego elegido, los muros del plano en el tramo pasan a
+    ese tipo (si no hay muro en el plano, se crea a lo largo del tramo); sin lego, se conserva el tipo y
+    solo cambia su carácter (estructural o no)."""
+    estructural = final == "muro"
+    ids = set(an["muros"])
+    del_tramo = [m for m in modelo["muros"] if m["id"] in ids]
+    if tipo:
+        if an["cobertura_muros"] < 0.3:
+            t = cfg.tipo_muro(tipo) or {}
+            n = 1 + sum(1 for m in modelo["muros"] if m["nivel"] == nivel and m["id"].startswith(f"{nivel}-T"))
+            nuevo = dict(id=f"{nivel}-T{n:03d}", nivel=nivel, nivel_superior=sup, inicio=list(tr["inicio"]),
+                         fin=list(tr["fin"]), espesor=t.get("espesor_total", 0.1), tipo=tipo, estructural=estructural,
+                         perimetral=False, capa_cad=f"tramo {tr['id']}")
+            if sup is None:
+                nuevo["altura"] = 2.6
+            modelo["muros"].append(nuevo)
+            an["muros"] = [nuevo["id"]]
+            return tipo
+        for m in del_tramo:
+            m["tipo"], m["estructural"] = tipo, estructural
+        return tipo
+    if not del_tramo:
+        advertencias.append(f"Tramo {tr['id']} ({nivel}): se eligió '{final}' pero no hay muro en el plano; "
+                            "elige un lego de muro para crearlo")
+        return None
+    for m in del_tramo:
+        m["estructural"] = estructural
+    return del_tramo[0]["tipo"]
 
 
 def _lego_por_sistema(cfg, sistema: str) -> str | None:
@@ -131,9 +184,12 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
             advertencias.append("Los ejes del plano no se cruzan: no hay tramos para proponer estructuración")
         return []
     elecciones = cfg.proyecto.get("tramos") or {}
-    for clave, v in elecciones.items():
-        if v not in OPCIONES:
-            advertencias.append(f"tramos: opción '{v}' de '{clave}' no válida (usa {sorted(OPCIONES)}); se ignora")
+    tipos = {t["nombre"] for t in cfg.materialidades.get("tipos_muro", [])}
+    for clave, v in list(elecciones.items()):
+        if not valida(v, tipos):
+            advertencias.append(f"tramos: opción '{v}' de '{clave}' no válida (usa {sorted(OPCIONES)} o "
+                                "'muro:<lego>' / 'tabique:<lego>' con un lego de muro del catálogo); se ignora")
+            elecciones = {k: x for k, x in elecciones.items() if k != clave}
     ids = {t["id"] for t in tramos}
     for clave in elecciones:
         if clave.split("@")[0] not in ids:
@@ -148,14 +204,12 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
         for tr in tramos:
             an = _analizar(tr, muros, abs_n)
             eleccion = elecciones.get(f"{tr['id']}@{nivel}") or elecciones.get(tr["id"]) or "auto"
-            if eleccion not in OPCIONES:
-                eleccion = "auto"
-            final = an["propuesta"] if eleccion == "auto" else eleccion
-            if final == "muro" and an["cobertura_muros"] < 0.5:
-                advertencias.append(f"Tramo {tr['id']} ({nivel}): se eligió 'muro' pero no hay muro en el plano")
+            final, tipo = separar(an["propuesta"] if eleccion == "auto" else eleccion)
+            if final in ("muro", "tabique"):
+                tipo = _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias)
             if final in ("muro", "arriostrado"):
                 resistentes[tr["direccion"]] += 1
-            tr.setdefault("niveles", {})[nivel] = dict(an, eleccion=eleccion, final=final)
+            tr.setdefault("niveles", {})[nivel] = dict(an, eleccion=eleccion, final=final, tipo_muro=tipo)
             if final in SISTEMA and sup:
                 lego = _lego_por_sistema(cfg, SISTEMA[final])
                 if lego is None:

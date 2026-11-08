@@ -738,7 +738,9 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
     """Guarda en proyecto.yaml las tipologías elegidas por tramo de eje ("A:1-2") o por tramo
     y piso ("A:1-2@N2"). "auto" (o no estar) = usar la propuesta de la app."""
     d = _proyecto(pid)
-    malas = [f"{k}: {v}" for k, v in datos.elecciones.items() if v not in OPCIONES_TRAMO]
+    from cad2revit.tramos import valida
+    tipos = {t.get("nombre") for t in _leer_yaml_seguro(_lineamientos() / "materialidades.yaml").get("tipos_muro") or []}
+    malas = [f"{k}: {v}" for k, v in datos.elecciones.items() if not valida(v, tipos)]
     if malas:
         raise HTTPException(400, "Opciones no válidas: " + ", ".join(malas))
     py = d / "entradas" / "proyecto.yaml"

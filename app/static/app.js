@@ -458,16 +458,24 @@ function marcarUsados() {
 
 // ------------------------------------------------------------------ estructuración por tramos
 const TIPOLOGIA = {
-  muro: { nombre: "Muro", color: "#94a3b8" },
+  muro: { nombre: "Muro estructural", color: "#94a3b8" },
+  tabique: { nombre: "Tabique (no estructural)", color: "#14b8a6" },
   momento: { nombre: "Marco de momento", color: "#f59e0b" },
   arriostrado: { nombre: "Marco arriostrado en X", color: "#2563eb" },
   ninguno: { nombre: "Sin elemento", color: "#cbd5e1" },
 };
 const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false };
-const chipTipo = (t, marca) => h("span", { class: "chip-tipo" }, h("i", { style: `background:${TIPOLOGIA[t]?.color}` }),
-  TIPOLOGIA[t]?.nombre ?? t, marca ? " ✎" : "");
+/** "tabique:TM-11 …" -> "Tabique (no estructural) · TM-11 …" */
+const nombreTipologia = (v, tipo) => {
+  const [base, ...resto] = (v || "").split(":");
+  const lego = tipo ?? (resto.join(":") || null);
+  return (TIPOLOGIA[base]?.nombre ?? base) + (lego ? ` · ${lego}` : "");
+};
+const chipTipo = (t, marca, tipo) => h("span", { class: "chip-tipo" }, h("i", { style: `background:${TIPOLOGIA[t]?.color}` }),
+  nombreTipologia(t, tipo), marca ? " ✎" : "");
 
 async function cargarEstructura() {
+  if (!estado.catalogo) estado.catalogo = await api("GET", "/api/catalogo");    // legos de muro para los tramos
   const ultima = estado.corridas.find(c => c.ok);
   $("#est-vacio").classList.toggle("oculto", !!ultima);
   $("#est-contenido").classList.toggle("oculto", !ultima);
@@ -542,7 +550,7 @@ function pintarPlantaEst() {
     const linea = s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1],
       stroke: TIPOLOGIA[inf.final].color, "stroke-width": sel ? 11 : 7, "stroke-linecap": "butt",
       "stroke-dasharray": inf.final === "ninguno" ? "6 4" : "", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
-    const tit = s("title"); tit.textContent = `${t.id} · ${TIPOLOGIA[inf.final].nombre}\n${inf.motivo}`; linea.append(tit);
+    const tit = s("title"); tit.textContent = `${t.id} · ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; linea.append(tit);
     linea.addEventListener("click", ev => { ev.stopPropagation(); est.tramo = t.id; pintarEstructura(); });
     raiz.append(linea);
     if (sel) raiz.append(s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1], stroke: "var(--texto)",
@@ -566,9 +574,13 @@ function pintarPlantaEst() {
 }
 
 function opcionesTramo(t, actual, conIgual, propuestaTxt) {
-  const ops = conIgual ? [["", "Igual que todos los pisos"]] : [["auto", `Automático (propuesta: ${propuestaTxt})`]];
-  return [...ops, ...Object.entries(TIPOLOGIA).map(([k, v]) => [k, v.nombre])]
-    .map(([v, n]) => h("option", { value: v, selected: v === (actual ?? (conIgual ? "" : "auto")) }, n));
+  const elegido = actual ?? (conIgual ? "" : "auto");
+  const op = (v, n) => h("option", { value: v, selected: v === elegido }, n);
+  const ops = conIgual ? [op("", "Igual que todos los pisos")] : [op("auto", `Automático (propuesta: ${propuestaTxt})`)];
+  const legos = (estado.catalogo?.muros || []).map(m => m.nombre);
+  const grupo = (base, titulo) => h("optgroup", { label: titulo }, ...legos.map(n => op(`${base}:${n}`, n)));
+  return [...ops, ...Object.entries(TIPOLOGIA).map(([k, v]) => op(k, v.nombre)),
+    ...(legos.length ? [grupo("tabique", "Tabique con el lego…"), grupo("muro", "Muro estructural con el lego…")] : [])];
 }
 
 function pintarDetalleEst() {
@@ -576,11 +588,11 @@ function pintarDetalleEst() {
   const t = est.modelo.tramos.find(x => x.id === est.tramo);
   if (!t) { box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo en la planta o en la tabla.")); return; }
   const niveles = Object.keys(t.niveles);
-  const propuestas = [...new Set(niveles.map(n => TIPOLOGIA[t.niveles[n].propuesta].nombre))].join(" / ");
+  const propuestas = [...new Set(niveles.map(n => nombreTipologia(t.niveles[n].propuesta)))].join(" / ");
   const todos = h("select", { disabled: est.ocupado }, opcionesTramo(t, est.elecciones[t.id], false, propuestas));
   todos.addEventListener("change", () => {
     if (todos.value === "auto") delete est.elecciones[t.id]; else est.elecciones[t.id] = todos.value;
-    aplicarTramos(`Tramo ${t.id}: ${todos.value === "auto" ? "automático" : TIPOLOGIA[todos.value].nombre}`);
+    aplicarTramos(`Tramo ${t.id}: ${todos.value === "auto" ? "automático" : nombreTipologia(todos.value)}`);
   });
   box.replaceChildren(
     h("h4", {}, `Tramo ${t.id}`),
@@ -592,11 +604,11 @@ function pintarDetalleEst() {
       sel.addEventListener("change", () => {
         const k = `${t.id}@${n}`;
         if (!sel.value) delete est.elecciones[k]; else est.elecciones[k] = sel.value;
-        aplicarTramos(`Tramo ${t.id} en ${n}: ${sel.value ? TIPOLOGIA[sel.value].nombre : "igual que todos"}`);
+        aplicarTramos(`Tramo ${t.id} en ${n}: ${sel.value ? nombreTipologia(sel.value) : "igual que todos"}`);
       });
       return h("div", { class: "piso" },
-        h("div", {}, h("strong", {}, n), " · resultado: ", chipTipo(inf.final, inf.eleccion !== "auto")),
-        h("div", { class: "tenue" }, `Propuesta: ${TIPOLOGIA[inf.propuesta].nombre}. ${inf.motivo}.`),
+        h("div", {}, h("strong", {}, n), " · resultado: ", chipTipo(inf.final, inf.eleccion !== "auto", inf.tipo_muro)),
+        h("div", { class: "tenue" }, `Propuesta: ${nombreTipologia(inf.propuesta)}. ${inf.motivo}.`),
         h("label", {}, "Solo este piso", sel));
     }));
 }
@@ -625,6 +637,11 @@ function pintarElevacionEst() {
       const z0 = cota[n], z1 = cota[sup]; maxZ = Math.max(maxZ, z1);
       const c = TIPOLOGIA[inf.final].color;
       if (inf.final === "muro") g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: c, "fill-opacity": 0.55 }));
+      if (inf.final === "tabique") {
+        g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: c, "fill-opacity": 0.18 }));
+        // pies derechos cada 40 cm (indicativo)
+        for (let x = x0 + 0.4; x < x1 - 0.05; x += 0.4) linea(x, z0, x, z1, c, 1);
+      }
       if (inf.final === "momento" || inf.final === "arriostrado") {
         linea(x0, z0, x0, z1, "var(--texto)", 3); linea(x1, z0, x1, z1, "var(--texto)", 3); linea(x0, z1, x1, z1, "var(--texto)", 3);
         if (inf.final === "arriostrado") { linea(x0, z0, x1, z1, c, 2); linea(x1, z0, x0, z1, c, 2); }
@@ -635,7 +652,7 @@ function pintarElevacionEst() {
       if (t.id === est.tramo) g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "none",
         stroke: "var(--acento)", "stroke-width": 2.5, "vector-effect": "non-scaling-stroke" }));
       const r = s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "transparent", style: "cursor:pointer" });
-      const tit = s("title"); tit.textContent = `${t.id} · ${n}: ${TIPOLOGIA[inf.final].nombre}\n${inf.motivo}`; r.append(tit);
+      const tit = s("title"); tit.textContent = `${t.id} · ${n}: ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; r.append(tit);
       r.addEventListener("click", () => { est.tramo = t.id; pintarEstructura(); });
       g.append(r);
     }
@@ -663,7 +680,7 @@ function pintarTablaEst() {
   $("#est-tabla tbody").replaceChildren(...m.tramos.map(t => h("tr", { class: t.id === est.tramo ? "sel" : "",
       onclick: () => { est.tramo = t.id; pintarEstructura(); } },
     h("td", {}, h("strong", {}, t.id)), h("td", {}, `${t.largo.toFixed(2)} m`), h("td", {}, t.direccion),
-    ...niveles.map(n => h("td", {}, t.niveles[n] ? chipTipo(t.niveles[n].final, t.niveles[n].eleccion !== "auto") : "—")),
+    ...niveles.map(n => h("td", {}, t.niveles[n] ? chipTipo(t.niveles[n].final, t.niveles[n].eleccion !== "auto", t.niveles[n].tipo_muro) : "—")),
     h("td", { class: "tenue" }, t.niveles[est.nivel]?.motivo ?? ""))));
 }
 

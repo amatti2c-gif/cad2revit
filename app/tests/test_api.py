@@ -173,7 +173,7 @@ def test_marcos_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {}, "marcos": {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}})
     assert cliente.get(f"/api/proyectos/{pid}/legos").json()["marcos"] == {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}
     r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
-    assert r["ok"] and r["conteos"]["marcos"] == 6         # 4 dibujados + 2 propuestos por el tramo 2:A-B
+    assert r["ok"] and r["conteos"]["marcos"] == 4         # los dibujados (el tramo 2:A-B es tabiquería: sin marco)
     modelo = cliente.get(f"/api/proyectos/{pid}/corridas/{r['n']}").json()["modelo"]
     norte = next(f for f in modelo["marcos"] if f["capa_cad"] == "S-MARCO-MOMENTO" and f["nivel"] == "N1")
     assert norte["vanos"] == 2 and len(norte["diagonales"]) == 4 and norte["perfiles"]["diagonal"]["forma"] == "tubo"
