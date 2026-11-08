@@ -66,7 +66,7 @@ def test_lod300_completo(proyecto):
     assert len(modelo["vigas"]) == 2
     assert {l["nivel"] for l in modelo["losas"]} == {"N1", "N2", "Cubierta"}
     assert len(modelo["recintos"]) == 4
-    assert len(modelo["ejes"]) == 4
+    assert len(modelo["ejes"]) == 5
     # fundaciones desactivadas en nivel_detalle.yaml (ajustes.fundaciones: false)
     assert modelo["fundaciones"] == {"corridas": [], "aisladas": []}
     # tipo compuesto conserva capas
@@ -181,8 +181,8 @@ def test_lego_inexistente(proyecto):
 def test_marcos_de_acero(proyecto):
     modelo = construir_modelo(cargar(proyecto.ruta))
     assert validar(modelo) == []
-    marcos = modelo["marcos"]
-    assert len(marcos) == 4                                   # 2 marcos x 2 pisos
+    marcos = [f for f in modelo["marcos"] if f["origen"] == "plano CAD"]
+    assert len(marcos) == 4                                   # 2 marcos dibujados x 2 pisos
     mom = next(f for f in marcos if f["nivel"] == "N1" and f["sistema"] == "momento")
     arr = next(f for f in marcos if f["nivel"] == "N1" and f["sistema"] == "arriostrado_x")
     # momento: 10 m con vano máximo 6 -> 2 vanos, 3 columnas, 2 vigas, sin diagonales
@@ -203,7 +203,7 @@ def test_marcos_lego_por_capa(proyecto):
     py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
     py["legos"] = {"marcos": {"S-MARCO-MOMENTO": "MA-1 Marco arriostrado en cruz acero"}}
     modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
-    assert all(f["sistema"] == "arriostrado_x" for f in modelo["marcos"])
+    assert all(f["sistema"] == "arriostrado_x" for f in modelo["marcos"] if f["origen"] == "plano CAD")
     norte = next(f for f in modelo["marcos"] if f["capa_cad"] == "S-MARCO-MOMENTO" and f["nivel"] == "N1")
     assert len(norte["diagonales"]) == 4                      # 2 vanos x cruz
 
@@ -213,6 +213,34 @@ def test_marco_invalido(proyecto):
     del mat["tipos_marco"][1]["diagonal"]
     with pytest.raises(ErrorConfiguracion, match="falta el perfil de diagonal"):
         cargar(proyecto("materialidades.yaml", mat))
+
+
+def test_propuesta_por_tramos(proyecto):
+    modelo = construir_modelo(cargar(proyecto.ruta))
+    assert validar(modelo) == []
+    tramos = {t["id"]: t for t in modelo["tramos"]}
+    # ejes verticales 1 (x=0.1), 2 (x=6.0, tabique), 3 (x=9.9); horizontales A (y=0.1), B (y=7.9)
+    assert set(tramos) == {"1:A-B", "2:A-B", "3:A-B", "A:1-2", "A:2-3", "B:1-2", "B:2-3"}
+    assert tramos["1:A-B"]["niveles"]["N1"]["propuesta"] == "muro"
+    assert tramos["A:1-2"]["niveles"]["N1"]["propuesta"] == "muro"           # puerta: 15% del tramo
+    t2 = tramos["2:A-B"]["niveles"]["N1"]
+    assert t2["propuesta"] == "momento" and "vanos" in t2["motivo"]          # tabique con puerta
+    desde_tramo = [f for f in modelo["marcos"] if f["origen"] == "tramo 2:A-B"]
+    assert len(desde_tramo) == 2 and all(f["sistema"] == "momento" for f in desde_tramo)
+
+
+def test_eleccion_por_tramo_y_piso(proyecto):
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["tramos"] = {"2:A-B": "arriostrado", "2:A-B@N2": "ninguno", "A:1-2": "momento"}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    tramos = {t["id"]: t for t in modelo["tramos"]}
+    assert tramos["2:A-B"]["niveles"]["N1"]["final"] == "arriostrado"
+    assert tramos["2:A-B"]["niveles"]["N2"]["final"] == "ninguno"
+    assert tramos["A:1-2"]["niveles"]["N2"]["final"] == "momento"
+    origenes = [(f["origen"], f["nivel"], f["sistema"]) for f in modelo["marcos"] if f["origen"].startswith("tramo")]
+    assert ("tramo 2:A-B", "N1", "arriostrado_x") in origenes
+    assert not any(o == "tramo 2:A-B" and n == "N2" for o, n, _ in origenes)
+    assert sum(1 for o, _, s in origenes if o == "tramo A:1-2" and s == "momento") == 2
 
 
 def test_lod100_simplifica(proyecto):

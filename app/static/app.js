@@ -63,6 +63,7 @@ function irA(tab) {
   $$(".tab").forEach(t => t.classList.toggle("activa", t.id === "tab-" + tab));
   try { localStorage.setItem("c2r-tab", tab); } catch {}
   if (tab === "resultado") dibujarVisor();
+  if (tab === "estructura") intentar(cargarEstructura);
 }
 $$(".pestanas button").forEach(b => b.addEventListener("click", () => irA(b.dataset.tab)));
 
@@ -279,6 +280,226 @@ function marcarUsados() {
   const usados = new Set(Object.values(el.muros).concat(Object.values(el.marcos)).filter(Boolean)
     .concat([$("#sel-lego-losa").value, $("#sel-lego-cubierta").value].filter(Boolean)));
   $$("#catalogo .lego").forEach(c => c.classList.toggle("usado", usados.has(c.dataset.nombre)));
+}
+
+// ------------------------------------------------------------------ estructuración por tramos
+const TIPOLOGIA = {
+  muro: { nombre: "Muro", color: "#94a3b8" },
+  momento: { nombre: "Marco de momento", color: "#f59e0b" },
+  arriostrado: { nombre: "Marco arriostrado en X", color: "#2563eb" },
+  ninguno: { nombre: "Sin elemento", color: "#cbd5e1" },
+};
+const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false };
+const chipTipo = (t, marca) => h("span", { class: "chip-tipo" }, h("i", { style: `background:${TIPOLOGIA[t]?.color}` }),
+  TIPOLOGIA[t]?.nombre ?? t, marca ? " ✎" : "");
+
+async function cargarEstructura() {
+  const ultima = estado.corridas.find(c => c.ok);
+  $("#est-vacio").classList.toggle("oculto", !!ultima);
+  $("#est-contenido").classList.toggle("oculto", !ultima);
+  if (!ultima) return;
+  const [r, el] = await Promise.all([api("GET", P(`/corridas/${ultima.n}`)), api("GET", P("/tramos"))]);
+  est.modelo = r.modelo;
+  est.elecciones = el.elecciones || {};
+  const tramos = est.modelo.tramos || [];
+  if (!tramos.length) {
+    $("#est-contenido").classList.add("oculto");
+    $("#est-vacio").classList.remove("oculto");
+    $("#est-vacio").textContent = "No hay tramos: el plano necesita ejes que se crucen (capa de ejes) para proponer la estructuración.";
+    return;
+  }
+  const niveles = [...new Set(tramos.flatMap(t => Object.keys(t.niveles)))];
+  if (!niveles.includes(est.nivel)) est.nivel = niveles[0];
+  $("#est-nivel").replaceChildren(...niveles.map(n => h("option", { value: n, selected: n === est.nivel }, n)));
+  $("#est-leyenda").replaceChildren(...Object.keys(TIPOLOGIA).map(t => chipTipo(t)));
+  if (!tramos.some(t => t.id === est.tramo)) est.tramo = null;
+  pintarEstructura();
+}
+$("#est-nivel").addEventListener("change", e => { est.nivel = e.target.value; pintarEstructura(); });
+
+function infoTramo(t, nivel) { return t.niveles[nivel]; }
+const elegido = (id, nivel) => est.elecciones[`${id}@${nivel}`] ?? est.elecciones[id];
+
+function pintarEstructura() {
+  pintarPlantaEst();
+  pintarDetalleEst();
+  pintarElevacionEst();
+  pintarTablaEst();
+}
+
+function pintarPlantaEst() {
+  const m = est.modelo, nivel = est.nivel, svg = $("#est-planta");
+  const raiz = s("g", { transform: "scale(1,-1)" });
+  const puntos = [];
+  const texto = (x, y, txt, extra = {}) => {
+    const t = s("text", { x, y: -y, transform: "scale(1,-1)", "font-size": 0.35, "text-anchor": "middle",
+      "dominant-baseline": "middle", fill: "var(--texto)", ...extra });
+    t.textContent = txt; return t;
+  };
+  for (const w of m.muros.filter(x => x.nivel === nivel)) {
+    const [x1, y1] = w.inicio, [x2, y2] = w.fin, L = Math.hypot(x2 - x1, y2 - y1) || 1;
+    const nx = -(y2 - y1) / L * w.espesor / 2, ny = (x2 - x1) / L * w.espesor / 2;
+    raiz.append(s("polygon", { points: [[x1 + nx, y1 + ny], [x2 + nx, y2 + ny], [x2 - nx, y2 - ny], [x1 - nx, y1 - ny]].map(p => p.join(",")).join(" "),
+      fill: "var(--cad)", "fill-opacity": 0.35 }));
+    puntos.push(w.inicio, w.fin);
+  }
+  for (const e of m.ejes) {
+    raiz.append(s("line", { x1: e.inicio[0], y1: e.inicio[1], x2: e.fin[0], y2: e.fin[1], stroke: "var(--tenue)",
+      "stroke-dasharray": "12 3 2 3", "stroke-width": 0.8, "vector-effect": "non-scaling-stroke" }));
+    raiz.append(s("circle", { cx: e.inicio[0], cy: e.inicio[1], r: 0.35, fill: "var(--superficie)", stroke: "var(--tenue)", "vector-effect": "non-scaling-stroke" }));
+    raiz.append(texto(e.inicio[0], e.inicio[1], e.nombre, { "font-weight": 600 }));
+    puntos.push(e.inicio, e.fin);
+  }
+  for (const t of m.tramos) {
+    const inf = infoTramo(t, nivel); if (!inf) continue;
+    const sel = t.id === est.tramo;
+    const linea = s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1],
+      stroke: TIPOLOGIA[inf.final].color, "stroke-width": sel ? 11 : 7, "stroke-linecap": "butt",
+      "stroke-dasharray": inf.final === "ninguno" ? "6 4" : "", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tit = s("title"); tit.textContent = `${t.id} · ${TIPOLOGIA[inf.final].nombre}\n${inf.motivo}`; linea.append(tit);
+    linea.addEventListener("click", ev => { ev.stopPropagation(); est.tramo = t.id; pintarEstructura(); });
+    raiz.append(linea);
+    if (sel) raiz.append(s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1], stroke: "var(--texto)",
+      "stroke-width": 2, "stroke-dasharray": "2 3", "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
+    if (elegido(t.id, nivel)) {
+      const mx = (t.inicio[0] + t.fin[0]) / 2, my = (t.inicio[1] + t.fin[1]) / 2;
+      raiz.append(texto(mx, my + 0.45, "✎", { "font-size": 0.45, "pointer-events": "none" }));
+    }
+  }
+  // marcos dibujados en el CAD (no vienen de tramos): solo como referencia
+  for (const f of (m.marcos || []).filter(x => x.nivel === nivel && x.origen === "plano CAD")) {
+    raiz.append(s("line", { x1: f.inicio[0], y1: f.inicio[1], x2: f.fin[0], y2: f.fin[1], stroke: TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color,
+      "stroke-width": 4, "stroke-opacity": 0.5, "vector-effect": "non-scaling-stroke" }));
+    puntos.push(f.inicio, f.fin);
+  }
+  svg.replaceChildren(raiz);
+  if (svg.dataset.clave !== `${m.proyecto}|${nivel}` && puntos.length) {
+    encuadrar(svg, puntos);
+    svg.dataset.clave = `${m.proyecto}|${nivel}`;
+  }
+}
+
+function opcionesTramo(t, actual, conIgual, propuestaTxt) {
+  const ops = conIgual ? [["", "Igual que todos los pisos"]] : [["auto", `Automático (propuesta: ${propuestaTxt})`]];
+  return [...ops, ...Object.entries(TIPOLOGIA).map(([k, v]) => [k, v.nombre])]
+    .map(([v, n]) => h("option", { value: v, selected: v === (actual ?? (conIgual ? "" : "auto")) }, n));
+}
+
+function pintarDetalleEst() {
+  const box = $("#est-detalle");
+  const t = est.modelo.tramos.find(x => x.id === est.tramo);
+  if (!t) { box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo en la planta o en la tabla.")); return; }
+  const niveles = Object.keys(t.niveles);
+  const propuestas = [...new Set(niveles.map(n => TIPOLOGIA[t.niveles[n].propuesta].nombre))].join(" / ");
+  const todos = h("select", { disabled: est.ocupado }, opcionesTramo(t, est.elecciones[t.id], false, propuestas));
+  todos.addEventListener("change", () => {
+    if (todos.value === "auto") delete est.elecciones[t.id]; else est.elecciones[t.id] = todos.value;
+    aplicarTramos(`Tramo ${t.id}: ${todos.value === "auto" ? "automático" : TIPOLOGIA[todos.value].nombre}`);
+  });
+  box.replaceChildren(
+    h("h4", {}, `Tramo ${t.id}`),
+    h("div", { class: "tenue" }, `Eje ${t.eje} entre ${t.entre[0]} y ${t.entre[1]} · ${t.largo.toFixed(2)} m · dirección ${t.direccion}`),
+    h("label", { style: "display:flex;flex-direction:column;gap:4px;margin-top:10px" }, h("strong", {}, "Todos los pisos"), todos),
+    ...niveles.map(n => {
+      const inf = t.niveles[n];
+      const sel = h("select", { disabled: est.ocupado }, opcionesTramo(t, est.elecciones[`${t.id}@${n}`], true));
+      sel.addEventListener("change", () => {
+        const k = `${t.id}@${n}`;
+        if (!sel.value) delete est.elecciones[k]; else est.elecciones[k] = sel.value;
+        aplicarTramos(`Tramo ${t.id} en ${n}: ${sel.value ? TIPOLOGIA[sel.value].nombre : "igual que todos"}`);
+      });
+      return h("div", { class: "piso" },
+        h("div", {}, h("strong", {}, n), " · resultado: ", chipTipo(inf.final, inf.eleccion !== "auto")),
+        h("div", { class: "tenue" }, `Propuesta: ${TIPOLOGIA[inf.propuesta].nombre}. ${inf.motivo}.`),
+        h("label", {}, "Solo este piso", sel));
+    }));
+}
+
+function pintarElevacionEst() {
+  const m = est.modelo, svg = $("#est-elevacion");
+  const t0 = m.tramos.find(x => x.id === est.tramo);
+  if (!t0) { svg.replaceChildren(); $("#est-eje-tit").textContent = "(selecciona un tramo)"; return; }
+  $("#est-eje-tit").textContent = t0.eje;
+  const delEje = m.tramos.filter(x => x.eje === t0.eje);
+  const ux = (t0.fin[0] - t0.inicio[0]) / t0.largo, uy = (t0.fin[1] - t0.inicio[1]) / t0.largo;
+  const origen = delEje.reduce((a, x) => Math.min(a, (x.inicio[0] - t0.inicio[0]) * ux + (x.inicio[1] - t0.inicio[1]) * uy), 0);
+  const pos = p => (p[0] - t0.inicio[0]) * ux + (p[1] - t0.inicio[1]) * uy - origen;
+  const cota = Object.fromEntries(m.niveles.map(n => [n.nombre, n.cota]));
+  const orden = m.niveles.map(n => n.nombre);
+  const g = s("g", {});
+  let maxX = 0, maxZ = 0;
+  const linea = (x1, z1, x2, z2, color, ancho, extra = {}) => g.append(s("line", { x1, y1: -z1, x2, y2: -z2, stroke: color,
+    "stroke-width": ancho, "vector-effect": "non-scaling-stroke", ...extra }));
+  for (const t of delEje) {
+    const a = pos(t.inicio), b = pos(t.fin), x0 = Math.min(a, b), x1 = Math.max(a, b);
+    maxX = Math.max(maxX, x1);
+    for (const [n, inf] of Object.entries(t.niveles)) {
+      const sup = orden[orden.indexOf(n) + 1];
+      if (sup === undefined) continue;
+      const z0 = cota[n], z1 = cota[sup]; maxZ = Math.max(maxZ, z1);
+      const c = TIPOLOGIA[inf.final].color;
+      if (inf.final === "muro") g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: c, "fill-opacity": 0.55 }));
+      if (inf.final === "momento" || inf.final === "arriostrado") {
+        linea(x0, z0, x0, z1, "var(--texto)", 3); linea(x1, z0, x1, z1, "var(--texto)", 3); linea(x0, z1, x1, z1, "var(--texto)", 3);
+        if (inf.final === "arriostrado") { linea(x0, z0, x1, z1, c, 2); linea(x1, z0, x0, z1, c, 2); }
+        else for (const x of [x0, x1]) g.append(s("rect", { x: x - 0.12, y: -z1, width: 0.24, height: 0.24, fill: c }));
+      }
+      if (inf.final === "ninguno") g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "none",
+        stroke: c, "stroke-dasharray": "4 3", "vector-effect": "non-scaling-stroke" }));
+      if (t.id === est.tramo) g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "none",
+        stroke: "var(--acento)", "stroke-width": 2.5, "vector-effect": "non-scaling-stroke" }));
+      const r = s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "transparent", style: "cursor:pointer" });
+      const tit = s("title"); tit.textContent = `${t.id} · ${n}: ${TIPOLOGIA[inf.final].nombre}\n${inf.motivo}`; r.append(tit);
+      r.addEventListener("click", () => { est.tramo = t.id; pintarEstructura(); });
+      g.append(r);
+    }
+    for (const [x, nombre] of [[pos(t.inicio), t.entre[0]], [pos(t.fin), t.entre[1]]]) {
+      const tx = s("text", { x, y: 0.55, "font-size": 0.32, "text-anchor": "middle", fill: "var(--tenue)" });
+      tx.textContent = nombre; g.append(tx);
+    }
+  }
+  for (const n of m.niveles) {
+    if (n.cota > maxZ + 1e-6) continue;
+    linea(-0.3, n.cota, maxX + 0.3, n.cota, "var(--tenue)", 0.8, { "stroke-dasharray": "4 3" });
+    const tx = s("text", { x: -0.45, y: -n.cota, "font-size": 0.3, "text-anchor": "end", "dominant-baseline": "middle", fill: "var(--tenue)" });
+    tx.textContent = `${n.nombre} ${n.cota.toFixed(2)}`; g.append(tx);
+  }
+  svg.replaceChildren(g);
+  svg.setAttribute("viewBox", `${-2.2} ${-maxZ - 0.6} ${maxX + 3} ${maxZ + 1.4}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+}
+
+function pintarTablaEst() {
+  const m = est.modelo;
+  const niveles = [...new Set(m.tramos.flatMap(t => Object.keys(t.niveles)))];
+  $("#est-tabla thead").replaceChildren(h("tr", {}, h("th", {}, "Tramo"), h("th", {}, "Largo"), h("th", {}, "Dir."),
+    ...niveles.map(n => h("th", {}, n)), h("th", {}, `Motivo (${est.nivel})`)));
+  $("#est-tabla tbody").replaceChildren(...m.tramos.map(t => h("tr", { class: t.id === est.tramo ? "sel" : "",
+      onclick: () => { est.tramo = t.id; pintarEstructura(); } },
+    h("td", {}, h("strong", {}, t.id)), h("td", {}, `${t.largo.toFixed(2)} m`), h("td", {}, t.direccion),
+    ...niveles.map(n => h("td", {}, t.niveles[n] ? chipTipo(t.niveles[n].final, t.niveles[n].eleccion !== "auto") : "—")),
+    h("td", { class: "tenue" }, t.niveles[est.nivel]?.motivo ?? ""))));
+}
+
+/** Guarda las elecciones y recalcula el modelo (una corrida nueva con nota). */
+async function aplicarTramos(nota) {
+  est.ocupado = true;
+  $("#est-estado").textContent = "Recalculando…";
+  pintarDetalleEst();
+  try {
+    const r = await api("PUT", P("/tramos"), { elecciones: est.elecciones });
+    mostrarErroresEntradas(r.errores);
+    const c = await api("POST", P("/corridas"), { notas: nota });
+    await cargarCorridas(c.n);
+    await cargarEntradas();
+    toast(c.ok ? `${nota} · corrida ${c.n}` : `Corrida ${c.n} con errores`, !c.ok);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    est.ocupado = false;
+    $("#est-estado").textContent = "";
+    await intentar(cargarEstructura);
+  }
 }
 
 // ------------------------------------------------------------------ marcos de acero
@@ -869,9 +1090,15 @@ function habilitarZoom(svg) {
     svg.setAttribute("viewBox", `${px - (px - x) * k} ${py - (py - y) * k} ${w * k} ${hh * k}`);
   }, { passive: false });
   let arr = null;
-  svg.addEventListener("pointerdown", e => { arr = { x: e.clientX, y: e.clientY, vb: vb() }; svg.setPointerCapture(e.pointerId); });
+  // el arrastre empieza recién al mover unos píxeles, para no tapar los clics sobre los elementos
+  svg.addEventListener("pointerdown", e => { arr = { x: e.clientX, y: e.clientY, vb: vb(), moviendo: false, id: e.pointerId }; });
   svg.addEventListener("pointermove", e => {
     if (!arr) return;
+    if (!arr.moviendo) {
+      if (Math.hypot(e.clientX - arr.x, e.clientY - arr.y) < 4) return;
+      arr.moviendo = true;
+      svg.setPointerCapture(arr.id);
+    }
     const r = svg.getBoundingClientRect();
     const [x, y, w, hh] = arr.vb;
     const escala = Math.max(w / r.width, hh / r.height);
@@ -881,6 +1108,7 @@ function habilitarZoom(svg) {
 }
 habilitarZoom($("#svg-resultado"));
 habilitarZoom($("#svg-plano"));
+habilitarZoom($("#est-planta"));
 
 // ------------------------------------------------------------------ historial
 function pintarHistorial() {

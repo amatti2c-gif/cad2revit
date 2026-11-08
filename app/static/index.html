@@ -28,8 +28,9 @@
   <nav class="pestanas" role="tablist">
     <button data-tab="planos" class="activa">1 · Planos</button>
     <button data-tab="legos">2 · Legos</button>
-    <button data-tab="resultado">3 · Resultado</button>
-    <button data-tab="historial">4 · Historial</button>
+    <button data-tab="estructura">3 · Estructuración</button>
+    <button data-tab="resultado">4 · Resultado</button>
+    <button data-tab="historial">5 · Historial</button>
     <button data-tab="lineamientos">Lineamientos (avanzado) <span id="badge-errores" class="badge oculto"></span></button>
   </nav>
 
@@ -77,6 +78,28 @@
       <p class="tenue">Piezas prearmadas disponibles para todos los proyectos. Para crear o modificar uno, usa
         <em>Lineamientos (avanzado) → materialidades.yaml</em>.</p>
       <div id="catalogo"></div>
+    </section>
+
+    <!-- ==================== ESTRUCTURACIÓN ==================== -->
+    <section id="tab-estructura" class="tab">
+      <div id="est-vacio" class="vacio">Presiona <strong>▶ Ejecutar</strong> para que la app proponga la estructuración.</div>
+      <div id="est-contenido" class="oculto">
+        <div class="visor-cab">
+          <label>Piso <select id="est-nivel"></select></label>
+          <div class="leyenda-tramos" id="est-leyenda"></div>
+          <span id="est-estado" class="tenue"></span>
+        </div>
+        <p class="tenue">La app propone una tipología para cada tramo de eje según lo que hay en el plano.
+          Haz clic en un tramo para cambiarla: el modelo se recalcula solo. ✎ = elegido por ti.</p>
+        <div class="est-grid">
+          <svg id="est-planta" class="lienzo est-lienzo"></svg>
+          <div class="panel" id="est-detalle"><p class="tenue">Selecciona un tramo en la planta o en la tabla.</p></div>
+        </div>
+        <h3>Elevación del eje <span id="est-eje-tit"></span></h3>
+        <svg id="est-elevacion" class="lienzo est-elev"></svg>
+        <h3>Todos los tramos</h3>
+        <div class="tabla-wrap"><table class="tabla" id="est-tabla"><thead></thead><tbody></tbody></table></div>
+      </div>
     </section>
 
     <!-- ===================== LINEAMIENTOS ===================== -->

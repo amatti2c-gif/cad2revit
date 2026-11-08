@@ -831,6 +831,54 @@
           }
         }
       }
+    },
+    "tramos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "eje",
+          "entre",
+          "inicio",
+          "fin",
+          "largo",
+          "direccion",
+          "niveles"
+        ],
+        "properties": {
+          "niveles": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "propuesta",
+                "motivo",
+                "eleccion",
+                "final"
+              ],
+              "properties": {
+                "final": {
+                  "enum": [
+                    "muro",
+                    "momento",
+                    "arriostrado",
+                    "ninguno"
+                  ]
+                },
+                "propuesta": {
+                  "enum": [
+                    "muro",
+                    "momento",
+                    "arriostrado",
+                    "ninguno"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

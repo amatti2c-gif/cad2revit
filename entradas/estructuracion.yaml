@@ -24,6 +24,15 @@ muros_estructurales:
   perimetrales: true            # los muros del contorno exterior son estructurales
 
 # -----------------------------------------------------------------------------
+#  PROPUESTA POR TRAMOS DE EJE
+# -----------------------------------------------------------------------------
+#  Para cada tramo de eje (entre dos ejes que lo cruzan) y cada piso, la app
+#  propone: muro (si hay muro estructural con pocos vanos), marco de momento
+#  (si hay vanos) o marco arriostrado en X (si no hay muro ni vanos). En la
+#  pestaña "Estructuración" se puede cambiar la propuesta de cada tramo.
+propuesta_por_ejes: true
+
+# -----------------------------------------------------------------------------
 #  COLUMNAS / PILARES
 # -----------------------------------------------------------------------------
 #  Familias de Revit: el complemento usa la familia indicada; si no está, busca

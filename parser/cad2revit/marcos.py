@@ -36,17 +36,22 @@ def _perfil(p: dict, material: str, rol: str) -> dict:
             "b": float(p.get("b", 0.15)), "h": float(p.get("h", 0.2))}
 
 
-def generar(segmentos: list[Segmento], cfg, nivel: str, sup: str | None, cota: dict[str, float],
-            prefijo: str, advertencias: list[str]) -> list[dict]:
+def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, float],
+            prefijo: str, advertencias: list[str], columnas_vistas: set | None = None,
+            numero_inicial: int = 1) -> list[dict]:
+    """segmentos: Segmento del CAD, o tuplas (Segmento, lego, origen) para marcos que no vienen
+    de una capa (p. ej. los propuestos por tramo de eje)."""
+    items = [x if isinstance(x, tuple) else (x, None, None) for x in segmentos]
     if sup is None:
-        if segmentos:
-            advertencias.append(f"{nivel}: hay marcos dibujados pero no existe un nivel superior; se omiten")
+        if items:
+            advertencias.append(f"{nivel}: hay marcos pero no existe un nivel superior; se omiten")
         return []
     z0, z1 = cota[nivel], cota[sup]
     out = []
-    columnas_vistas: set[tuple[float, float]] = set()
-    for k, s in enumerate(sorted(segmentos, key=lambda x: (x.a, x.b)), 1):
-        nombre = tipo_para_capa(s.capa, cfg)
+    if columnas_vistas is None:
+        columnas_vistas = set()
+    for k, (s, lego_fijo, origen) in enumerate(sorted(items, key=lambda x: (x[0].a, x[0].b)), numero_inicial):
+        nombre = lego_fijo or tipo_para_capa(s.capa, cfg)
         lego = next((t for t in cfg.materialidades.get("tipos_marco", []) if t["nombre"] == nombre), None)
         if lego is None:
             advertencias.append(f"Marco en capa '{s.capa}': no hay lego de marco asignado; se omite")
@@ -74,7 +79,7 @@ def generar(segmentos: list[Segmento], cfg, nivel: str, sup: str | None, cota: d
                 diagonales.append({"inicio": [b[0], b[1], z0], "fin": [a[0], a[1], z1]})
         out.append({
             "id": f"{prefijo}-F{k:03d}", "nivel": nivel, "nivel_superior": sup, "tipo": nombre,
-            "sistema": lego["sistema"], "material": mat, "capa_cad": s.capa,
+            "sistema": lego["sistema"], "material": mat, "capa_cad": s.capa, "origen": origen or "plano CAD",
             "inicio": list(s.a), "fin": list(s.b), "vanos": n,
             "direccion": [round((s.b[0] - s.a[0]) / largo, 6), round((s.b[1] - s.a[1]) / largo, 6)],
             "perfiles": {

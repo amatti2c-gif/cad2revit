@@ -96,7 +96,7 @@ def planta(ruta: Path, con_puerta_exterior: bool) -> None:
     msp.add_line((-2, 0), (-2, 6), dxfattribs={"layer": "S-MARCO-ARRIOSTRADO"})    # 6 m -> 1 vano
 
     # Ejes
-    for x in (0.1, 9.9):
+    for x in (0.1, 6.0, 9.9):                 # el eje 6.0 va por el tabique
         msp.add_line((x, -3), (x, 9), dxfattribs={"layer": "A-EJES"})
     for y in (0.1, 7.9):
         msp.add_line((-1, y), (11, y), dxfattribs={"layer": "A-EJES"})

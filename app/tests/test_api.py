@@ -169,7 +169,7 @@ def test_marcos_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {}, "marcos": {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}})
     assert cliente.get(f"/api/proyectos/{pid}/legos").json()["marcos"] == {"S-MARCO-MOMENTO": "MA-2 Arriostrado tubo"}
     r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
-    assert r["ok"] and r["conteos"]["marcos"] == 4
+    assert r["ok"] and r["conteos"]["marcos"] == 6         # 4 dibujados + 2 propuestos por el tramo 2:A-B
     modelo = cliente.get(f"/api/proyectos/{pid}/corridas/{r['n']}").json()["modelo"]
     norte = next(f for f in modelo["marcos"] if f["capa_cad"] == "S-MARCO-MOMENTO" and f["nivel"] == "N1")
     assert norte["vanos"] == 2 and len(norte["diagonales"]) == 4 and norte["perfiles"]["diagonal"]["forma"] == "tubo"
@@ -177,6 +177,26 @@ def test_marcos_api(cliente):
     assert cliente.delete("/api/catalogo/marcos/MA-2 Arriostrado tubo").status_code == 409
     malo = dict(nuevo, nombre="Malo"); malo.pop("diagonal")
     assert cliente.post("/api/catalogo/marcos", json=malo).status_code == 400
+
+
+def test_tramos_api(cliente):
+    pid = _crear(cliente)
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    modelo = cliente.get(f"/api/proyectos/{pid}/corridas/{r['n']}").json()["modelo"]
+    assert {t["id"] for t in modelo["tramos"]} >= {"2:A-B", "A:1-2"}
+    # cambiar un tramo a arriostrado y otro solo en N2
+    assert cliente.put(f"/api/proyectos/{pid}/tramos",
+                       json={"elecciones": {"2:A-B": "arriostrado", "A:1-2@N2": "momento", "B:1-2": "auto"}}).json()["errores"] == []
+    assert cliente.get(f"/api/proyectos/{pid}/tramos").json()["elecciones"] == {"2:A-B": "arriostrado", "A:1-2@N2": "momento"}
+    # convive con la selección de legos sin pisarse
+    cliente.put(f"/api/proyectos/{pid}/legos", json={"muros": {"A-TABIQUE": "TB-10 Tabique metalcon 10"}})
+    assert cliente.get(f"/api/proyectos/{pid}/tramos").json()["elecciones"]["2:A-B"] == "arriostrado"
+    r2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m2 = cliente.get(f"/api/proyectos/{pid}/corridas/{r2['n']}").json()["modelo"]
+    t = {x["id"]: x for x in m2["tramos"]}
+    assert t["2:A-B"]["niveles"]["N1"]["final"] == "arriostrado"
+    assert t["A:1-2"]["niveles"]["N2"]["final"] == "momento" and t["A:1-2"]["niveles"]["N1"]["final"] == "muro"
+    assert cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"x": "acero"}}).status_code == 400
 
 
 def test_errores_de_lineamientos(cliente):

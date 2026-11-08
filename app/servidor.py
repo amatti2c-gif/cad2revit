@@ -638,6 +638,40 @@ def guardar_legos(pid: str, datos: Legos):
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
+# ---------------------------------------------------------------- estructuración por tramos
+OPCIONES_TRAMO = {"auto", "muro", "momento", "arriostrado", "ninguno"}
+
+
+class EleccionesTramos(BaseModel):
+    elecciones: dict[str, str] = {}
+
+
+@app.get("/api/proyectos/{pid}/tramos")
+def leer_tramos(pid: str):
+    d = _proyecto(pid)
+    return {"elecciones": _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("tramos") or {}}
+
+
+@app.put("/api/proyectos/{pid}/tramos")
+def guardar_tramos(pid: str, datos: EleccionesTramos):
+    """Guarda en proyecto.yaml las tipologías elegidas por tramo de eje ("A:1-2") o por tramo
+    y piso ("A:1-2@N2"). "auto" (o no estar) = usar la propuesta de la app."""
+    d = _proyecto(pid)
+    malas = [f"{k}: {v}" for k, v in datos.elecciones.items() if v not in OPCIONES_TRAMO]
+    if malas:
+        raise HTTPException(400, "Opciones no válidas: " + ", ".join(malas))
+    py = d / "entradas" / "proyecto.yaml"
+    texto = py.read_text(encoding="utf-8")
+    texto = re.sub(r"^# Tipologías elegidas por tramo.*\n?", "", texto, flags=re.M)
+    texto = re.sub(r"^tramos:.*?(?=^\S|\Z)", "", texto, flags=re.M | re.S).rstrip() + "\n"
+    elegidas = {k: v for k, v in sorted(datos.elecciones.items()) if v != "auto"}
+    if elegidas:
+        texto += "\n# Tipologías elegidas por tramo de eje (se editan en la pestaña Estructuración de la app)\n"
+        texto += yaml.safe_dump({"tramos": elegidas}, allow_unicode=True, sort_keys=False)
+    py.write_text(texto, encoding="utf-8")
+    return {"guardado": True, "errores": _validar_entradas(d)}
+
+
 # ---------------------------------------------------------------- planos
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):

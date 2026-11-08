@@ -191,3 +191,19 @@ legend { padding: 0 4px; }
 .esquema-marco .nudo { fill: var(--texto); }
 .esquema-marco .suelo { stroke: var(--tenue); stroke-width: 1.5; stroke-dasharray: 4 3; }
 #marco-perfiles input, #marco-perfiles select { width: 100%; min-width: 0; }
+
+/* ---------- Estructuración por tramos ---------- */
+.est-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 12px; align-items: start; }
+.est-lienzo { height: 58vh; }
+.est-elev { height: 300px; min-height: 240px; cursor: default; }
+.leyenda-tramos { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.leyenda-tramos span, .chip-tipo { display: inline-flex; align-items: center; gap: 5px; }
+.leyenda-tramos i, .chip-tipo i { width: 18px; height: 5px; border-radius: 2px; display: inline-block; }
+.chip-tipo { font-size: 12.5px; white-space: nowrap; }
+#est-detalle h4 { margin: 0 0 4px; font-size: 16px; }
+#est-detalle select { width: 100%; }
+#est-detalle .piso { border-top: 1px solid var(--borde); padding-top: 8px; margin-top: 8px; font-size: 12.5px; }
+#est-detalle .piso label { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+#est-tabla tr.sel td { background: var(--superficie-2); }
+#est-tabla tbody tr { cursor: pointer; }
+@media (max-width: 900px) { .est-grid { grid-template-columns: 1fr; } }

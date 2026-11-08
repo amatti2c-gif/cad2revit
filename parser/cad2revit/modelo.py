@@ -15,6 +15,7 @@ from .config import Configuracion, ErrorConfiguracion
 from .dxf_reader import DibujoCAD, leer
 from . import entramado as entramado_mod
 from . import marcos as marcos_mod
+from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
 from .muros import Muro, detectar_muros
@@ -122,7 +123,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         "materiales": cfg.materialidades.get("materiales", []),
         "niveles": niveles, "ejes": [], "tipos_muro": [], "tipos_losa": [],
         "muros": [], "aberturas": [], "losas": [], "cielos": [], "columnas": [], "vigas": [],
-        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "marcos": [], "advertencias": adv,
+        "fundaciones": {"corridas": [], "aisladas": []}, "recintos": [], "entramados": [], "marcos": [], "tramos": [], "advertencias": adv,
     }
     cota = {n["nombre"]: n["cota"] for n in niveles}
 
@@ -253,6 +254,11 @@ def construir_modelo(cfg: Configuracion) -> dict:
             if sup is None:
                 d["altura"] = ALTURA_POR_DEFECTO
             modelo["muros"].append(d)
+
+    # Propuesta de estructuración por tramos de eje (y elecciones del proyecto)
+    if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):
+        modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,
+                                               cota, adv, marcos_mod)
 
     if lod["escaleras"]:
         adv.append("Escaleras: aún no se generan automáticamente (pendiente en hoja de ruta)")
