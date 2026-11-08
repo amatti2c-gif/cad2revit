@@ -169,6 +169,15 @@ async function cargarCapas() {
       }));
       return chip;
     });
+    const nuevas = (cat.sugeridas || []).filter(x => !marcadas.has(x.capa));
+    const sugerencia = nuevas.length ? h("div", { class: "sugerencia" },
+      h("span", {}, "Por su dibujo (líneas paralelas) parecen muros: " +
+        nuevas.map(x => `${x.capa} (${x.metros} m)`).join(", ") + " "),
+      h("button", { class: "pri", style: "padding:2px 10px;font-size:12px", onclick: () => intentar(async () => {
+        await api("PUT", P("/capas"), { categoria: cat.clave, capas: [...cat.usadas, ...nuevas.map(x => x.capa)] });
+        $("#capas-estado").textContent = "guardado ✓ (presiona ▶ Ejecutar para aplicarlo)";
+        await cargarCapas();
+      }) }, cat.usadas.length ? "Agregarlas" : "Usarlas como muros")) : null;
     return h("div", { class: "cat-capas" },
       h("div", {}, h("strong", {}, cat.nombre),
         h("div", { class: "origen" }, cat.elegidas ? "elegidas por ti" : (cat.usadas.length ? "según la regla general" : "ninguna reconocida")),
@@ -176,7 +185,7 @@ async function cargarCapas() {
           await api("PUT", P("/capas"), { categoria: cat.clave, capas: null });
           await cargarCapas();
         }) }, "Usar regla general") : null),
-      h("div", { class: "chips" }, chips));
+      h("div", {}, sugerencia, h("div", { class: "chips" }, chips)));
   }));
 }
 

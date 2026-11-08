@@ -719,26 +719,37 @@ CATEGORIAS_CAPA = [("muros", "Muros y tabiques"), ("puertas", "Puertas"), ("vent
                    ("losas", "Contorno de losas"), ("recintos", "Nombres de recintos")]
 
 
-def _capas_en_planos(d: Path) -> list[str]:
+def _capas_en_planos(d: Path) -> tuple[list[str], list[dict]]:
+    """Capas de las plantas y, por geometría, las que parecen tener muros (líneas paralelas)."""
+    from cad2revit.muros import largo_pareado_por_capa
     py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
     archivos = [Path(p["archivo"]).name for p in py.get("plantas") or []] or [f.name for f in (d / "planos").glob("*.dxf")]
-    capas = set()
+    det = (_leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("deteccion_muros")
+           or {"espesor_min": 0.05, "espesor_max": 0.40, "largo_min": 0.20})
+    capas, pareado = set(), {}
     for nombre in archivos:
         f = d / "planos" / nombre
         if f.exists():
             try:
                 dib = leer(str(f))
                 capas |= {s.capa for s in dib.segmentos} | {i.capa for i in dib.inserciones} | {t.capa for t in dib.textos}
+                for capa, (p, t) in largo_pareado_por_capa(dib.segmentos, det).items():
+                    q = pareado.setdefault(capa, [0.0, 0.0])
+                    q[0] += p
+                    q[1] += t
             except Exception:
                 pass
-    return sorted(capas)
+    sug = [{"capa": c, "metros": round(p / 2, 1)} for c, (p, t) in pareado.items()
+           if p / 2 >= 5 and p >= 0.25 * t]
+    sug.sort(key=lambda x: -x["metros"])
+    return sorted(capas), sug[:6]
 
 
 @app.get("/api/proyectos/{pid}/capas")
 def leer_capas(pid: str):
     """Capas de las plantas del proyecto y, por categoría, cuáles se usan (elegidas o por la regla general)."""
     d = _proyecto(pid)
-    capas = _capas_en_planos(d)
+    capas, sug_muros = _capas_en_planos(d)
     propias = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml").get("capas") or {}
     reglas = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("capas") or {}
     out = []
@@ -750,7 +761,7 @@ def leer_capas(pid: str):
             patron = reglas.get(clave)
             usadas = [c for c in capas if patron and re.search(patron, c)]
         out.append({"clave": clave, "nombre": nombre, "regla": reglas.get(clave), "elegidas": elegidas or None,
-                    "usadas": usadas})
+                    "usadas": usadas, "sugeridas": sug_muros if clave == "muros" else []})
     return {"capas_plano": capas, "categorias": out}
 
 
@@ -1103,4 +1114,13 @@ def _error_cfg(_, exc: ErrorConfiguracion):
 
 
 # ---------------------------------------------------------------- interfaz
+@app.middleware("http")
+async def _sin_cache_estatico(request, call_next):
+    """La página y sus scripts se revalidan siempre: tras un despliegue nunca queda una versión vieja."""
+    r = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        r.headers["Cache-Control"] = "no-cache"
+    return r
+
+
 app.mount("/", StaticFiles(directory=RAIZ / "app" / "static", html=True), name="static")

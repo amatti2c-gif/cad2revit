@@ -274,6 +274,9 @@ def test_capas_del_plano(cliente):
     assert "A-TABIQUE" in c["capas_plano"]
     cat = {x["clave"]: x for x in c["categorias"]}
     assert cat["muros"]["usadas"] == ["A-MURO-HA", "A-TABIQUE"] and cat["muros"]["elegidas"] is None
+    # por geometría: las capas de muros tienen líneas paralelas; la de recintos no
+    sug = {x["capa"] for x in cat["muros"]["sugeridas"]}
+    assert "A-MURO-HA" in sug and "A-RECINTO" not in sug and "A-EJES" not in sug
     # elegir solo el hormigón como muro y una capa de ejes que no existe -> ejes desde muros
     cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "muros", "capas": ["A-MURO-HA"]})
     cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "ejes", "capas": ["A-RECINTO"]})

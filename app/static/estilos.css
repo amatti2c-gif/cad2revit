@@ -220,3 +220,8 @@ legend { padding: 0 4px; }
 #est-tabla tr.sel td { background: var(--superficie-2); }
 #est-tabla tbody tr { cursor: pointer; }
 @media (max-width: 900px) { .est-grid { grid-template-columns: 1fr; } }
+
+.sugerencia { font-size: 12.5px; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;
+  border-radius: 8px; padding: 6px 10px; margin-bottom: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+:root[data-theme="dark"] .sugerencia { background: #3b2a0a; color: #fcd34d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .sugerencia { background: #3b2a0a; color: #fcd34d; } }

@@ -101,18 +101,50 @@ class _Candidato:
     u: Punto
 
 
+def _pares_cercanos(segs: list[Segmento], angs: list[float], tol: float, emax: float, lmin: float):
+    """Pares (i, j), i < j, de líneas casi paralelas y a menos de emax entre sí, sin comparar todas
+    con todas: se agrupan por ángulo y se ordenan por desplazamiento (igual resultado, mucho más rápido)."""
+    paso = max(tol, math.radians(0.5))
+    nb = max(1, int(round(math.pi / paso)))
+    cubetas: dict[int, list[int]] = {}
+    for i, s in enumerate(segs):
+        if s.largo >= lmin:
+            cubetas.setdefault(int(angs[i] % math.pi / paso) % nb, []).append(i)
+    vistos = set()
+    for k in cubetas:
+        # la cubeta y sus vecinas (una línea a 0,9° y otra a 1,1° caen en cubetas distintas)
+        idx = sorted(set(cubetas[k]) | set(cubetas.get((k + 1) % nb, [])) | set(cubetas.get((k - 1) % nb, [])))
+        ang = (k + 0.5) * paso
+        n = (-math.sin(ang), math.cos(ang))
+        u = (math.cos(ang), math.sin(ang))
+        margen = emax + 1e-6
+        items = []
+        for i in idx:
+            s = segs[i]
+            ds = (s.a[0] * n[0] + s.a[1] * n[1], s.b[0] * n[0] + s.b[1] * n[1])
+            items.append((min(ds), max(ds), i))
+        items.sort()
+        for a_i, (lo, hi, i) in enumerate(items):
+            for lo2, hi2, j in items[a_i + 1:]:
+                if lo2 > hi + margen:
+                    break
+                par = (i, j) if i < j else (j, i)
+                if par not in vistos:
+                    vistos.add(par)
+    # orden estable igual al recorrido original (i creciente, luego j)
+    return sorted(vistos)
+
+
 def _candidatos(segs: list[Segmento], det: dict) -> list[_Candidato]:
     tol = math.radians(det["tolerancia_angulo_grados"])
     emin, emax, lmin = det["espesor_min"], det["espesor_max"], det["largo_min"]
     angs = [_angulo(s) for s in segs]
     out: list[_Candidato] = []
-    for i, si in enumerate(segs):
-        if si.largo < lmin:
-            continue
+    for i, j in _pares_cercanos(segs, angs, tol, emax, lmin):
+        si, sj = segs[i], segs[j]
         u = (math.cos(angs[i]), math.sin(angs[i]))
-        for j in range(i + 1, len(segs)):
-            sj = segs[j]
-            if sj.largo < lmin or _dif_angulo(angs[i], angs[j]) > tol:
+        if True:
+            if _dif_angulo(angs[i], angs[j]) > tol:
                 continue
             d = (dist_perp(sj.a, si.a, u) + dist_perp(sj.b, si.a, u)) / 2
             if not (emin - 1e-6 <= d <= emax + 1e-6):
@@ -130,13 +162,15 @@ def _candidatos(segs: list[Segmento], det: dict) -> list[_Candidato]:
             p1 = (si.a[0] + u[0] * t1 + n[0] * off, si.a[1] + u[1] * t1 + n[1] * off)
             out.append(_Candidato(i, j, p0, p1, t0, t1, round(d, 4), si.capa, si.a, u))
     # descartar dominados: misma cara con otra cara más cercana en el mismo tramo
+    por_linea: dict[int, list[_Candidato]] = {}
+    for c in out:
+        por_linea.setdefault(c.i, []).append(c)
+        por_linea.setdefault(c.j, []).append(c)
     keep = []
     for c in out:
         dominado = False
-        for o in out:
+        for o in por_linea[c.i] + por_linea[c.j]:
             if o is c or o.espesor >= c.espesor - 1e-6:
-                continue
-            if not ({o.i, o.j} & {c.i, c.j}):
                 continue
             to = sorted((proyectar(o.a, c.origen, c.u), proyectar(o.b, c.origen, c.u)))
             sol = min(to[1], c.t1) - max(to[0], c.t0)
@@ -156,13 +190,14 @@ def _unir_colineales(muros: list[Muro], puntos_vano: list[Punto], det: dict) -> 
     cambiado = True
     while cambiado:
         cambiado = False
+        dirs = [m.direccion for m in muros]          # se recalcula en cada pasada (tras cada unión)
         for x in range(len(muros)):
             for y in range(x + 1, len(muros)):
                 m, n = muros[x], muros[y]
                 if abs(m.espesor - n.espesor) > 0.01:
                     continue
-                u = m.direccion
-                if abs(u[0] * n.direccion[1] - u[1] * n.direccion[0]) > 0.01:
+                u, v = dirs[x], dirs[y]
+                if abs(u[0] * v[1] - u[1] * v[0]) > 0.01:
                     continue
                 if dist_perp(n.a, m.a, u) > 0.01 or dist_perp(n.b, m.a, u) > 0.01:
                     continue
@@ -194,11 +229,23 @@ def _unir_colineales(muros: list[Muro], puntos_vano: list[Punto], det: dict) -> 
 
 # ---------------------------------------------------------------- paso 4
 def _resolver_uniones(muros: list[Muro]) -> None:
+    # índice por celdas: cada extremo solo se compara con los muros cercanos (mismo resultado que
+    # compararlo con todos, porque la unión exige que el punto quede a menos de ~0,5 m del otro muro)
+    celda = 2.0
+    margen = max((m.espesor for m in muros), default=0.4) * 2 + 1.0
+    rejilla: dict[tuple[int, int], list[int]] = {}
+    for k, n in enumerate(muros):
+        x0, x1 = sorted((n.a[0], n.b[0]))
+        y0, y1 = sorted((n.a[1], n.b[1]))
+        for cx in range(int(math.floor((x0 - margen) / celda)), int(math.floor((x1 + margen) / celda)) + 1):
+            for cy in range(int(math.floor((y0 - margen) / celda)), int(math.floor((y1 + margen) / celda)) + 1):
+                rejilla.setdefault((cx, cy), []).append(k)
     for m in muros:
         for extremo in ("a", "b"):
             p = getattr(m, extremo)
             mejor, dmejor = None, None
-            for n in muros:
+            cercanos = rejilla.get((int(math.floor(p[0] / celda)), int(math.floor(p[1] / celda))), [])
+            for n in (muros[k] for k in cercanos):
                 if n is m:
                     continue
                 q = _interseccion(m.a, m.direccion, n.a, n.direccion)
@@ -242,3 +289,43 @@ def detectar_muros(segs: list[Segmento], det: dict, puntos_vano: list[Punto], pr
     for k, m in enumerate(muros, 1):
         m.id = f"{prefijo}-M{k:03d}"
     return muros
+
+
+def largo_pareado_por_capa(segs: list[Segmento], det: dict) -> dict[str, tuple[float, float]]:
+    """Por capa: (metros de líneas que tienen una paralela a distancia de espesor de muro, metros totales).
+    Rápido (ordena por desplazamiento); sirve para sugerir qué capas tienen muros cuando sus nombres no lo dicen."""
+    emin, emax, lmin = det["espesor_min"], det["espesor_max"], det["largo_min"]
+    paso = math.radians(max(det.get("tolerancia_angulo_grados", 1.0), 0.5))
+    por_capa: dict[str, list[Segmento]] = {}
+    for s in segs:
+        por_capa.setdefault(s.capa, []).append(s)
+    out = {}
+    for capa, lista in por_capa.items():
+        total = sum(s.largo for s in lista)
+        grupos: dict[int, list] = {}
+        for s in lista:
+            if s.largo < lmin:
+                continue
+            ang = _angulo(s) % math.pi
+            k = int(round(ang / paso)) % int(round(math.pi / paso))
+            u = (math.cos(k * paso), math.sin(k * paso))
+            n = (-u[1], u[0])
+            d = s.a[0] * n[0] + s.a[1] * n[1]
+            t = sorted((s.a[0] * u[0] + s.a[1] * u[1], s.b[0] * u[0] + s.b[1] * u[1]))
+            grupos.setdefault(k, []).append([d, t[0], t[1], 0.0])
+        for items in grupos.values():
+            items.sort()
+            for i, a in enumerate(items):
+                for b in items[i + 1:i + 200]:
+                    sep = b[0] - a[0]
+                    if sep > emax:
+                        break
+                    if sep < emin:
+                        continue
+                    sol = min(a[2], b[2]) - max(a[1], b[1])
+                    if sol >= lmin:
+                        a[3] += sol
+                        b[3] += sol
+        pareado = sum(min(x[3], x[2] - x[1]) for it in grupos.values() for x in it)
+        out[capa] = (round(pareado, 1), round(total, 1))
+    return out
