@@ -14,7 +14,7 @@ from shapely.geometry import Polygon
 from . import __version__
 from .aberturas import asignar_a_muros, clasificar_inserciones
 from .config import Configuracion, ErrorConfiguracion
-from .dxf_reader import DibujoCAD, leer
+from .dxf_reader import Segmento, DibujoCAD, leer
 from . import entramado as entramado_mod
 from . import ejes as ejes_mod
 from . import aberturas as aberturas_mod
@@ -471,6 +471,32 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if e["piezas"]:
                     e["nivel"] = nivel
                     modelo["entramados"].append(e)
+
+    # Marcos dibujados en la app (momento o arriostrado, con su lego)
+    dibujados = cfg.proyecto.get("marcos_usuario") or []
+    if dibujados and lod.get("marcos"):
+        nombres = {t["nombre"] for t in cfg.materialidades.get("tipos_marco", [])}
+        for nivel in orden:
+            items = []
+            for i, f in enumerate(dibujados, 1):
+                if f.get("nivel") != nivel:
+                    continue
+                if f.get("tipo") not in nombres:
+                    adv.append(f"Marco dibujado {i}: el lego '{f.get('tipo')}' no está en el catálogo de marcos; se omite")
+                    continue
+                items.append((Segmento(tuple(f["inicio"]), tuple(f["fin"]), "dibujado en la app"), f["tipo"],
+                              f"dibujado en la app #{i}"))
+            if not items:
+                continue
+            vistas = {(round(c["punto"][0], 3), round(c["punto"][1], 3))
+                      for f in modelo["marcos"] if f["nivel"] == nivel for c in f["columnas"]}
+            n0 = 1 + sum(1 for f in modelo["marcos"] if f["nivel"] == nivel)
+            sup = siguiente(nivel)
+            modelo["marcos"] += marcos_mod.generar(items, cfg, nivel, sup, cota, nivel, adv, columnas_vistas=vistas,
+                                                   numero_inicial=n0, planos_techo=_planos_techo(modelo, sup))
+    for i, f in enumerate(dibujados, 1):
+        if f.get("nivel") not in orden:
+            adv.append(f"Marco dibujado {i}: el nivel '{f.get('nivel')}' no existe; se omite")
 
     if lod["escaleras"]:
         adv.append("Escaleras: aún no se generan automáticamente (pendiente en hoja de ruta)")

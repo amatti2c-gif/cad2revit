@@ -490,7 +490,7 @@ def test_ediciones_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
     assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
     cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
-    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": []}
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": []}
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
 
 
@@ -529,3 +529,19 @@ def test_proyecto_danado_se_recupera_de_la_ultima_corrida(cliente, tmp_path):
     assert "no_existe_n1.dxf" not in py.read_text(encoding="utf-8")
     assert cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["ok"]
     assert list((d / "entradas").glob("proyecto.dañado-*.yaml"))
+
+
+def test_dibujar_marcos(cliente):
+    pid = _crear(cliente)
+    r = cliente.put(f"/api/proyectos/{pid}/ediciones", json={"marcos": [
+        {"nivel": "N1", "inicio": [0.1, 4.0], "fin": [9.9, 4.0], "tipo": "MM-1 Marco de momento acero"},
+        {"nivel": "N2", "inicio": [0.1, 4.0], "fin": [9.9, 4.0], "tipo": "MA-1 Marco arriostrado en cruz acero"}]})
+    assert r.status_code == 200, r.text
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert c["ok"], c
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    dib = [f for f in m["marcos"] if f["origen"].startswith("dibujado en la app")]
+    assert {(f["nivel"], f["sistema"]) for f in dib} == {("N1", "momento"), ("N2", "arriostrado_x")}
+    n1 = next(f for f in dib if f["nivel"] == "N1")
+    assert n1["vanos"] == 2 and len(n1["columnas"]) == 3 and n1["origen"] == "dibujado en la app #1"
+    assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"marcos": [{"nivel": "N1", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400

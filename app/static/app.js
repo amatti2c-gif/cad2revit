@@ -465,7 +465,7 @@ const TIPOLOGIA = {
   ninguno: { nombre: "Sin elemento", color: "#cbd5e1" },
 };
 const est = { modelo: null, elecciones: {}, tramo: null, nivel: null, ocupado: false,
-  modo: "tramo", pend: [], eje: null, muroSel: null, nuevo: null, ed: { ejes: {}, muros: [], quitar: [] }, ultimoLego: null };
+  modo: "tramo", pend: [], eje: null, muroSel: null, nuevo: null, marcoSel: null, ed: { ejes: {}, muros: [], quitar: [], marcos: [] }, ultimoLego: null, ultimoQue: "tabique" };
 /** "tabique:TM-11 …" -> "Tabique (no estructural) · TM-11 …" */
 const nombreTipologia = (v, tipo) => {
   const [base, ...resto] = (v || "").split(":");
@@ -491,7 +491,7 @@ async function cargarEstructura() {
     api("GET", P("/ediciones"))]);
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
-  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [] };
+  est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [], marcos: ed.marcos || [] };
   const tramos = est.modelo.tramos || [];
   if (!tramos.length && !est.modelo.muros.length && !est.modelo.ejes.length) {
     $("#est-contenido").classList.add("oculto");
@@ -544,7 +544,7 @@ function pintarPlantaEst() {
       fill: sel ? "#dc2626" : "var(--cad)", "fill-opacity": sel ? 0.7 : 0.35, style: "cursor:pointer" });
     const tt = s("title"); tt.textContent = `${w.id} · ${w.tipo} · ${w.espesor} m (clic para seleccionar)`; pol.append(tt);
     pol.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.muroSel = w.id; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+      est.muroSel = w.id; est.marcoSel = null; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(pol);
     puntos.push(w.inicio, w.fin);
   }
@@ -554,7 +554,7 @@ function pintarPlantaEst() {
       "stroke-width": sel ? 6 : 4, "stroke-opacity": 0.8, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
     const tt = s("title"); tt.textContent = `${w.id} · dibujado en la app · ${w.tipo}`; l.append(tt);
     l.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.muroSel = w.id; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+      est.muroSel = w.id; est.marcoSel = null; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(l);
   }
   for (const e of m.ejes) {
@@ -566,13 +566,13 @@ function pintarPlantaEst() {
       "stroke-width": 10, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
     const tt = s("title"); tt.textContent = `Eje ${e.nombre}${e.origen ? ` · ${e.origen}` : ""} (clic para editar)`; hit.append(tt);
     hit.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(hit);
     const burbuja = s("circle", { cx: e.inicio[0], cy: e.inicio[1], r: 0.35, fill: selE ? "var(--acento)" : "var(--superficie)",
       stroke: selE ? "var(--acento)" : "var(--tenue)", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
     const tb = s("title"); tb.textContent = `Eje ${e.nombre}: clic para moverlo, cambiar hasta dónde llega o borrarlo`; burbuja.append(tb);
     burbuja.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+      est.eje = e.nombre; est.tramo = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(burbuja);
     raiz.append(texto(e.inicio[0], e.inicio[1], e.nombre, { "font-weight": 600, "pointer-events": "none",
       fill: selE ? "var(--acento-texto)" : "var(--texto)" }));
@@ -586,7 +586,7 @@ function pintarPlantaEst() {
       "stroke-dasharray": inf.final === "ninguno" ? "6 4" : "", "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
     const tit = s("title"); tit.textContent = `${t.id} · ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; linea.append(tit);
     linea.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+      est.tramo = t.id; est.eje = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null; pintarEstructura(); });
     raiz.append(linea);
     if (sel) raiz.append(s("line", { x1: t.inicio[0], y1: t.inicio[1], x2: t.fin[0], y2: t.fin[1], stroke: "var(--texto)",
       "stroke-width": 2, "stroke-dasharray": "2 3", "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
@@ -599,6 +599,20 @@ function pintarPlantaEst() {
   for (const f of (m.marcos || []).filter(x => x.nivel === nivel && x.origen === "plano CAD")) {
     raiz.append(s("line", { x1: f.inicio[0], y1: f.inicio[1], x2: f.fin[0], y2: f.fin[1], stroke: TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color,
       "stroke-width": 4, "stroke-opacity": 0.5, "vector-effect": "non-scaling-stroke" }));
+    puntos.push(f.inicio, f.fin);
+  }
+  // marcos dibujados en la app: línea del color de su sistema + columnas; clic para editar o eliminar
+  for (const f of (m.marcos || []).filter(x => x.nivel === nivel && (x.origen || "").startsWith("dibujado en la app"))) {
+    const i = +f.origen.split("#").pop() - 1, sel = i === est.marcoSel;
+    const color = TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color;
+    const l = s("line", { x1: f.inicio[0], y1: f.inicio[1], x2: f.fin[0], y2: f.fin[1], stroke: sel ? "#dc2626" : color,
+      "stroke-width": sel ? 9 : 6, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tt = s("title"); tt.textContent = `${f.id} · ${f.tipo} · dibujado en la app (clic para editar)`; l.append(tt);
+    l.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.marcoSel = i; est.muroSel = null; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(l);
+    for (const c of f.columnas) raiz.append(s("rect", { x: c.punto[0] - 0.15, y: c.punto[1] - 0.15, width: 0.3, height: 0.3,
+      fill: color, "pointer-events": "none" }));
     puntos.push(f.inicio, f.fin);
   }
   // muro seleccionado: resaltado encima de todo (los tramos suelen ir sobre los muros)
@@ -694,13 +708,25 @@ function muroCercano(p, escala) {
   return mejor?.w ?? null;
 }
 
+function marcoCercano(p, escala) {
+  let mejor = null;
+  for (const f of (est.modelo.marcos || []).filter(x => x.nivel === est.nivel && (x.origen || "").startsWith("dibujado en la app"))) {
+    const [ax, ay] = f.inicio, [bx, by] = f.fin, dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1;
+    const t = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2));
+    const d = Math.hypot(p[0] - (ax + dx * t), p[1] - (ay + dy * t));
+    if (d <= 15 / escala && (!mejor || d < mejor.d)) mejor = { f, d };
+  }
+  return mejor?.f ?? null;
+}
+
 $("#est-planta").addEventListener("click", ev => {
   if (est.modo === "tramo" || !est.modelo || est.ocupado) return;
   const r = puntoModelo(ev); if (!r) return;
   if (est.modo === "borrar") {
-    const w = muroCercano(r.p, r.escala);
-    est.muroSel = w?.id ?? null; est.eje = null; est.tramo = null; est.nuevo = null;
-    if (!w) toast("No hay un muro ahí; haz clic sobre un muro");
+    const w = muroCercano(r.p, r.escala), f = w ? null : marcoCercano(r.p, r.escala);
+    est.muroSel = w?.id ?? null; est.marcoSel = f ? +f.origen.split("#").pop() - 1 : null;
+    est.eje = null; est.tramo = null; est.nuevo = null;
+    if (!w && !f) toast("No hay un muro ni un marco dibujado ahí");
     pintarEstructura();
     return;
   }
@@ -711,7 +737,7 @@ $("#est-planta").addEventListener("click", ev => {
     est.pend = [];
     if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 0.3) { toast("El trazo es muy corto", true); pintarGuia(); return; }
     est.nuevo = { tipo: est.modo, inicio: a, fin: b };
-    est.tramo = null; est.eje = null; est.muroSel = null;
+    est.tramo = null; est.eje = null; est.muroSel = null; est.marcoSel = null;
     pintarDetalleEst();
   }
   pintarGuia();
@@ -720,7 +746,7 @@ $$("#est-modos button").forEach(b => b.addEventListener("click", () => {
   est.modo = b.dataset.modo; est.pend = []; est.nuevo = null;
   $$("#est-modos button").forEach(x => x.classList.toggle("activo", x === b));
   $("#est-ayuda").textContent = { tramo: "", borrar: "Haz clic sobre el muro que quieres eliminar (también los que están bajo un tramo).", eje: "Haz clic en el inicio y en el fin del eje (se ajusta a cruces y en horizontal/vertical).",
-    muro: "Haz clic en el inicio y en el fin del muro (se ajusta a cruces de ejes y extremos de muros)." }[est.modo];
+    muro: "Haz clic en el inicio y en el fin del muro o marco (se ajusta a cruces de ejes y extremos de muros)." }[est.modo];
   if (est.modelo) pintarEstructura();
 }));
 document.addEventListener("keydown", ev => {
@@ -737,7 +763,7 @@ async function guardarEdiciones(nota) {
   est.ocupado = true;
   $("#est-estado").textContent = "Recalculando…";
   try {
-    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar });
+    const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar, marcos: est.ed.marcos });
     mostrarErroresEntradas(r.errores);
     const c = await api("POST", P("/corridas"), { notas: nota });
     await cargarCorridas(c.n);
@@ -789,22 +815,56 @@ function pintarPanelEdicion(box) {
   }
   if (est.nuevo?.tipo === "muro") {
     const { inicio: a, fin: b } = est.nuevo;
-    const lego = selectorLego();
-    const caracter = h("select", {}, h("option", { value: "tabique" }, "Tabique (no estructural)"), h("option", { value: "muro" }, "Muro estructural"));
-    const sinc = () => { const t = (estado.catalogo?.muros || []).find(x => x.nombre === lego.value); caracter.value = t?.estructural ? "muro" : "tabique"; };
-    lego.addEventListener("change", sinc); sinc();
+    const QUE = { tabique: "Tabique (no estructural)", muro: "Muro estructural", momento: "Marco de momento",
+      arriostrado: "Marco arriostrado en X" };
+    const que = h("select", {}, Object.entries(QUE).map(([v, n]) => h("option", { value: v, selected: v === est.ultimoQue }, n)));
+    const lego = h("select", {});
+    const llenar = () => {
+      const q = que.value;
+      const lista = q === "momento" || q === "arriostrado"
+        ? (estado.catalogo?.marcos || []).filter(t => t.sistema === (q === "momento" ? "momento" : "arriostrado_x"))
+        : (estado.catalogo?.muros || []).slice().sort((x, y) => (!!y.estructural === (q === "muro")) - (!!x.estructural === (q === "muro")));
+      lego.replaceChildren(...lista.map(t => h("option", { value: t.nombre, selected: t.nombre === est.ultimoLego }, t.nombre)));
+      if (!lista.length) lego.append(h("option", { value: "" }, "(no hay legos de este tipo en el catálogo)"));
+    };
+    que.addEventListener("change", llenar); llenar();
     const pisos = h("select", {}, h("option", { value: "uno" }, `Solo ${est.nivel}`), h("option", { value: "todos" }, "Todos los pisos con planta"));
-    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, "Nuevo muro"),
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, "Nuevo elemento"),
       h("div", { class: "tenue" }, `${Math.hypot(b[0] - a[0], b[1] - a[1]).toFixed(2)} m`),
-      h("label", {}, "Lego", lego), h("label", {}, "Carácter", caracter), h("label", {}, "Pisos", pisos),
+      h("label", {}, "Qué es", que), h("label", {}, "Lego", lego), h("label", {}, "Pisos", pisos),
       h("div", { class: "fila" },
         h("button", { class: "pri", onclick: () => {
+          if (!lego.value) return toast("Elige un lego (créalo en la pestaña Legos si no existe)", true);
           const niveles = pisos.value === "todos" ? [...new Set(m.muros.map(w => w.nivel))] : [est.nivel];
-          for (const n of niveles) est.ed.muros.push({ nivel: n, inicio: a, fin: b, tipo: lego.value, estructural: caracter.value === "muro" });
-          est.ultimoLego = lego.value;
-          guardarEdiciones(`Muro ${lego.value} dibujado (${niveles.join(", ")})`);
-        } }, "Agregar muro"),
+          const esMarco = que.value === "momento" || que.value === "arriostrado";
+          for (const n of niveles) {
+            if (esMarco) est.ed.marcos.push({ nivel: n, inicio: a, fin: b, tipo: lego.value });
+            else est.ed.muros.push({ nivel: n, inicio: a, fin: b, tipo: lego.value, estructural: que.value === "muro" });
+          }
+          est.ultimoLego = lego.value; est.ultimoQue = que.value;
+          guardarEdiciones(`${QUE[que.value]} ${lego.value} dibujado (${niveles.join(", ")})`);
+        } }, "Agregar"),
         h("button", { class: "sec", onclick: () => { est.nuevo = null; pintarDetalleEst(); } }, "Cancelar"))));
+    return true;
+  }
+  if (est.marcoSel != null) {
+    const f0 = est.ed.marcos[est.marcoSel];
+    const f = (m.marcos || []).find(x => x.origen === `dibujado en la app #${est.marcoSel + 1}`);
+    if (!f0) { est.marcoSel = null; return false; }
+    const lego = h("select", {}, (estado.catalogo?.marcos || []).map(t => h("option", { value: t.nombre, selected: t.nombre === f0.tipo },
+      `${t.nombre} (${t.sistema === "momento" ? "momento" : "arriostrado"})`)));
+    box.replaceChildren(h("div", { class: "form-est" }, h("h4", {}, `Marco dibujado ${f?.id ?? ""}`),
+      h("div", { class: "tenue" }, `${Math.hypot(f0.fin[0] - f0.inicio[0], f0.fin[1] - f0.inicio[1]).toFixed(2)} m · ${f0.nivel}` +
+        (f ? ` · ${f.vanos} vano(s) · ${f.techo === "horizontal" ? "viga horizontal" : `viga ${f.techo}`}` : "")),
+      h("label", {}, "Lego", lego),
+      h("div", { class: "fila" },
+        h("button", { class: "pri", onclick: () => {
+          f0.tipo = lego.value; guardarEdiciones(`Marco dibujado: ${lego.value}`);
+        } }, "Guardar"),
+        h("button", { class: "sec", onclick: () => {
+          est.ed.marcos.splice(est.marcoSel, 1); est.marcoSel = null;
+          guardarEdiciones("Marco dibujado eliminado");
+        } }, "Eliminar marco"))));
     return true;
   }
   if (est.muroSel) {
@@ -908,7 +968,7 @@ function pintarDetalleEst() {
   if (pintarPanelEdicion(box)) return;
   const t = est.modelo.tramos.find(x => x.id === est.tramo);
   if (!t) {
-    const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length + est.ed.quitar.length;
+    const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length + est.ed.quitar.length + est.ed.marcos.length;
     box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo, la burbuja de un eje o un muro en la planta, o usa ",
       h("strong", {}, "＋ Agregar eje"), " / ", h("strong", {}, "✎ Dibujar muro"), " / ", h("strong", {}, "🗑 Borrar muro"), "."),
       nEjes || nMuros ? h("div", {}, h("strong", {}, "Tus cambios sobre el plano"),
@@ -918,6 +978,7 @@ function pintarDetalleEst() {
             `Eje ${k}: ${[c.posicion != null && "movido", (c.desde || c.hasta) && `entre ${c.desde || "…"} y ${c.hasta || "…"}`,
               c.nombre && `renombrado ${c.nombre}`].filter(Boolean).join(", ")}`)),
           ...est.ed.muros.map((w, i) => h("li", {}, `Muro ${w.nivel}-D${String(i + 1).padStart(3, "0")}: ${w.tipo} (${w.nivel})`)),
+          ...est.ed.marcos.map(f => h("li", {}, `Marco dibujado: ${f.tipo} (${f.nivel})`)),
           ...est.ed.quitar.map((q, i) => h("li", {}, `Muro ${q.id ?? ""} (${q.nivel}) eliminado `,
             h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", onclick: () => {
               est.ed.quitar.splice(i, 1);
@@ -925,7 +986,7 @@ function pintarDetalleEst() {
             } }, "Restaurar")))),
         h("button", { class: "sec", style: "margin-top:6px", onclick: () => {
           if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
-          est.ed = { ejes: {}, muros: [], quitar: [] };
+          est.ed = { ejes: {}, muros: [], quitar: [], marcos: [] };
           guardarEdiciones("Ejes y muros: vuelven a los del plano");
         } }, "Deshacer todos mis cambios")) : null);
     return;
@@ -1024,7 +1085,7 @@ function pintarElevacionEst() {
         stroke: "var(--acento)", "stroke-width": 2.5, "vector-effect": "non-scaling-stroke" }));
       const r = s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "transparent", style: "cursor:pointer" });
       const tit = s("title"); tit.textContent = `${t.id} · ${n}: ${nombreTipologia(inf.final, inf.tipo_muro)}\n${inf.motivo}`; r.append(tit);
-      r.addEventListener("click", () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); });
+      r.addEventListener("click", () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null; pintarEstructura(); });
       g.append(r);
     }
     for (const [x, nombre] of [[pos(t.inicio), t.entre[0]], [pos(t.fin), t.entre[1]]]) {
@@ -1049,7 +1110,7 @@ function pintarTablaEst() {
   $("#est-tabla thead").replaceChildren(h("tr", {}, h("th", {}, "Tramo"), h("th", {}, "Largo"), h("th", {}, "Dir."),
     ...niveles.map(n => h("th", {}, n)), h("th", {}, `Motivo (${est.nivel})`)));
   $("#est-tabla tbody").replaceChildren(...m.tramos.map(t => h("tr", { class: t.id === est.tramo ? "sel" : "",
-      onclick: () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.nuevo = null; pintarEstructura(); } },
+      onclick: () => { est.tramo = t.id; est.eje = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null; pintarEstructura(); } },
     h("td", {}, h("strong", {}, t.id)), h("td", {}, `${t.largo.toFixed(2)} m`), h("td", {}, t.direccion),
     ...niveles.map(n => h("td", {}, t.niveles[n] ? chipTipo(t.niveles[n].final, t.niveles[n].eleccion !== "auto", t.niveles[n].tipo_muro) : "—")),
     h("td", { class: "tenue" }, t.niveles[est.nivel]?.motivo ?? ""))));
