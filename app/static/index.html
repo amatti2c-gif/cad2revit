@@ -42,8 +42,18 @@
         <p class="tenue" id="nota-dwg">Los DWG se convierten solos a DXF, el formato de trabajo de la app (el original queda guardado).
           Luego asígnalos a un nivel en <em>Lineamientos → proyecto.yaml</em> usando la ruta que aparece en la tabla.</p>
       </div>
+      <div id="aviso-planos" class="aviso oculto"></div>
+      <div class="panel" id="panel-niveles">
+        <div class="panel-tit"><span>Niveles del proyecto</span>
+          <span class="acciones"><button class="sec" id="btn-agregar-nivel">+ Nivel</button>
+            <button class="pri" id="btn-guardar-niveles">Guardar niveles</button></span></div>
+        <p class="tenue">Cota en metros. El último nivel suele ser el techo o la cubierta (sin planta propia).
+          Si subes elevaciones con textos "NPT +2.70", las cotas se toman de ahí.</p>
+        <div class="tabla-wrap"><table class="tabla" id="tabla-niveles">
+          <thead><tr><th>Nombre</th><th>Cota (m)</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
       <div class="tabla-wrap"><table class="tabla" id="tabla-planos">
-        <thead><tr><th>Archivo</th><th>Ruta para proyecto.yaml</th><th>Capas</th><th>Bloques</th><th></th></tr></thead>
+        <thead><tr><th>Archivo</th><th>Uso en el proyecto</th><th>Capas</th><th>Bloques</th><th></th></tr></thead>
         <tbody></tbody>
       </table></div>
       <div id="vista-plano" class="panel oculto">

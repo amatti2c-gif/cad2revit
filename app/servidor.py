@@ -695,10 +695,81 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
     return {"guardado": True, "errores": _validar_entradas(d)}
 
 
+# ---------------------------------------------------------------- niveles y uso de cada plano
+def _reemplazar_bloque(texto: str, clave: str, valor) -> str:
+    """Reemplaza (en su lugar) el bloque de primer nivel `clave:` de un YAML, conservando el resto."""
+    nuevo = yaml.safe_dump({clave: valor}, allow_unicode=True, sort_keys=False, default_flow_style=None)
+    patron = re.compile(rf"^{re.escape(clave)}:.*?(?=^\S|\Z)", flags=re.M | re.S)
+    if patron.search(texto):
+        return patron.sub(lambda _m: nuevo + "\n", texto, count=1)
+    return texto.rstrip() + "\n\n" + nuevo
+
+
+def _uso_de_planos(py: dict) -> dict[str, str]:
+    uso = {}
+    for p in py.get("plantas") or []:
+        uso[Path(p["archivo"]).name] = f"planta:{p['nivel']}"
+    for e in py.get("elevaciones") or []:
+        uso[Path(e).name] = "elevacion"
+    return uso
+
+
+class Nivel(BaseModel):
+    nombre: str
+    cota: float
+
+
+class Distribucion(BaseModel):
+    niveles: list[Nivel]
+    usos: dict[str, str]          # archivo.dxf -> "planta:N1" | "elevacion" | "no"
+
+
+@app.get("/api/proyectos/{pid}/distribucion")
+def leer_distribucion(pid: str):
+    d = _proyecto(pid)
+    py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    return {"niveles": py.get("niveles") or [], "usos": _uso_de_planos(py)}
+
+
+@app.put("/api/proyectos/{pid}/distribucion")
+def guardar_distribucion(pid: str, datos: Distribucion):
+    """Niveles del proyecto y qué plano es la planta de cada nivel o una elevación."""
+    d = _proyecto(pid)
+    nombres = [n.nombre.strip() for n in datos.niveles]
+    if not nombres or any(not n for n in nombres) or len(set(nombres)) != len(nombres):
+        raise HTTPException(400, "Los niveles necesitan nombres distintos y no vacíos (al menos uno)")
+    existentes = {f.name for f in (d / "planos").glob("*.dxf")}
+    plantas, elevaciones, ocupados = [], [], {}
+    for archivo, uso in sorted(datos.usos.items()):
+        if archivo not in existentes or uso in ("", "no"):
+            continue
+        if uso == "elevacion":
+            elevaciones.append(f"../planos/{archivo}")
+        elif uso.startswith("planta:") and uso[7:] in nombres:
+            nivel = uso[7:]
+            if nivel in ocupados:
+                raise HTTPException(400, f"El nivel {nivel} tiene dos plantas ({ocupados[nivel]} y {archivo}); elige una")
+            ocupados[nivel] = archivo
+            plantas.append({"nivel": nivel, "archivo": f"../planos/{archivo}"})
+        else:
+            raise HTTPException(400, f"Uso no válido para {archivo}: {uso}")
+    plantas.sort(key=lambda p: nombres.index(p["nivel"]))
+    niveles = sorted(({"nombre": n.nombre.strip(), "cota": round(n.cota, 3)} for n in datos.niveles), key=lambda n: n["cota"])
+    py = d / "entradas" / "proyecto.yaml"
+    texto = py.read_text(encoding="utf-8")
+    texto = _reemplazar_bloque(texto, "niveles", niveles)
+    texto = _reemplazar_bloque(texto, "plantas", plantas)
+    texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
+    py.write_text(texto, encoding="utf-8")
+    return {"guardado": True, "errores": _validar_entradas(d)}
+
+
 # ---------------------------------------------------------------- planos
 @app.get("/api/proyectos/{pid}/planos")
 def listar_planos(pid: str):
     d = _proyecto(pid)
+    uso = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))
+    patron_nivel = _leer_yaml_seguro(_lineamientos() / "capas_cad.yaml").get("patron_nivel")
     out = []
     for f in sorted((d / "planos").glob("*.dxf")):
         try:
@@ -712,7 +783,10 @@ def listar_planos(pid: str):
         original = d / "planos" / "originales" / (f.stem + ".dwg")
         out.append({"nombre": f.name, "bytes": f.stat().st_size, "capas": capas, "bloques": bloques,
                     "ruta_en_proyecto": f"../planos/{f.name}", "error": err,
-                    "desde_dwg": original.name if original.exists() else None})
+                    "desde_dwg": original.name if original.exists() else None,
+                    "uso": uso.get(f.name, "no"),
+                    "parece_elevacion": bool(patron_nivel and not err and
+                                             any(re.search(patron_nivel, t.texto) for t in dib.textos))})
     return out
 
 
@@ -817,6 +891,12 @@ def ejecutar(pid: str, datos: NuevaCorrida):
                "conteos": None, "lod": None, "errores_esquema": []}
     try:
         modelo = construir_modelo(cargar(d / "entradas" / "proyecto.yaml"))
+        usados = _uso_de_planos(_leer_yaml_seguro(d / "entradas" / "proyecto.yaml"))
+        sin_usar = sorted(f.name for f in (d / "planos").glob("*.dxf") if f.name not in usados)
+        if sin_usar:
+            modelo["advertencias"].insert(0, "Planos subidos que NO se usan en esta corrida (asígnalos a un nivel en la "
+                                             "pestaña Planos): " + ", ".join(sin_usar))
+        resumen["planos_sin_usar"] = sin_usar
         resumen["errores_esquema"] = validar(modelo)
         resumen["ok"] = not resumen["errores_esquema"]
         resumen["conteos"] = _conteos(modelo)

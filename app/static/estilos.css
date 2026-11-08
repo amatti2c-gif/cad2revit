@@ -67,6 +67,11 @@ main { padding: 16px; max-width: 1400px; margin: 0 auto; }
 .tab.activa { display: block; }
 
 .zona-subida { border: 2px dashed var(--borde); border-radius: 12px; padding: 20px; text-align: center; background: var(--superficie); }
+.aviso:not(.error) { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; }
+:root[data-theme="dark"] .aviso:not(.error) { background: #3b2a0a; color: #fcd34d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .aviso:not(.error) { background: #3b2a0a; color: #fcd34d; } }
+#tabla-niveles input { width: 100%; min-width: 0; }
+#tabla-planos select { min-width: 190px; }
 .zona-subida.encima { border-color: var(--acento); background: var(--superficie-2); }
 
 .tabla-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--borde); border-radius: var(--radio); }

@@ -224,6 +224,33 @@ def test_subir_dwg_con_convertidor(cliente, tmp_path, monkeypatch):
     assert not list((base / ".cad2revit").glob("Planta Piso 1.dxf.*"))
 
 
+def test_distribucion_de_planos(cliente, tmp_path):
+    pid = _crear(cliente)
+    planos = {p["nombre"]: p for p in cliente.get(f"/api/proyectos/{pid}/planos").json()}
+    assert planos["planta_n1.dxf"]["uso"] == "planta:N1" and planos["elevacion_norte.dxf"]["uso"] == "elevacion"
+    assert planos["elevacion_norte.dxf"]["parece_elevacion"] and not planos["planta_n1.dxf"]["parece_elevacion"]
+    # un plano nuevo subido queda sin usar y la corrida lo avisa
+    base = tmp_path / "proyectos" / pid / "planos"
+    (base / "mi_planta.dxf").write_bytes((base / "planta_n2.dxf").read_bytes())
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r["planos_sin_usar"] == ["mi_planta.dxf"]
+    # asignarlo: un solo nivel con mi planta, sin elevación
+    r = cliente.put(f"/api/proyectos/{pid}/distribucion", json={
+        "niveles": [{"nombre": "P1", "cota": 0}, {"nombre": "Techo", "cota": 3.1}],
+        "usos": {"mi_planta.dxf": "planta:P1", "planta_n1.dxf": "no", "elevacion_norte.dxf": "no"}}).json()
+    assert r["errores"] == []
+    dist = cliente.get(f"/api/proyectos/{pid}/distribucion").json()
+    assert dist["usos"] == {"mi_planta.dxf": "planta:P1"} and [n["nombre"] for n in dist["niveles"]] == ["P1", "Techo"]
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert c["ok"] and c["conteos"]["niveles"] == 2 and "mi_planta.dxf" not in c["planos_sin_usar"]
+    py = cliente.get(f"/api/proyectos/{pid}/entradas").json()["archivos"]["proyecto.yaml"]
+    assert "Una planta por nivel" in py                  # se conservan los comentarios
+    # dos plantas para el mismo nivel: error claro
+    r = cliente.put(f"/api/proyectos/{pid}/distribucion", json={
+        "niveles": [{"nombre": "P1", "cota": 0}], "usos": {"mi_planta.dxf": "planta:P1", "planta_n1.dxf": "planta:P1"}})
+    assert r.status_code == 400 and "dos plantas" in r.json()["detail"]
+
+
 def test_errores_de_lineamientos(cliente):
     pid = _crear(cliente)
     r = cliente.put(f"/api/proyectos/{pid}/entradas/materialidades.yaml", json={"texto": "a: [1, 2"})

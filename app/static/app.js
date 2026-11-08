@@ -113,8 +113,48 @@ $("#dlg-nuevo").addEventListener("close", () => {
 });
 
 // ------------------------------------------------------------------ planos
+// ------------------------------------------------------------------ niveles y uso de planos
+const dist = { niveles: [], usos: {} };
+
+function filaNivel(n = { nombre: "", cota: 0 }) {
+  return h("tr", {},
+    h("td", {}, h("input", { "data-k": "nombre", value: n.nombre, placeholder: "N1" })),
+    h("td", {}, h("input", { "data-k": "cota", type: "number", step: "0.01", value: n.cota })),
+    h("td", {}, h("button", { class: "sec", title: "Quitar", onclick: e => e.target.closest("tr").remove() }, "✕")));
+}
+
+function nivelesEnPantalla() {
+  return $$("#tabla-niveles tbody tr").map(tr => ({
+    nombre: tr.querySelector('[data-k="nombre"]').value.trim(), cota: +tr.querySelector('[data-k="cota"]').value || 0 }));
+}
+
+async function guardarDistribucion(nota) {
+  const r = await api("PUT", P("/distribucion"), { niveles: nivelesEnPantalla(), usos: dist.usos });
+  mostrarErroresEntradas(r.errores);
+  toast(nota);
+  await Promise.all([cargarPlanos(), cargarEntradas(), cargarLegos()]);
+}
+
+$("#btn-agregar-nivel").addEventListener("click", () => {
+  const ns = nivelesEnPantalla();
+  const ultima = ns.length ? Math.max(...ns.map(n => n.cota)) : -2.7;
+  $("#tabla-niveles tbody").append(filaNivel({ nombre: `N${ns.length + 1}`, cota: +(ultima + 2.7).toFixed(2) }));
+});
+$("#btn-guardar-niveles").addEventListener("click", () => intentar(() => guardarDistribucion("Niveles guardados")));
+
 async function cargarPlanos() {
-  const planos = await api("GET", P("/planos"));
+  const [planos, d] = await Promise.all([api("GET", P("/planos")), api("GET", P("/distribucion"))]);
+  dist.niveles = d.niveles; dist.usos = d.usos;
+  $("#tabla-niveles tbody").replaceChildren(...d.niveles.map(filaNivel));
+  const ejemplos = ["planta_n1.dxf", "planta_n2.dxf", "elevacion_norte.dxf"];
+  const sinUsar = planos.filter(p => p.uso === "no").map(p => p.nombre);
+  const soloEjemplos = Object.keys(d.usos).length && Object.keys(d.usos).every(n => ejemplos.includes(n));
+  const aviso = $("#aviso-planos");
+  const msg = [];
+  if (sinUsar.length) msg.push(`Estos planos no se están usando: ${sinUsar.join(", ")}. Elige su uso en la tabla (planta de un nivel o elevación).`);
+  if (soloEjemplos && sinUsar.length) msg.push("El proyecto todavía usa los planos de ejemplo: cámbialos a «No usar» o elimínalos.");
+  aviso.textContent = msg.join(" ");
+  aviso.classList.toggle("oculto", !msg.length);
   const tb = $("#tabla-planos tbody");
   if (!planos.length) {
     tb.replaceChildren(h("tr", {}, h("td", { colspan: 5, class: "tenue" }, "Sin planos todavía.")));
@@ -124,8 +164,21 @@ async function cargarPlanos() {
     h("td", {}, h("strong", {}, pl.nombre), h("div", { class: "tenue" }, `${(pl.bytes / 1024).toFixed(0)} KB` +
         (pl.desde_dwg ? ` · convertido desde ${pl.desde_dwg}` : "")),
       pl.error ? h("div", { class: "estado-error" }, pl.error) : null),
-    h("td", {}, h("code", {}, pl.ruta_en_proyecto), " ",
-      h("button", { class: "sec", title: "Copiar", onclick: () => navigator.clipboard?.writeText(pl.ruta_en_proyecto).then(() => toast("Ruta copiada")) }, "⧉")),
+    h("td", {}, (() => {
+      const sel = h("select", {},
+        h("option", { value: "no", selected: pl.uso === "no" }, "No usar"),
+        ...dist.niveles.map(n => h("option", { value: `planta:${n.nombre}`, selected: pl.uso === `planta:${n.nombre}` }, `Planta de ${n.nombre}`)),
+        h("option", { value: "elevacion", selected: pl.uso === "elevacion" }, "Elevación / corte (cotas)"));
+      sel.addEventListener("change", () => intentar(async () => {
+        // un nivel tiene una sola planta: si otro plano la tenía, pasa a "No usar"
+        if (sel.value.startsWith("planta:"))
+          for (const [k, v] of Object.entries(dist.usos)) if (v === sel.value && k !== pl.nombre) dist.usos[k] = "no";
+        dist.usos[pl.nombre] = sel.value;
+        await guardarDistribucion(`${pl.nombre}: ${sel.options[sel.selectedIndex].text}`);
+      }));
+      return h("div", {}, sel, pl.uso === "no" && pl.parece_elevacion
+        ? h("div", { class: "tenue" }, "Tiene textos de nivel (NPT): parece una elevación") : null);
+    })()),
     h("td", {}, h("div", { class: "chips" }, pl.capas.map(c => h("span", { class: "chip" }, c)))),
     h("td", {}, h("div", { class: "chips" }, pl.bloques.map(c => h("span", { class: "chip" }, c)))),
     h("td", {}, h("div", { class: "acciones" },
