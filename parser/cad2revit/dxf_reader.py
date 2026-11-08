@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from dataclasses import dataclass, field
 
 import ezdxf
@@ -124,10 +125,22 @@ def _de_dict(archivo: str, x: dict) -> "DibujoCAD":
     return d
 
 
+_CANDADOS: dict[str, threading.Lock] = {}
+_CANDADO_GLOBAL = threading.Lock()
+
+
 def leer(archivo: str, unidades: str = "auto", usar_cache: bool = True) -> DibujoCAD:
-    """Lee un DXF usando el formato interno si está vigente; si no, lo crea."""
+    """Lee un DXF usando el formato interno si está vigente; si no, lo crea.
+    Un plano se lee una sola vez a la vez: si dos pedidos llegan juntos, el segundo espera la caché."""
     if not usar_cache:
         return _leer_dxf(archivo, unidades)
+    with _CANDADO_GLOBAL:
+        candado = _CANDADOS.setdefault(f"{archivo}|{unidades}", threading.Lock())
+    with candado:
+        return _leer_con_cache(archivo, unidades)
+
+
+def _leer_con_cache(archivo: str, unidades: str) -> DibujoCAD:
     import gzip
     import json
     ruta = _ruta_cache(archivo, unidades)

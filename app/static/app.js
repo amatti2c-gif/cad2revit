@@ -40,7 +40,7 @@ async function api(metodo, ruta, cuerpo) {
   const r = await fetch(ruta, op);
   if (r.status === 204) return null;
   const datos = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(typeof datos.detail === "string" ? datos.detail : JSON.stringify(datos.detail || r.statusText));
+  if (!r.ok) throw new Error(typeof datos.detail === "string" ? datos.detail : (datos.detail ? JSON.stringify(datos.detail) : `el servidor respondió ${r.status} ${r.statusText}`.trim()));
   return datos;
 }
 const P = (resto = "") => `/api/proyectos/${encodeURIComponent(estado.proyecto)}${resto}`;
@@ -143,7 +143,13 @@ $("#btn-agregar-nivel").addEventListener("click", () => {
 $("#btn-guardar-niveles").addEventListener("click", () => intentar(() => guardarDistribucion("Niveles guardados")));
 
 async function cargarCapas() {
-  const c = await api("GET", P("/capas"));
+  $("#lista-capas").replaceChildren(h("p", { class: "tenue" }, "Leyendo las capas de tus plantas… (un plano grande puede tardar hasta un minuto la primera vez)"));
+  let c;
+  try { c = await api("GET", P("/capas")); }
+  catch (e) {
+    $("#lista-capas").replaceChildren(h("p", { class: "estado-error" }, `No se pudieron leer las capas: ${e.message}. Recarga la página para reintentar.`));
+    return;
+  }
   if (!c.capas_plano.length) {
     $("#lista-capas").replaceChildren(h("p", { class: "tenue" }, "Asigna al menos una planta a un nivel para ver sus capas."));
     return;
@@ -175,10 +181,19 @@ async function cargarCapas() {
 }
 
 async function cargarPlanos() {
-  intentar(cargarCapas);
-  const [planos, d] = await Promise.all([api("GET", P("/planos")), api("GET", P("/distribucion"))]);
+  // niveles primero (respuesta inmediata); luego capas y planos, que leen los archivos
+  const d = await api("GET", P("/distribucion"));
   dist.niveles = d.niveles; dist.usos = d.usos;
   $("#tabla-niveles tbody").replaceChildren(...d.niveles.map(filaNivel));
+  const tb0 = $("#tabla-planos tbody");
+  tb0.replaceChildren(h("tr", {}, h("td", { colspan: 5, class: "tenue" }, "Leyendo planos…")));
+  let planos;
+  try { planos = await api("GET", P("/planos")); }
+  catch (e) {
+    tb0.replaceChildren(h("tr", {}, h("td", { colspan: 5, class: "estado-error" }, `No se pudieron leer los planos: ${e.message}`)));
+    throw e;
+  }
+  cargarCapas();
   const ejemplos = ["planta_n1.dxf", "planta_n2.dxf", "elevacion_norte.dxf"];
   const sinUsar = planos.filter(p => p.uso === "no").map(p => p.nombre);
   const soloEjemplos = Object.keys(d.usos).length && Object.keys(d.usos).every(n => ejemplos.includes(n));
