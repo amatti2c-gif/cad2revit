@@ -14,6 +14,7 @@ Algoritmo:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from .dxf_reader import Punto, Segmento
@@ -335,3 +336,20 @@ def largo_pareado_por_capa(segs: list[Segmento], det: dict) -> dict[str, tuple[f
         pareado = sum(cara(x) for it in grupos.values() for x in it)
         out[capa] = (round(pareado, 1), round(total, 1))
     return out
+
+
+NO_MURO = re.compile(r"(?i)mobil|mueble|equip|sanit|artefact|reguero|zanja|cota|dim|texto|nota|achur|hatch|mobiliario")
+
+
+def sugerir_capas_muro(segs: list[Segmento], det: dict) -> list[tuple[str, float]]:
+    """Capas que por su dibujo parecen muros (caras paralelas a espesor de muro), sin mobiliario ni
+    instalaciones. Se quedan las que tienen al menos el 15 % de los metros de la mejor."""
+    cand = []
+    for capa, (p, t) in largo_pareado_por_capa(segs, det).items():
+        m = p / 2
+        if m >= 5 and p >= 0.25 * t and not NO_MURO.search(capa):
+            cand.append((capa, round(m, 1)))
+    if not cand:
+        return []
+    mejor = max(m for _, m in cand)
+    return sorted([c for c in cand if c[1] >= 0.15 * mejor], key=lambda c: -c[1])

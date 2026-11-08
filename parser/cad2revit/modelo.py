@@ -21,7 +21,7 @@ from . import marcos as marcos_mod
 from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
-from .muros import Muro, detectar_muros
+from .muros import sugerir_capas_muro, Muro, detectar_muros
 from .niveles import ajustar_niveles, leer_cotas
 
 ALTURA_POR_DEFECTO = 2.60
@@ -196,6 +196,13 @@ def construir_modelo(cfg: Configuracion) -> dict:
     niveles = ajustar_niveles(cfg.proyecto["niveles"], cotas, adv)
     alero = _alero_de_cortes(vistas_altura)
     con_planta = {p["nivel"] for p in cfg.proyecto.get("plantas") or []}
+    # niveles sin planta entre medio (p. ej. N2 en un edificio de un piso): se omiten; el último se conserva (techo)
+    if con_planta and len(niveles) > 2:
+        sobran = [n["nombre"] for n in niveles[:-1] if n["nombre"] not in con_planta]
+        if sobran:
+            niveles = [n for n in niveles if n["nombre"] not in sobran]
+            adv.append(f"Niveles sin planta omitidos: {', '.join(sobran)} (el edificio tiene planta en "
+                       f"{', '.join(n['nombre'] for n in niveles if n['nombre'] in con_planta)})")
     if alero and len(niveles) > 1 and niveles[-1]["nombre"] not in con_planta:
         sup_n, previo = niveles[-1], niveles[-2]["cota"]
         if alero > previo + 1.5 and abs(sup_n["cota"] - alero) > 0.05:
@@ -244,7 +251,16 @@ def construir_modelo(cfg: Configuracion) -> dict:
         puntos_vano = [i.punto for i, _ in abert_ins]
 
         # 2) Muros
-        muros = detectar_muros(dib.segmentos_en(cfg.capa("muros")), det, puntos_vano, pref)
+        segs_muro = dib.segmentos_en(cfg.capa("muros"))
+        if not segs_muro and not (cfg.proyecto.get("capas") or {}).get("muros"):
+            sug = sugerir_capas_muro(dib.segmentos, det)
+            if sug:
+                usar = {c for c, _ in sug}
+                segs_muro = [s for s in dib.segmentos if s.capa in usar]
+                adv.append(f"{nivel}: ninguna capa se llama «muro»; se usaron las que por su dibujo son muros: "
+                           + ", ".join(f"{c} ({m} m)" for c, m in sug)
+                           + " (puedes cambiarlas en Planos → Capas de tu plano)")
+        muros = detectar_muros(segs_muro, det, puntos_vano, pref)
         if not muros:
             adv.append(f"{planta['archivo']}: no se detectaron muros (¿capas correctas en capas_cad.yaml?)")
         for m in muros:

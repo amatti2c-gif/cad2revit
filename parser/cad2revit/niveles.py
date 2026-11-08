@@ -6,6 +6,21 @@ import re
 from .dxf_reader import DibujoCAD
 
 
+def cota_en_texto(texto: str, rx: re.Pattern) -> float | None:
+    """Cota de nivel escrita en un texto ("NPT +2.70", "N +3,10"), o None.
+    La N no puede venir pegada a otra letra ("VOLCAN 610" no es una cota) y la cota debe ser razonable."""
+    for m in rx.finditer(texto):
+        if m.start() > 0 and texto[m.start() - 1].isalpha():
+            continue
+        try:
+            v = float(m.group(1).replace(",", "."))
+        except (ValueError, IndexError):
+            continue
+        if abs(v) <= 200:
+            return v
+    return None
+
+
 def leer_cotas(dibujos: list[DibujoCAD], patron: str, capa: re.Pattern | None) -> list[float]:
     rx = re.compile(patron)
     cotas = set()
@@ -14,9 +29,9 @@ def leer_cotas(dibujos: list[DibujoCAD], patron: str, capa: re.Pattern | None) -
         if not textos:  # si la capa no existe, buscar en todo el dibujo
             textos = d.textos
         for t in textos:
-            m = rx.search(t.texto)
-            if m:
-                cotas.add(round(float(m.group(1).replace(",", ".")), 3))
+            v = cota_en_texto(t.texto, rx)
+            if v is not None:
+                cotas.add(round(v, 3))
     return sorted(cotas)
 
 

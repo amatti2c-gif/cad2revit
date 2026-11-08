@@ -791,8 +791,10 @@ def _capas_en_planos(d: Path) -> tuple[list[str], list[dict]]:
                     q[1] += t
             except Exception:
                 pass
-    sug = [{"capa": c, "metros": round(p / 2, 1)} for c, (p, t) in pareado.items()
-           if p / 2 >= 5 and p >= 0.25 * t]
+    from cad2revit.muros import NO_MURO
+    cand = [(c, p / 2) for c, (p, t) in pareado.items() if p / 2 >= 5 and p >= 0.25 * t and not NO_MURO.search(c)]
+    mejor = max((m for _, m in cand), default=0)
+    sug = [{"capa": c, "metros": round(m, 1)} for c, m in cand if m >= 0.15 * mejor]
     sug.sort(key=lambda x: -x["metros"])
     return sorted(capas), sug[:6]
 

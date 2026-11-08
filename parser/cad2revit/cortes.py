@@ -17,6 +17,7 @@ from shapely.geometry import LineString, Polygon
 from shapely.ops import polygonize, unary_union
 
 from .dxf_reader import DibujoCAD
+from .niveles import cota_en_texto
 
 RX_TECHO = re.compile(r"(?i)planta\s+(de\s+)?(techo|techumbre|cubierta)s?|\btechumbre\b|\bplanta\s+techo")
 RX_CORTE = re.compile(r"(?i)\b(?:corte|secci[oó]n|section)\s*([A-Z0-9]{1,2})(?:\s*[-–'´`]\s*([A-Z0-9]{1,2}))?")
@@ -92,13 +93,9 @@ def _base(dib: DibujoCAD, caja, patron_nivel: str | None) -> float:
         rx = re.compile(patron_nivel)
         ceros = []
         for t in dib.textos:
-            m = rx.search(t.texto)
-            if m:
-                try:
-                    if abs(float(m.group(1).replace(",", "."))) < 0.005:
-                        ceros.append(t.punto[1])
-                except (ValueError, IndexError):
-                    pass
+            v = cota_en_texto(t.texto, rx)
+            if v is not None and abs(v) < 0.005:
+                ceros.append(t.punto[1])
         if ceros:
             return median(ceros)
     ancho = caja[2] - caja[0]
