@@ -196,6 +196,20 @@ def _lego_por_sistema(cfg, sistema: str) -> str | None:
     return next((t["nombre"] for t in cfg.materialidades.get("tipos_marco", []) if t.get("sistema") == sistema), None)
 
 
+def _cubierto(tr: dict, lineas: list) -> bool:
+    """El tramo está cubierto (>= 50 % de su largo) por alguna de las líneas (marcos dibujados en la app)."""
+    a, L = tr["inicio"], tr["largo"]
+    u = ((tr["fin"][0] - a[0]) / L, (tr["fin"][1] - a[1]) / L)
+    for p, q in lineas:
+        d = lambda r: abs((r[0] - a[0]) * u[1] - (r[1] - a[1]) * u[0])     # noqa: E731
+        if d(p) > 0.3 or d(q) > 0.3:
+            continue
+        t0, t1 = sorted(((p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1], (q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1]))
+        if min(t1, L) - max(t0, 0.0) >= 0.5 * L:
+            return True
+    return False
+
+
 def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, advertencias: list[str],
              marcos_mod) -> list[dict]:
     """Analiza los tramos, aplica las elecciones del proyecto y agrega los marcos resultantes
@@ -232,6 +246,10 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
             if final in ("muro", "arriostrado"):
                 resistentes[tr["direccion"]] += 1
             tr.setdefault("niveles", {})[nivel] = dict(an, eleccion=eleccion, final=final, tipo_muro=tipo)
+            dibujados = [(f["inicio"], f["fin"]) for f in cfg.proyecto.get("marcos_usuario") or [] if f.get("nivel") == nivel]
+            if final in SISTEMA and sup and _cubierto(tr, dibujados):
+                tr["niveles"][nivel]["motivo"] += " · el marco lo define el marco dibujado en la app"
+                continue                                  # el marco dibujado reemplaza al del tramo
             if final in SISTEMA and sup:
                 lego = _lego_por_sistema(cfg, SISTEMA[final])
                 if lego is None:

@@ -578,6 +578,20 @@ function pintarPlantaEst() {
       fill: selE ? "var(--acento-texto)" : "var(--texto)" }));
     puntos.push(e.inicio, e.fin);
   }
+  // marcos dibujados en la app: línea del color de su sistema + columnas; clic para editar o eliminar
+  for (const f of (m.marcos || []).filter(x => x.nivel === nivel && (x.origen || "").startsWith("dibujado en la app"))) {
+    const i = +f.origen.split("#").pop() - 1, sel = i === est.marcoSel;
+    const color = TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color;
+    const l = s("line", { x1: f.inicio[0], y1: f.inicio[1], x2: f.fin[0], y2: f.fin[1], stroke: sel ? "#dc2626" : color,
+      "stroke-width": sel ? 9 : 6, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
+    const tt = s("title"); tt.textContent = `${f.id} · ${f.tipo} · dibujado en la app (clic para editar)`; l.append(tt);
+    l.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
+      est.marcoSel = i; est.muroSel = null; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
+    raiz.append(l);
+    for (const c of f.columnas) raiz.append(s("rect", { x: c.punto[0] - 0.15, y: c.punto[1] - 0.15, width: 0.3, height: 0.3,
+      fill: color, "pointer-events": "none" }));
+    puntos.push(f.inicio, f.fin);
+  }
   for (const t of m.tramos) {
     const inf = infoTramo(t, nivel); if (!inf) continue;
     const sel = t.id === est.tramo;
@@ -601,20 +615,9 @@ function pintarPlantaEst() {
       "stroke-width": 4, "stroke-opacity": 0.5, "vector-effect": "non-scaling-stroke" }));
     puntos.push(f.inicio, f.fin);
   }
-  // marcos dibujados en la app: línea del color de su sistema + columnas; clic para editar o eliminar
-  for (const f of (m.marcos || []).filter(x => x.nivel === nivel && (x.origen || "").startsWith("dibujado en la app"))) {
-    const i = +f.origen.split("#").pop() - 1, sel = i === est.marcoSel;
-    const color = TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color;
-    const l = s("line", { x1: f.inicio[0], y1: f.inicio[1], x2: f.fin[0], y2: f.fin[1], stroke: sel ? "#dc2626" : color,
-      "stroke-width": sel ? 9 : 6, "vector-effect": "non-scaling-stroke", style: "cursor:pointer" });
-    const tt = s("title"); tt.textContent = `${f.id} · ${f.tipo} · dibujado en la app (clic para editar)`; l.append(tt);
-    l.addEventListener("click", ev => { if (est.modo !== "tramo") return; ev.stopPropagation();
-      est.marcoSel = i; est.muroSel = null; est.eje = null; est.tramo = null; est.nuevo = null; pintarEstructura(); });
-    raiz.append(l);
-    for (const c of f.columnas) raiz.append(s("rect", { x: c.punto[0] - 0.15, y: c.punto[1] - 0.15, width: 0.3, height: 0.3,
-      fill: color, "pointer-events": "none" }));
-    puntos.push(f.inicio, f.fin);
-  }
+  const fSel = (m.marcos || []).find(x => x.nivel === nivel && est.marcoSel != null && x.origen === `dibujado en la app #${est.marcoSel + 1}`);
+  if (fSel) raiz.append(s("line", { x1: fSel.inicio[0], y1: fSel.inicio[1], x2: fSel.fin[0], y2: fSel.fin[1], stroke: "#dc2626",
+    "stroke-width": 9, "stroke-opacity": 0.85, "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
   // muro seleccionado: resaltado encima de todo (los tramos suelen ir sobre los muros)
   const wSel = m.muros.find(x => x.id === est.muroSel && x.nivel === nivel);
   if (wSel) raiz.append(s("line", { x1: wSel.inicio[0], y1: wSel.inicio[1], x2: wSel.fin[0], y2: wSel.fin[1], stroke: "#dc2626",
@@ -720,6 +723,11 @@ function marcoCercano(p, escala) {
 }
 
 $("#est-planta").addEventListener("click", ev => {
+  if (est.modo === "tramo" && est.modelo) {          // clic en un espacio vacío: quitar la selección
+    est.tramo = null; est.eje = null; est.muroSel = null; est.marcoSel = null; est.nuevo = null;
+    pintarEstructura();
+    return;
+  }
   if (est.modo === "tramo" || !est.modelo || est.ocupado) return;
   const r = puntoModelo(ev); if (!r) return;
   if (est.modo === "borrar") {
@@ -1025,10 +1033,29 @@ function pintarDetalleEst() {
         else est.ed.quitar.push({ nivel: w.nivel, inicio: w.inicio, fin: w.fin, id: w.id });
         guardarEdiciones(`Muro ${w.id} eliminado`);
       } }, "Eliminar"))))) : null;
+  // marcos dibujados sobre este tramo (colineales y superpuestos)
+  const sobre = (a, b) => {
+    const ux = (t.fin[0] - t.inicio[0]) / t.largo, uy = (t.fin[1] - t.inicio[1]) / t.largo;
+    const d = q => Math.abs((q[0] - t.inicio[0]) * uy - (q[1] - t.inicio[1]) * ux);
+    const pr = q => (q[0] - t.inicio[0]) * ux + (q[1] - t.inicio[1]) * uy;
+    if (d(a) > 0.15 || d(b) > 0.15) return false;
+    const [p0, p1] = [pr(a), pr(b)].sort((x, y) => x - y);
+    return Math.min(p1, t.largo) - Math.max(p0, 0) > 0.2;
+  };
+  const marcosTramo = (est.modelo.marcos || []).filter(f => f.nivel === est.nivel && (f.origen || "").startsWith("dibujado en la app") && sobre(f.inicio, f.fin));
+  const listaMarcos = marcosTramo.length ? h("div", { style: "margin-top:8px" }, h("strong", {}, `Marcos dibujados aquí (${est.nivel})`),
+    h("ul", { class: "lista-dibujados" }, ...marcosTramo.map(f => {
+      const i = +f.origen.split("#").pop() - 1;
+      return h("li", {}, `${f.id} · ${f.tipo} `,
+        h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", onclick: () => {
+          est.marcoSel = i; est.tramo = null; pintarEstructura(); } }, "Editar"), " ",
+        h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", disabled: est.ocupado, onclick: () => {
+          est.ed.marcos.splice(i, 1); guardarEdiciones(`Marco ${f.id} eliminado`); } }, "Eliminar"));
+    }))) : null;
   box.replaceChildren(
     h("h4", {}, `Tramo ${t.id}`),
     h("div", { class: "tenue" }, `Eje ${t.eje} entre ${t.entre[0]} y ${t.entre[1]} · ${t.largo.toFixed(2)} m · dirección ${t.direccion}`),
-    agregar, listaMuros,
+    ...[agregar, listaMuros, listaMarcos].filter(Boolean),
     h("label", { style: "display:flex;flex-direction:column;gap:4px;margin-top:10px" }, h("strong", {}, "Todos los pisos"), todos),
     ...niveles.map(n => {
       const inf = t.niveles[n];
@@ -1045,9 +1072,25 @@ function pintarDetalleEst() {
     }));
 }
 
+/** Tramo de referencia para la elevación: el seleccionado, o uno del eje / muro / marco seleccionado. */
+function tramoDeSeleccion() {
+  const m = est.modelo;
+  const t = m.tramos.find(x => x.id === est.tramo);
+  if (t) return t;
+  if (est.eje) return m.tramos.find(x => x.eje === est.eje) ?? null;
+  const linea = est.muroSel ? m.muros.find(w => w.id === est.muroSel)
+    : est.marcoSel != null ? (m.marcos || []).find(f => f.origen === `dibujado en la app #${est.marcoSel + 1}`) : null;
+  if (!linea) return null;
+  return m.tramos.find(x => {
+    const L = x.largo, ux = (x.fin[0] - x.inicio[0]) / L, uy = (x.fin[1] - x.inicio[1]) / L;
+    const d = q => Math.abs((q[0] - x.inicio[0]) * uy - (q[1] - x.inicio[1]) * ux);
+    return d(linea.inicio) < 0.3 && d(linea.fin) < 0.3;
+  }) ?? null;
+}
+
 function pintarElevacionEst() {
   const m = est.modelo, svg = $("#est-elevacion");
-  const t0 = m.tramos.find(x => x.id === est.tramo);
+  const t0 = tramoDeSeleccion();
   if (!t0) { svg.replaceChildren(); $("#est-eje-tit").textContent = "(selecciona un tramo)"; return; }
   $("#est-eje-tit").textContent = t0.eje;
   const delEje = m.tramos.filter(x => x.eje === t0.eje);
@@ -1074,11 +1117,9 @@ function pintarElevacionEst() {
         // pies derechos cada 40 cm (indicativo)
         for (let x = x0 + 0.4; x < x1 - 0.05; x += 0.4) linea(x, z0, x, z1, c, 1);
       }
-      if (inf.final === "momento" || inf.final === "arriostrado") {
-        linea(x0, z0, x0, z1, "var(--texto)", 3); linea(x1, z0, x1, z1, "var(--texto)", 3); linea(x0, z1, x1, z1, "var(--texto)", 3);
-        if (inf.final === "arriostrado") { linea(x0, z0, x1, z1, c, 2); linea(x1, z0, x0, z1, c, 2); }
-        else for (const x of [x0, x1]) g.append(s("rect", { x: x - 0.12, y: -z1, width: 0.24, height: 0.24, fill: c }));
-      }
+      // marcos: fondo del color de la tipología; la geometría real (columnas, vigas, diagonales) se dibuja abajo
+      if (inf.final === "momento" || inf.final === "arriostrado")
+        g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: c, "fill-opacity": 0.12 }));
       if (inf.final === "ninguno") g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "none",
         stroke: c, "stroke-dasharray": "4 3", "vector-effect": "non-scaling-stroke" }));
       if (t.id === est.tramo) g.append(s("rect", { x: x0, y: -z1, width: x1 - x0, height: z1 - z0, fill: "none",
@@ -1092,6 +1133,15 @@ function pintarElevacionEst() {
       const tx = s("text", { x, y: 0.55, "font-size": 0.32, "text-anchor": "middle", fill: "var(--tenue)" });
       tx.textContent = nombre; g.append(tx);
     }
+  }
+  // marcos reales sobre este eje (de tramos, del plano o dibujados): columnas, vigas (también a dos aguas) y diagonales
+  const enEje = q => Math.abs((q[0] - t0.inicio[0]) * uy - (q[1] - t0.inicio[1]) * ux) < 0.3;
+  for (const f of (m.marcos || []).filter(f => enEje(f.inicio) && enEje(f.fin))) {
+    const c = TIPOLOGIA[f.sistema === "momento" ? "momento" : "arriostrado"].color;
+    const dib = (f.origen || "").startsWith("dibujado");
+    for (const col of f.columnas) { const x = pos(col.punto); linea(x, col.z0, x, col.z1, "var(--texto)", 3); maxZ = Math.max(maxZ, col.z1); maxX = Math.max(maxX, x); }
+    for (const v of f.vigas) { linea(pos(v.inicio), v.inicio[2], pos(v.fin), v.fin[2], dib ? "#7c3aed" : c, 3); maxZ = Math.max(maxZ, v.inicio[2], v.fin[2]); }
+    for (const d of f.diagonales || []) linea(pos(d.inicio), d.inicio[2], pos(d.fin), d.fin[2], c, 1.5);
   }
   for (const n of m.niveles) {
     if (n.cota > maxZ + 1e-6) continue;

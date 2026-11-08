@@ -621,3 +621,19 @@ def test_ejes_y_muros_editados_en_la_app(proyecto):
     dib = next(m for m in modelo["muros"] if m["capa_cad"] == "dibujado en la app")
     assert dib["id"] == "N1-D001" and dib["tipo"].startswith("TM-11") and not dib["estructural"]
     assert any(e["muro"] == "N1-D001" for e in modelo["entramados"])          # el tabique de madera con su entramado
+
+
+
+def test_dos_aguas_sin_pilar_es_vano_libre_aunque_el_vano_maximo_pida_columnas():
+    """Techo con la cumbrera fuera del centro del marco: sin pilar central quedan solo las columnas extremas."""
+    from cad2revit import marcos
+    from cad2revit.dxf_reader import Segmento
+    cub = {"contorno": [[-0.5, -0.5], [20.5, -0.5], [20.5, 8.5], [-0.5, 8.5]], "bordes_pendiente": [0, 2], "pendiente": 20}
+    planos = marcos.planos_de_cubierta(cub)
+    seg = (Segmento((5, 0), (5, 6.2), "X"), "MM", "t")          # 6,2 m > vano máximo 6; cumbrera en y = 4
+    f = marcos.generar([seg], _cfg_marco(techo="dos_aguas"), "N1", "C", {"N1": 0.0, "C": 3.0}, "N1", [], planos_techo=planos)[0]
+    assert [c["punto"][1] for c in f["columnas"]] == [0.0, 6.2] and f["vanos"] == 1
+    assert len(f["vigas"]) == 2 and abs(f["vigas"][0]["fin"][1] - 4.0) < 1e-6           # quiebre en la cumbrera
+    con = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pilar_central=True), "N1", "C", {"N1": 0.0, "C": 3.0},
+                         "N1", [], planos_techo=planos)[0]
+    assert [round(c["punto"][1], 3) for c in con["columnas"]] == [0.0, 4.0, 6.2]

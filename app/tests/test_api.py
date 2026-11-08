@@ -545,3 +545,19 @@ def test_dibujar_marcos(cliente):
     n1 = next(f for f in dib if f["nivel"] == "N1")
     assert n1["vanos"] == 2 and len(n1["columnas"]) == 3 and n1["origen"] == "dibujado en la app #1"
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"marcos": [{"nivel": "N1", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
+
+
+def test_marco_dibujado_reemplaza_al_del_tramo(cliente):
+    pid = _crear(cliente)
+    cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"2:A-B": "momento"}})
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    t = next(x for x in m["tramos"] if x["id"] == "2:A-B")
+    assert [f for f in m["marcos"] if f["origen"] == "tramo 2:A-B" and f["nivel"] == "N1"]
+    cliente.put(f"/api/proyectos/{pid}/ediciones", json={"marcos": [
+        {"nivel": "N1", "inicio": t["inicio"], "fin": t["fin"], "tipo": "MA-1 Marco arriostrado en cruz acero"}]})
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    n1 = [f for f in m["marcos"] if f["nivel"] == "N1" and (f["origen"] == "tramo 2:A-B" or f["origen"].startswith("dibujado"))]
+    assert [f["origen"] for f in n1] == ["dibujado en la app #1"]          # un solo marco: el dibujado
+    assert [f for f in m["marcos"] if f["origen"] == "tramo 2:A-B" and f["nivel"] == "N2"]   # en N2 sigue el del tramo

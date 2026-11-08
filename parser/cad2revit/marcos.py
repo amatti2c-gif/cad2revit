@@ -122,10 +122,17 @@ def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, f
             cumbre = max(ts, key=h)
             if 0.3 < cumbre < largo - 0.3 and h(cumbre) > 1e-3:
                 if lego.get("pilar_central"):
-                    if all(abs(c - cumbre) > 0.3 for c in cortes):
-                        cortes = sorted(cortes + [cumbre])          # pilar bajo la cumbrera
+                    # pilar bajo la cumbrera; el vano máximo subdivide cada mitad si hace falta
+                    mitades = [(0.0, cumbre), (cumbre, largo)]
+                    cortes = sorted({round(t0 + (t1 - t0) * i / max(1, math.ceil((t1 - t0) / vano_max - 1e-9)), 6)
+                                     if vano_max > 0 else t0
+                                     for t0, t1 in mitades
+                                     for i in range((max(1, math.ceil((t1 - t0) / vano_max - 1e-9)) if vano_max > 0 else 1) + 1)}
+                                    | {0.0, cumbre, largo})
                 else:
-                    cortes = [c for c in cortes if abs(c - cumbre) > 0.3]   # vano libre bajo la cumbrera
+                    cortes = [0.0, largo]                     # vano libre: columnas solo en los extremos
+                ts, h = _perfil_techo(s.a, s.b, planos_techo or [],
+                                      float(lego.get("pendiente") or PENDIENTE_POR_DEFECTO), cortes)
                 n = len(cortes) - 1
         else:
             ts, h = sorted(cortes), (lambda t: 0.0)
