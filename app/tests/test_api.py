@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+import yaml
+
 import base64
 import importlib
 import sys
@@ -424,3 +426,24 @@ def test_descargar_plano(cliente):
     r = cliente.get(f"/api/proyectos/{pid}/planos/planta_n1.dxf/archivo")
     assert r.status_code == 200 and r.content.startswith(b"  0") and "planta_n1.dxf" in r.headers["content-disposition"]
     assert cliente.get(f"/api/proyectos/{pid}/planos/no.dxf/archivo").status_code == 404
+
+
+def test_vistas_obsoletas_se_reasignan(cliente, tmp_path):
+    pid = _crear(cliente)
+    base = tmp_path / "proyectos" / pid / "planos"
+    _plano_combinado(base / "planta_n1.dxf", base / "elevacion_norte.dxf", tmp_path / "Todo junto.dxf")
+    cliente.post(f"/api/proyectos/{pid}/planos",
+                 files=[("archivos", ("Todo junto.dxf", (tmp_path / "Todo junto.dxf").read_bytes()))])
+    muros_bien = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()["conteos"]["muros"]
+    # simular lo que dejó una versión anterior: planta = una caja que junta planta y fachada, marcada como revisada
+    py = tmp_path / "proyectos" / pid / "entradas" / "proyecto.yaml"
+    datos = yaml.safe_load(py.read_text(encoding="utf-8"))
+    datos["plantas"] = [{"nivel": "N1", "archivo": "../planos/Todo junto.dxf", "zonas": [[-5, -5, 100, 20]]}]
+    datos["elevaciones"], datos["techo"], datos["vistas_revisadas"] = [], None, ["Todo junto.dxf"]
+    py.write_text(yaml.safe_dump(datos, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    r = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert r["conteos"]["muros"] == muros_bien
+    modelo = cliente.get(f"/api/proyectos/{pid}/corridas/{r['n']}").json()["modelo"]
+    assert any("versión anterior" in a for a in modelo["advertencias"])
+    vistas = cliente.get(f"/api/proyectos/{pid}/planos").json()[0]["vistas"]
+    assert sorted(v["uso"] for v in vistas) == ["elevacion", "planta:N1"]

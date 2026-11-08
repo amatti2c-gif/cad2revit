@@ -987,63 +987,72 @@ async def subir_planos(pid: str, archivos: list[UploadFile] = File(...)):
 
 
 def _separar_vistas(d: Path) -> list[str]:
-    """Si una planta usa un plano completo que trae varias vistas (planta + fachadas + cortes),
-    se deja solo la vista de planta: el plano es UN edificio, las fachadas no generan estructura."""
+    """Mantiene coherente el uso de las vistas de cada plano (un plano = UN edificio):
+    - plano usado completo y con varias vistas -> solo la planta sugerida genera muros; cortes, fachadas y
+      planta de techo dan alturas y cubierta;
+    - vistas guardadas que ya no existen (la detección mejoró y las vistas cambiaron) -> se reasignan,
+      aunque se hubieran elegido a mano, porque ya no corresponden a ningún dibujo;
+    - planta ya separada sin cortes/techo -> se completan (salvo que el usuario haya elegido las vistas)."""
+    from cad2revit.vistas import archivo_de, zonas_de
     py = d / "entradas" / "proyecto.yaml"
     datos = _leer_yaml_seguro(py)
     notas, cambio = [], False
     elevaciones = list(datos.get("elevaciones") or [])
     plantas = list(datos.get("plantas") or [])
-    from cad2revit.vistas import archivo_de
     revisados = set(datos.get("vistas_revisadas") or [])
     techo = datos.get("techo")
+    nombre_de = lambda e: Path(archivo_de(e)).name  # noqa: E731
     for pl in plantas:
         nombre = Path(pl["archivo"]).name
-        if nombre in revisados:
-            continue
-        ya = {Path(archivo_de(e)).name for e in elevaciones} | ({Path(archivo_de(techo)).name} if techo else set())
-        if pl.get("zonas"):
-            # planta ya separada: completar cortes/fachadas y planta de techo si aún no se usan
-            if nombre in ya:
-                continue
-            try:
-                vistas = _vistas_de(d, nombre)
-            except Exception:
-                continue
-            nuevas = [v for v in vistas if v["sugerido"] in ("elevacion", "techo")]
-            for v in nuevas:
-                if v["sugerido"] == "techo" and not techo:
-                    techo = {"archivo": pl["archivo"], "zona": v["caja"]}
-                elif v["sugerido"] == "elevacion":
-                    elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
-            if nuevas:
-                notas.append(f"{nombre}: se agregaron {len(nuevas)} vistas (cortes, fachadas, planta de techo) "
-                             "para las alturas y la forma de la cubierta. Puedes cambiarlo en Planos.")
-                cambio = True
-            continue
         try:
             vistas = _vistas_de(d, nombre)
         except Exception:
             continue
         if len(vistas) < 2:
             continue
-        planta = next(v for v in vistas if v["sugerido"] == "planta")
-        pl["zonas"] = [planta["caja"]]
-        for v in vistas:
-            if v["sugerido"] == "elevacion":
-                elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
-            elif v["sugerido"] == "techo" and not techo:
+        del_archivo = [pl] + [e for e in elevaciones if nombre_de(e) == nombre] + \
+                      ([techo] if techo and nombre_de(techo) == nombre else [])
+        obsoletas = any(_k_de_caja(vistas, z) is None for e in del_archivo for z in zonas_de(e))
+        completo = not pl.get("zonas")
+        if obsoletas or (completo and nombre not in revisados):
+            # reasignar todas las vistas de este plano según la sugerencia
+            elevaciones = [e for e in elevaciones if nombre_de(e) != nombre]
+            if techo and nombre_de(techo) == nombre:
+                techo = None
+            planta = next(v for v in vistas if v["sugerido"] == "planta")
+            pl["zonas"] = [planta["caja"]]
+            for v in vistas:
+                if v["sugerido"] == "elevacion":
+                    elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
+                elif v["sugerido"] == "techo" and not techo:
+                    techo = {"archivo": pl["archivo"], "zona": v["caja"]}
+            revisados.discard(nombre)
+            motivo = ("las vistas guardadas eran de una versión anterior y ya no coinciden con el dibujo"
+                      if obsoletas else f"trae {len(vistas)} vistas")
+            notas.append(f"{nombre}: {motivo}; se usa la vista {planta['k'] + 1} como planta de {pl['nivel']} y las "
+                         "demás (cortes, fachadas, planta de techo) dan las alturas y la forma de la cubierta, sin "
+                         "generar estructura. Puedes cambiarlo en Planos.")
+            cambio = True
+            continue
+        ya = {nombre_de(e) for e in elevaciones} | ({nombre_de(techo)} if techo else set())
+        if nombre in revisados or nombre in ya:
+            continue
+        nuevas = [v for v in vistas if v["sugerido"] in ("elevacion", "techo")]
+        for v in nuevas:
+            if v["sugerido"] == "techo" and not techo:
                 techo = {"archivo": pl["archivo"], "zona": v["caja"]}
-        otras = len(vistas) - 1
-        notas.append(f"{nombre} trae {len(vistas)} vistas: se usa la vista {planta['k'] + 1} como planta de "
-                     f"{pl['nivel']}; las otras {otras} (cortes, fachadas, planta de techo) no generan estructura: "
-                     "dan las alturas y la forma de la cubierta. Puedes cambiarlo en Planos.")
-        cambio = True
+            elif v["sugerido"] == "elevacion":
+                elevaciones.append({"archivo": pl["archivo"], "zona": v["caja"]})
+        if nuevas:
+            notas.append(f"{nombre}: se agregaron {len(nuevas)} vistas (cortes, fachadas, planta de techo) "
+                         "para las alturas y la forma de la cubierta. Puedes cambiarlo en Planos.")
+            cambio = True
     if cambio:
         texto = py.read_text(encoding="utf-8")
         texto = _reemplazar_bloque(texto, "plantas", plantas)
         texto = _reemplazar_bloque(texto, "elevaciones", elevaciones)
         texto = _reemplazar_bloque(texto, "techo", techo)
+        texto = _reemplazar_bloque(texto, "vistas_revisadas", sorted(revisados))
         py.write_text(texto, encoding="utf-8")
     return notas
 
