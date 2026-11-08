@@ -119,6 +119,14 @@ def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, f
         if techo == "dos_aguas":
             # bajo el techo inclinado del edificio la viga lo sigue; si no, dos aguas propio del marco
             ts, h = _perfil_techo(s.a, s.b, planos_techo or [], float(lego.get("pendiente") or PENDIENTE_POR_DEFECTO), cortes)
+            cumbre = max(ts, key=h)
+            if 0.3 < cumbre < largo - 0.3 and h(cumbre) > 1e-3:
+                if lego.get("pilar_central"):
+                    if all(abs(c - cumbre) > 0.3 for c in cortes):
+                        cortes = sorted(cortes + [cumbre])          # pilar bajo la cumbrera
+                else:
+                    cortes = [c for c in cortes if abs(c - cumbre) > 0.3]   # vano libre bajo la cumbrera
+                n = len(cortes) - 1
         else:
             ts, h = sorted(cortes), (lambda t: 0.0)
         alto = lambda t: round(z1 + h(t), 4)          # noqa: E731
@@ -176,6 +184,8 @@ def validar(m: dict) -> list[str]:
             for k in ("b", "h"):
                 if not (isinstance(p.get(k), (int, float)) and p[k] > 0):
                     errores.append(f"marco '{n}': {rol}.{k} debe ser un número mayor que 0 (m)")
+        if t.get("pilar_central") is not None and not isinstance(t["pilar_central"], bool):
+            errores.append(f"marco '{n}': pilar_central debe ser true o false")
         if t.get("techo", "horizontal") not in TECHOS:
             errores.append(f"marco '{n}': techo debe ser 'horizontal' o 'dos_aguas'")
         if t.get("pendiente") is not None and not (isinstance(t["pendiente"], (int, float)) and 0 < t["pendiente"] <= 60):

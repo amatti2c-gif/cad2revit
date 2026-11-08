@@ -534,10 +534,19 @@ def test_marco_dos_aguas_con_pendiente_propia():
     from cad2revit import marcos
     from cad2revit.dxf_reader import Segmento
     seg = (Segmento((0, 0), (10, 0), "X"), "MM", "prueba")
-    f = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pendiente=15), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
+    f = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pendiente=15, pilar_central=True), "N1", "N2",
+                       {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
     alto = 5 * math.tan(math.radians(15))
-    assert [round(c["z1"], 3) for c in f["columnas"]] == [3.0, round(3 + alto, 3), 3.0]   # cumbrera en la columna central
+    assert [round(c["z1"], 3) for c in f["columnas"]] == [3.0, round(3 + alto, 3), 3.0]   # pilar bajo la cumbrera
     assert len(f["vigas"]) == 2 and f["vigas"][0]["fin"][2] == round(3 + alto, 4)
+    # sin pilar central: vano libre (aunque el vano máximo pediría una columna justo en la cumbrera)
+    libre = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pendiente=15), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
+    assert [c["punto"][0] for c in libre["columnas"]] == [0.0, 10.0] and libre["vanos"] == 1
+    assert len(libre["vigas"]) == 2 and libre["vigas"][0]["fin"][2] == round(3 + alto, 4)
+    # con pilar central aunque el vano máximo no lo exija (marco de 5 m)
+    corto = (Segmento((0, 0), (5, 0), "X"), "MM", "prueba")
+    c5 = marcos.generar([corto], _cfg_marco(techo="dos_aguas", pilar_central=True), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
+    assert [c["punto"][0] for c in c5["columnas"]] == [0.0, 2.5, 5.0]
     horiz = marcos.generar([seg], _cfg_marco(), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
     assert all(v["inicio"][2] == v["fin"][2] == 3.0 for v in horiz["vigas"])
 

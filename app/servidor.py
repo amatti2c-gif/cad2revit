@@ -491,8 +491,10 @@ def _marco_a_yaml(lego: dict) -> dict:
     if lego.get("vano_maximo"):
         out["vano_maximo"] = round(float(lego["vano_maximo"]), 2)
     out["techo"] = lego.get("techo") or "horizontal"          # horizontal | dos_aguas
-    if out["techo"] == "dos_aguas" and lego.get("pendiente"):
-        out["pendiente"] = round(float(lego["pendiente"]), 1)
+    if out["techo"] == "dos_aguas":
+        if lego.get("pendiente"):
+            out["pendiente"] = round(float(lego["pendiente"]), 1)
+        out["pilar_central"] = bool(lego.get("pilar_central"))      # columna bajo la cumbrera o vano libre
     roles = ["columna", "viga"] + (["diagonal"] if lego.get("sistema") == "arriostrado_x" else [])
     for rol in roles:
         p = lego.get(rol) or {}
@@ -579,6 +581,7 @@ class Lego(BaseModel):
     vano_maximo: float | None = None
     techo: str | None = None                 # marcos: horizontal | dos_aguas
     pendiente: float | None = None           # marcos a dos aguas sin techo inclinado (grados)
+    pilar_central: bool | None = None        # marcos a dos aguas: columna bajo la cumbrera
     columna: dict | None = None
     viga: dict | None = None
     diagonal: dict | None = None
