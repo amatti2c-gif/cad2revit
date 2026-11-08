@@ -74,6 +74,14 @@ namespace Cad2Revit
             return true;
         }
 
+        public static bool Fijar(Element e, BuiltInParameter bip, int valor)
+        {
+            var p = e.get_Parameter(bip);
+            if (p == null || p.IsReadOnly || p.StorageType != StorageType.Integer) return false;
+            p.Set(valor);
+            return true;
+        }
+
         public static bool Fijar(Element e, BuiltInParameter bip, ElementId valor)
         {
             var p = e.get_Parameter(bip);

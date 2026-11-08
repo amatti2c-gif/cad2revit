@@ -25,6 +25,7 @@ namespace Cad2Revit
                 var nivel = Nivel(f.Nivel);
                 var sup = Nivel(f.NivelSuperior);
                 if (nivel == null || sup == null) { _inf.Error($"{f.Id}: niveles '{f.Nivel}'/'{f.NivelSuperior}' inexistentes"); continue; }
+                if (!Unidad("marco", f.Nivel, new[] { f.Inicio, f.Fin }, f, out _)) continue;
 
                 FamilySymbol sc = null, sv = null, sd = null;
                 Intentar($"Perfiles del marco {f.Id}", () =>

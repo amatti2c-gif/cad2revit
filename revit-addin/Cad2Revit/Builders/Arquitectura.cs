@@ -13,6 +13,12 @@ namespace Cad2Revit
         {
             foreach (var m in _m.Muros)
             {
+                if (!Unidad("muro", m.Nivel, new[] { m.Inicio, m.Fin }, m, out var existentes, l => ActualizarMuro(l, m)))
+                {
+                    var w0 = existentes.OfType<Wall>().FirstOrDefault() ?? (_muros.TryGetValue(m.Id, out var wa) ? wa : null);
+                    if (w0 != null) _muros[m.Id] = w0;
+                    continue;
+                }
                 Intentar(m.Id, () =>
                 {
                     var nivel = Nivel(m.Nivel) ?? throw new System.Exception($"nivel '{m.Nivel}' inexistente");
@@ -32,6 +38,25 @@ namespace Cad2Revit
             }
         }
 
+        /// <summary>Muro que cambió en la app y no se tocó en Revit: se modifica el mismo muro (cotas, etiquetas y
+        /// elementos alojados siguen funcionando).</summary>
+        private bool ActualizarMuro(List<Element> existentes, MuroDef m)
+        {
+            var w = existentes.OfType<Wall>().FirstOrDefault();
+            var nivel = Nivel(m.Nivel);
+            if (w == null || nivel == null || !_tiposMuro.TryGetValue(m.Tipo, out var tipo)) return false;
+            var sup = Nivel(m.NivelSuperior);
+            var z = nivel.Elevation;
+            ((LocationCurve)w.Location).Curve = Line.CreateBound(U.P(m.Inicio, z), U.P(m.Fin, z));
+            if (w.GetTypeId() != tipo.Id) w.ChangeTypeId(tipo.Id);
+            U.Fijar(w, BuiltInParameter.WALL_BASE_CONSTRAINT, nivel.Id);
+            if (sup != null) U.Fijar(w, BuiltInParameter.WALL_HEIGHT_TYPE, sup.Id);
+            else U.Fijar(w, BuiltInParameter.WALL_USER_HEIGHT_PARAM, U.M(m.Altura ?? 2.6));
+            U.Fijar(w, BuiltInParameter.WALL_STRUCTURAL_SIGNIFICANT, m.Estructural ? 1 : 0);
+            _muros[m.Id] = w;
+            return true;
+        }
+
         // ------------------------------------------------------------ aberturas
         private void CrearAberturas()
         {
@@ -42,6 +67,7 @@ namespace Cad2Revit
                     _inf.Error($"{a.Id}: muro anfitrión '{a.Muro}' no existe");
                     continue;
                 }
+                if (!Unidad("abertura", _m.Muros.FirstOrDefault(x => x.Id == a.Muro)?.Nivel, new[] { a.Centro }, a, out _)) continue;
                 if (a.Modo == "familia")
                 {
                     if (Intentar(a.Id, () => ColocarFamilia(a, muro), registrarError: false)) continue;
@@ -101,11 +127,13 @@ namespace Cad2Revit
                     _eliminadosPorRevit.TryGetValue(idAb, out var motivo);
                     _inf.Faltante(def.Familia, def.Tipo, clave, id,
                                   $"Revit rechazó la familia en este muro ({motivo?.Trim()}); se dejó el vano");
+                    _actual = ("abertura", _m.Muros.FirstOrDefault(x => x.Id == def.Muro)?.Nivel ?? "", Pts(new[] { def.Centro }), HuellaDef(def));
                     Etapa("Vano " + id, () => Intentar(id + " (vano)", () => ColocarVano(def, muro)));
                     continue;
                 }
                 bool corta = fi.Host?.Id == idMuro && muro.FindInserts(true, false, true, true).Contains(idAb);
                 if (corta) continue;
+                _actual = ("abertura", _m.Muros.FirstOrDefault(x => x.Id == def.Muro)?.Nivel ?? "", Pts(new[] { def.Centro }), HuellaDef(def));
                 Etapa("Vano " + id, () =>
                 {
                     if (Intentar(id + " (vano)", () => ColocarVano(def, muro)))
@@ -215,6 +243,7 @@ namespace Cad2Revit
         {
             foreach (var l in _m.Losas)
             {
+                if (!Unidad(l.Cubierta ? "cubierta" : "losa", l.Nivel, PuntosContorno(l.Contorno), l, out _)) continue;
                 Intentar(l.Id, () =>
                 {
                     var nivel = Nivel(l.Nivel) ?? throw new System.Exception($"nivel '{l.Nivel}' inexistente");
@@ -257,6 +286,7 @@ namespace Cad2Revit
             if (tipoCielo == null) { _inf.Advertencia("La plantilla no tiene tipos de cielo; se omiten"); return; }
             foreach (var c in _m.Cielos)
             {
+                if (!Unidad("cielo", c.Nivel, PuntosContorno(c.Contorno), c, out _)) continue;
                 Intentar("Cielo " + c.Nivel, () =>
                 {
                     var nivel = Nivel(c.Nivel) ?? throw new System.Exception($"nivel '{c.Nivel}' inexistente");
@@ -274,6 +304,7 @@ namespace Cad2Revit
         {
             foreach (var r in _m.Recintos)
             {
+                if (!Unidad("recinto", r.Nivel, new[] { r.Punto }, r, out _)) continue;
                 Intentar("Recinto " + r.Nombre, () =>
                 {
                     var nivel = Nivel(r.Nivel) ?? throw new System.Exception($"nivel '{r.Nivel}' inexistente");

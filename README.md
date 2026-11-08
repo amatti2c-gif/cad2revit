@@ -123,6 +123,29 @@ ventanas (o huecos), losas y cubierta, cielos, columnas, vigas, fundaciones y re
   esa categoría y se avisa. Los tipos con medidas nuevas se duplican automáticamente
   (por ejemplo `0915 x 2134mm [90x210]`).
 
+### Actualizar sin perder tu trabajo en Revit
+
+Cada elemento que crea el complemento guarda (en el propio elemento) qué es, dónde está, cómo lo
+definió la app y cómo quedó en Revit. Al volver a importar en un archivo que ya tiene un modelo de
+cad2revit, «Actualizar» compara elemento por elemento:
+
+| Situación | Qué hace |
+|---|---|
+| Nuevo en la app | Lo crea |
+| Igual en la app | No lo toca (aunque lo hayas cambiado en Revit) |
+| Cambió en la app y no lo tocaste en Revit | Lo actualiza (los muros en su lugar: cotas y etiquetas siguen) |
+| Cambió en la app y lo modificaste en Revit | No lo toca: queda como conflicto en el informe (gana Revit) |
+| Ya no está en la app y no lo tocaste | Lo elimina |
+| Ya no está en la app y lo modificaste | Lo conserva y lo informa |
+| Creado a mano en Revit | Nunca lo toca |
+
+Para que la app no toque nunca un elemento, borra «cad2revit» de su parámetro *Comentarios*.
+Los tipos (legos) sí se actualizan con lo definido en la app. Si la importación anterior se hizo con
+una versión sin sincronización, la primera vez hay que «Reconstruir» (una sola vez).
+
+El modelo se traslada para que la esquina del edificio quede cerca del origen de Revit (los planos suelen
+venir en coordenadas de terreno); el desplazamiento se guarda en el archivo y se reutiliza.
+
 ## 4. Aplicación web (trabajar e iterar desde el navegador)
 
 La app permite hacer todo el ciclo sin usar la terminal:

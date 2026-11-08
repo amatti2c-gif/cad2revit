@@ -23,6 +23,8 @@ namespace Cad2Revit
         {
             foreach (var e in _m.Entramados ?? new List<EntramadoDef>())
             {
+                var md = _m.Muros.FirstOrDefault(x => x.Id == e.Muro);
+                if (!Unidad("entramado", e.Nivel, new[] { md?.Inicio, md?.Fin }, e, out _)) continue;
                 var nivel = Nivel(e.Nivel);
                 var p0 = e.Piezas.FirstOrDefault();
                 if (nivel == null || p0 == null) continue;

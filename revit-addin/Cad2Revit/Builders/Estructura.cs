@@ -17,6 +17,11 @@ namespace Cad2Revit
         {
             foreach (var c in _m.Columnas)
             {
+                if (!Unidad("columna", c.Nivel, new[] { c.Centro }, c, out var existentes))
+                {
+                    if (existentes.OfType<FamilyInstance>().FirstOrDefault() is { } fi0) _columnas[c.Id] = fi0;
+                    continue;
+                }
                 Intentar(c.Id, () =>
                 {
                     var nivel = Nivel(c.Nivel) ?? throw new Exception($"nivel '{c.Nivel}' inexistente");
@@ -59,6 +64,7 @@ namespace Cad2Revit
         {
             foreach (var v in _m.Vigas)
             {
+                if (!Unidad("viga", v.Nivel, new[] { v.Inicio, v.Fin }, v, out _)) continue;
                 Intentar(v.Id, () =>
                 {
                     var nivel = Nivel(v.Nivel) ?? throw new Exception($"nivel '{v.Nivel}' inexistente");
@@ -92,6 +98,8 @@ namespace Cad2Revit
                     _inf.Error("La plantilla no tiene tipos de cimentación de muro; se omiten fundaciones corridas");
                 foreach (var c in baseTipo == null ? Enumerable.Empty<CorridaDef>() : f.Corridas)
                 {
+                    var md = _m.Muros.FirstOrDefault(x => x.Id == c.Muro);
+                    if (!Unidad("fundacion", md?.Nivel, new[] { md?.Inicio, md?.Fin }, c, out _)) continue;
                     Intentar("Fundación " + c.Muro, () =>
                     {
                         if (!_muros.TryGetValue(c.Muro, out var muro))
@@ -106,6 +114,8 @@ namespace Cad2Revit
 
             foreach (var a in f.Aisladas)
             {
+                var cd = _m.Columnas.FirstOrDefault(x => x.Id == a.Columna);
+                if (!Unidad("zapata", cd?.Nivel, new[] { cd?.Centro }, a, out _)) continue;
                 Intentar("Zapata " + a.Columna, () =>
                 {
                     var col = _m.Columnas.FirstOrDefault(x => x.Id == a.Columna)

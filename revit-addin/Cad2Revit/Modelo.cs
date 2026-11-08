@@ -197,6 +197,8 @@ namespace Cad2Revit
         public string NivelSuperior { get; set; }
         public string Tipo { get; set; }
         public string Sistema { get; set; }            // momento | arriostrado_x
+        public double[] Inicio { get; set; }
+        public double[] Fin { get; set; }
         public string Material { get; set; }
         public double[] Direccion { get; set; }
         public Dictionary<string, PerfilDef> Perfiles { get; set; } = new();

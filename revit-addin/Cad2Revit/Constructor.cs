@@ -143,6 +143,7 @@ namespace Cad2Revit
         {
             foreach (var a in _m.Advertencias) _inf.Advertencia("parser: " + a);
             FijarOrigen();
+            if (Actualizar) LeerSincronizacion();
 
             using (var grupo = new TransactionGroup(_doc, "cad2revit: construir modelo"))
             {
@@ -160,6 +161,8 @@ namespace Cad2Revit
                 Etapa("Marcos de acero", CrearMarcos);
                 if (_m.Recintos.Count > 0) Etapa("Recintos", CrearRecintos);
                 VerificarAberturas();   // maneja sus propias etapas (reintentos confirmados uno a uno)
+                _actual = null;
+                Etapa("Sincronización", CerrarSincronizacion);
                 grupo.Assimilate();
             }
             ListarFamilias();
@@ -195,6 +198,7 @@ namespace Cad2Revit
             if (e == null) return;
             e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(Marca + id);
             _origen[e.Id] = id;
+            if (_actual is { } u) _registro.Add((e.Id, u.tipo, u.nivel, u.pts, u.def));
         }
 
         /// <summary>

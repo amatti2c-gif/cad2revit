@@ -61,19 +61,39 @@ namespace Cad2Revit
 
             var constructor = new Constructor(doc, modelo);
             var previos = Constructor.ElementosPrevios(doc).Count;
-            if (previos > 0)
+            if (previos > 0 && Constructor.TieneSincronizacion(doc))
             {
                 var pregunta = new TaskDialog("cad2revit")
                 {
-                    MainInstruction = "Este proyecto ya tiene una importación de cad2revit",
-                    MainContent = $"Hay {previos} elementos creados por una importación anterior. " +
-                                  "Si construyes encima, quedarán muros y recintos duplicados.",
+                    MainInstruction = "Actualizar el modelo con los cambios de la app",
+                    MainContent = $"Este archivo ya tiene {previos} elementos de cad2revit. Al actualizar se crean los nuevos, se " +
+                                  "actualizan los que cambiaron en la app y se eliminan los que ya no están, SIN tocar lo que " +
+                                  "modificaste en Revit (eso queda como conflicto en el informe) ni lo que creaste a mano.",
                     CommonButtons = TaskDialogCommonButtons.Cancel,
                 };
-                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Reemplazar la importación anterior",
-                    "Borra los elementos anteriores de cad2revit y construye el modelo nuevo (se puede deshacer con Ctrl+Z).");
+                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Actualizar (recomendado)",
+                    "Respeta tus cambios en Revit. Para que la app no toque nunca un elemento, borra «cad2revit» de su Comentario.");
+                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Reconstruir todo",
+                    "Borra todo lo importado por cad2revit (con tus cambios sobre esos elementos) y lo crea de nuevo.");
+                var r = pregunta.Show();
+                if (r == TaskDialogResult.CommandLink1) constructor.Actualizar = true;
+                else if (r == TaskDialogResult.CommandLink2) constructor.ReemplazarAnterior = true;
+                else return Result.Cancelled;
+            }
+            else if (previos > 0)
+            {
+                var pregunta = new TaskDialog("cad2revit")
+                {
+                    MainInstruction = "Activar la actualización que respeta tus cambios",
+                    MainContent = $"Hay {previos} elementos de una importación hecha con una versión anterior del complemento, sin " +
+                                  "datos de sincronización. Hay que reconstruir UNA vez: lo importado se borra y se crea de nuevo. " +
+                                  "Desde la próxima importación, «Actualizar» respetará lo que modifiques en Revit.",
+                    CommonButtons = TaskDialogCommonButtons.Cancel,
+                };
+                pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Reconstruir y activar la sincronización",
+                    "Se puede deshacer con Ctrl+Z.");
                 pregunta.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Construir encima",
-                    "Mantiene lo anterior y agrega el modelo nuevo.");
+                    "Mantiene lo anterior y agrega el modelo nuevo (quedarán duplicados).");
                 var r = pregunta.Show();
                 if (r == TaskDialogResult.CommandLink1) constructor.ReemplazarAnterior = true;
                 else if (r != TaskDialogResult.CommandLink2) return Result.Cancelled;
