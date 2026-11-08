@@ -284,7 +284,16 @@
         </select></label>
         <label>Material <select id="marco-material"></select></label>
         <label>Vano máximo (m) <input id="marco-vano" type="number" step="0.5" min="1" placeholder="sin límite"></label>
+        <label>Viga <select id="marco-techo">
+          <option value="horizontal">Horizontal</option>
+          <option value="dos_aguas">A dos aguas (con pendiente de techo)</option>
+        </select></label>
+        <label>Pendiente (°) <input id="marco-pendiente" type="number" step="0.5" min="1" max="60"
+          placeholder="la del techo del edificio" title="Bajo un techo inclinado la viga sigue el techo; si no, se usa esta pendiente (15° si está vacío)"></label>
       </div>
+      <p class="tenue">Viga a dos aguas: en el último piso, bajo una cubierta inclinada, la viga sigue los planos del techo
+        (quiebre en la cumbrera; un marco paralelo a la cumbrera queda horizontal a su altura). Sin techo inclinado, se usa
+        la pendiente indicada con la cumbrera al centro del marco. Las columnas llegan hasta la viga.</p>
       <svg id="marco-esquema" viewBox="0 0 220 110" class="esquema-marco"></svg>
       <div class="tabla-wrap"><table class="tabla" id="marco-perfiles">
         <thead><tr><th>Elemento</th><th>Perfil (designación)</th><th>Forma</th><th>b (mm)</th><th>h (mm)</th><th>Familia Revit</th></tr></thead>

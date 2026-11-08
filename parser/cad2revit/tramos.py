@@ -142,6 +142,11 @@ def _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias) ->
     estructural = final == "muro"
     ids = set(an["muros"])
     del_tramo = [m for m in modelo["muros"] if m["id"] in ids]
+    if not tipo and an["cobertura_muros"] < 0.3:
+        tipo = _lego_muro_por_defecto(cfg, estructural)       # tramo sin muro en el plano: se agrega uno
+        if tipo:
+            advertencias.append(f"Tramo {tr['id']} ({nivel}): se agrega un {'muro' if estructural else 'tabique'} "
+                                f"'{tipo}' (no había muro en el plano)")
     if tipo:
         if an["cobertura_muros"] < 0.3:
             t = cfg.tipo_muro(tipo) or {}
@@ -164,6 +169,23 @@ def _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias) ->
     for m in del_tramo:
         m["estructural"] = estructural
     return del_tramo[0]["tipo"]
+
+
+def _lego_muro_por_defecto(cfg, estructural: bool) -> str | None:
+    """Lego para un muro agregado en un tramo vacío: el muro por defecto del catálogo (o el primer estructural);
+    para tabique, el que las reglas usan para tabiques (o el primer no estructural)."""
+    mat = cfg.materialidades
+    tipos = mat.get("tipos_muro", [])
+    if estructural:
+        d = mat.get("tipo_muro_por_defecto")
+        t = cfg.tipo_muro(d) if d else None
+        if t and t.get("estructural"):
+            return d
+        return next((x["nombre"] for x in tipos if x.get("estructural")), d)
+    for r in mat.get("reglas_muro", []):
+        if "tabiq" in str(r.get("capa_cad", "")).lower():
+            return r["tipo"]
+    return next((x["nombre"] for x in tipos if not x.get("estructural")), None)
 
 
 def _lego_por_sistema(cfg, sistema: str) -> str | None:
@@ -225,7 +247,9 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
         vistas = {(round(c["punto"][0], 3), round(c["punto"][1], 3))
                   for f in modelo["marcos"] if f["nivel"] == nivel for c in f["columnas"]}
         n0 = 1 + sum(1 for f in modelo["marcos"] if f["nivel"] == nivel)
-        modelo["marcos"] += marcos_mod.generar(nuevos, cfg, nivel, sup, cota, nivel, advertencias,
+        cub_nivel = next((l["nivel"] for l in modelo["losas"] if l.get("cubierta")), None)
+        planos = marcos_mod.planos_de_cubierta(modelo.get("cubierta")) if sup and sup == cub_nivel else []
+        modelo["marcos"] += marcos_mod.generar(nuevos, cfg, nivel, sup, cota, nivel, advertencias, planos_techo=planos,
                                                columnas_vistas=vistas, numero_inicial=n0)
     for tr in tramos:
         tr.pop("u", None)

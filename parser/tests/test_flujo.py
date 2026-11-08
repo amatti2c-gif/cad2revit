@@ -1,6 +1,7 @@
 """Pruebas de punta a punta con los planos de ejemplo generados al vuelo."""
 from __future__ import annotations
 
+import math
 import shutil
 import sys
 from pathlib import Path
@@ -520,3 +521,65 @@ def test_por_defecto_solo_vanos(proyecto):
     modelo = construir_modelo(cargar(proyecto.ruta))
     assert modelo["aberturas"] and all(a["modo"] == "hueco" for a in modelo["aberturas"])
     assert not any("necesitan al menos 12.5 cm" in a for a in modelo["advertencias"])
+
+
+def _cfg_marco(**extra):
+    from types import SimpleNamespace
+    lego = {"nombre": "MM", "sistema": "momento", "material": "Acero", "vano_maximo": 6.0,
+            "columna": {"forma": "W", "b": 0.2, "h": 0.2}, "viga": {"forma": "W", "b": 0.1, "h": 0.3}, **extra}
+    return SimpleNamespace(materialidades={"tipos_marco": [lego]}, proyecto={})
+
+
+def test_marco_dos_aguas_con_pendiente_propia():
+    from cad2revit import marcos
+    from cad2revit.dxf_reader import Segmento
+    seg = (Segmento((0, 0), (10, 0), "X"), "MM", "prueba")
+    f = marcos.generar([seg], _cfg_marco(techo="dos_aguas", pendiente=15), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
+    alto = 5 * math.tan(math.radians(15))
+    assert [round(c["z1"], 3) for c in f["columnas"]] == [3.0, round(3 + alto, 3), 3.0]   # cumbrera en la columna central
+    assert len(f["vigas"]) == 2 and f["vigas"][0]["fin"][2] == round(3 + alto, 4)
+    horiz = marcos.generar([seg], _cfg_marco(), "N1", "N2", {"N1": 0.0, "N2": 3.0}, "N1", [])[0]
+    assert all(v["inicio"][2] == v["fin"][2] == 3.0 for v in horiz["vigas"])
+
+
+def test_marco_dos_aguas_sigue_el_techo():
+    """Techo a dos aguas (cumbrera en y=3, pendiente 1:2, aleros 0,5 m): un marco transversal quiebra en la
+    cumbrera; uno paralelo a la cumbrera queda horizontal a la altura de la cumbrera; los arriostrados llegan
+    a la cabeza real de cada columna."""
+    from cad2revit import marcos
+    from cad2revit.dxf_reader import Segmento
+    cub = {"contorno": [[-0.5, -0.5], [10.5, -0.5], [10.5, 6.5], [-0.5, 6.5]], "bordes_pendiente": [0, 2],
+           "pendiente": math.degrees(math.atan(0.5))}
+    planos = marcos.planos_de_cubierta(cub)
+    cota = {"N1": 0.0, "Cubierta": 2.5}
+    trans = marcos.generar([(Segmento((5, 0), (5, 6), "X"), "MM", "t")], _cfg_marco(techo="dos_aguas"), "N1", "Cubierta",
+                           cota, "N1", [], planos_techo=planos)[0]
+    assert [round(c["z1"], 3) for c in trans["columnas"]] == [2.75, 2.75]
+    assert len(trans["vigas"]) == 2 and abs(trans["vigas"][0]["fin"][1] - 3) < 1e-6 and abs(trans["vigas"][0]["fin"][2] - 4.25) < 1e-6
+    paral = marcos.generar([(Segmento((0, 3), (10, 3), "X"), "MM", "p")], _cfg_marco(techo="dos_aguas"), "N1", "Cubierta",
+                           cota, "N1", [], planos_techo=planos)[0]
+    assert all(abs(v["inicio"][2] - 4.25) < 1e-6 and abs(v["fin"][2] - 4.25) < 1e-6 for v in paral["vigas"])
+    arr = marcos.generar([(Segmento((5, 0), (5, 6), "X"), "MA", "a")],
+                         _cfg_marco(nombre="MA", sistema="arriostrado_x", techo="dos_aguas",
+                                    diagonal={"forma": "L", "b": 0.07, "h": 0.07}),
+                         "N1", "Cubierta", cota, "N1", [], planos_techo=planos)[0]
+    assert {round(d["fin"][2], 3) for d in arr["diagonales"]} == {2.75}
+
+
+def test_agregar_muro_en_tramo_vacio(proyecto):
+    """Un tramo sin muro en el plano: elegir 'muro' o 'tabique' (con o sin lego) agrega el muro."""
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["A-MURO-HA"]}            # sin la capa de tabiques: el eje 2 queda sin muro
+    modelo0 = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    t0 = {t["id"]: t for t in modelo0["tramos"]}
+    assert t0["2:A-B"]["niveles"]["N1"]["cobertura_muros"] < 0.3
+    py["tramos"] = {"2:A-B@N1": "tabique", "2:A-B@N2": "muro:MH-20 Hormigón 20 + estuco"}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    assert validar(modelo) == []
+    t = {x["id"]: x for x in modelo["tramos"]}["2:A-B"]["niveles"]
+    nuevos = {m["id"]: m for m in modelo["muros"] if m["capa_cad"] == "tramo 2:A-B"}
+    n1 = nuevos[t["N1"]["muros"][0]]
+    n2 = nuevos[t["N2"]["muros"][0]]
+    assert not n1["estructural"] and n1["tipo"] == t["N1"]["tipo_muro"]
+    assert n2["estructural"] and n2["tipo"] == "MH-20 Hormigón 20 + estuco" and n2["espesor"] == 0.23   # espesor del lego
+    assert len(modelo["muros"]) == len(modelo0["muros"]) + 2

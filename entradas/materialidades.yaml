@@ -142,6 +142,7 @@ tipos_marco:
     sistema: momento                  # uniones de momento viga-columna
     material: Acero estructural A270ES
     vano_maximo: 6.0                  # m; vacío = un solo vano
+    techo: horizontal                 # horizontal | dos_aguas (la viga sigue el techo inclinado)
     columna:  {perfil: "203x203x46UC", forma: W, b: 0.203, h: 0.203, familia: "UC-Universal Column-Column"}
     viga:     {perfil: "W310X21",      forma: W, b: 0.101, h: 0.303, familia: "M_W Shapes"}
 
@@ -149,6 +150,7 @@ tipos_marco:
     sistema: arriostrado_x            # vigas articuladas + diagonales en X
     material: Acero estructural A270ES
     vano_maximo: 6.0
+    techo: horizontal                 # horizontal | dos_aguas (la viga sigue el techo inclinado)
     columna:  {perfil: "203x203x46UC", forma: W, b: 0.203, h: 0.203, familia: "UC-Universal Column-Column"}
     viga:     {perfil: "W310X21",      forma: W, b: 0.101, h: 0.303, familia: "M_W Shapes"}
     diagonal: {perfil: "C150X15.6",    forma: C, b: 0.051, h: 0.152, familia: "M_C Shapes"}

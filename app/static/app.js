@@ -594,9 +594,27 @@ function pintarDetalleEst() {
     if (todos.value === "auto") delete est.elecciones[t.id]; else est.elecciones[t.id] = todos.value;
     aplicarTramos(`Tramo ${t.id}: ${todos.value === "auto" ? "automático" : nombreTipologia(todos.value)}`);
   });
+  // tramo sin muro en el plano: agregar uno con un lego del catálogo (todos los pisos)
+  const sinMuro = niveles.every(n => (t.niveles[n].cobertura_muros ?? 0) < 0.3 && !["muro", "tabique"].includes(t.niveles[n].final));
+  let agregar = null;
+  if (sinMuro && (estado.catalogo?.muros || []).length) {
+    const lego = h("select", {}, estado.catalogo.muros.map(m => h("option", { value: m.nombre }, m.nombre)));
+    const caracter = h("select", {}, h("option", { value: "muro" }, "Muro estructural"), h("option", { value: "tabique" }, "Tabique (no estructural)"));
+    const sinc = () => { const m = estado.catalogo.muros.find(x => x.nombre === lego.value); caracter.value = m?.estructural ? "muro" : "tabique"; };
+    lego.addEventListener("change", sinc); sinc();
+    agregar = h("div", { class: "agregar-muro" },
+      h("strong", {}, "＋ Agregar muro en este tramo"),
+      h("div", { class: "tenue" }, "En el plano no hay muro aquí. Elige el lego y se crea a lo largo del tramo, en todos los pisos."),
+      lego, caracter,
+      h("button", { class: "pri", disabled: est.ocupado, onclick: () => {
+        est.elecciones[t.id] = `${caracter.value}:${lego.value}`;
+        aplicarTramos(`Tramo ${t.id}: se agrega ${nombreTipologia(est.elecciones[t.id])}`);
+      } }, "Agregar muro"));
+  }
   box.replaceChildren(
     h("h4", {}, `Tramo ${t.id}`),
     h("div", { class: "tenue" }, `Eje ${t.eje} entre ${t.entre[0]} y ${t.entre[1]} · ${t.largo.toFixed(2)} m · dirección ${t.direccion}`),
+    agregar,
     h("label", { style: "display:flex;flex-direction:column;gap:4px;margin-top:10px" }, h("strong", {}, "Todos los pisos"), todos),
     ...niveles.map(n => {
       const inf = t.niveles[n];
@@ -710,19 +728,21 @@ const ROLES_MARCO = { columna: "Columna", viga: "Viga", diagonal: "Diagonal" };
 const FORMAS = { W: "W / I (doble T)", C: "C (canal)", L: "L (ángulo)", tubo: "Tubo", rectangular: "Rectangular", circular: "Circular" };
 
 /** Esquema del marco (2 vanos): columnas, vigas, nudos de momento o cruz de diagonales. */
-function esquemaMarco(svg, sistema) {
+function esquemaMarco(svg, sistema, techo = "horizontal") {
   const S = (t, a) => { const e = document.createElementNS("http://www.w3.org/2000/svg", t); for (const k in a) e.setAttribute(k, a[k]); return e; };
-  const xs = [15, 110, 205], y0 = 98, y1 = 14;
+  const xs = [15, 110, 205], y0 = 98;
+  // cabeza de cada columna: horizontal = todas iguales; dos aguas = cumbrera en la columna central
+  const ys = techo === "dos_aguas" ? [44, 12, 44] : [14, 14, 14];
   const hijos = [S("line", { x1: 5, y1: y0 + 4, x2: 215, y2: y0 + 4, class: "suelo" })];
   if (sistema === "arriostrado_x")
     for (let i = 0; i < 2; i++) {
-      hijos.push(S("line", { x1: xs[i], y1: y0, x2: xs[i + 1], y2: y1, class: "dia" }));
-      hijos.push(S("line", { x1: xs[i + 1], y1: y0, x2: xs[i], y2: y1, class: "dia" }));
+      hijos.push(S("line", { x1: xs[i], y1: y0, x2: xs[i + 1], y2: ys[i + 1], class: "dia" }));
+      hijos.push(S("line", { x1: xs[i + 1], y1: y0, x2: xs[i], y2: ys[i], class: "dia" }));
     }
-  xs.forEach(x => hijos.push(S("line", { x1: x, y1: y0, x2: x, y2: y1, class: "col" })));
-  hijos.push(S("line", { x1: xs[0], y1: y1, x2: xs[2], y2: y1, class: "vig" }));
-  if (sistema === "momento") xs.forEach(x => hijos.push(S("rect", { x: x - 6, y: y1 - 1, width: 12, height: 12, class: "nudo" })));
-  else xs.forEach(x => hijos.push(S("circle", { cx: x, cy: y1 + 5, r: 4, fill: "var(--superficie)", stroke: "var(--texto)", "stroke-width": 2 })));
+  xs.forEach((x, i) => hijos.push(S("line", { x1: x, y1: y0, x2: x, y2: ys[i], class: "col" })));
+  for (let i = 0; i < 2; i++) hijos.push(S("line", { x1: xs[i], y1: ys[i], x2: xs[i + 1], y2: ys[i + 1], class: "vig" }));
+  if (sistema === "momento") xs.forEach((x, i) => hijos.push(S("rect", { x: x - 6, y: ys[i] - 1, width: 12, height: 12, class: "nudo" })));
+  else xs.forEach((x, i) => hijos.push(S("circle", { cx: x, cy: ys[i] + 5, r: 4, fill: "var(--superficie)", stroke: "var(--texto)", "stroke-width": 2 })));
   svg.replaceChildren(...hijos);
   return svg;
 }
@@ -736,7 +756,8 @@ function tarjetaMarco(t) {
     h("div", { class: "etiquetas" },
       h("span", { class: "etiqueta" }, t.sistema === "momento" ? "marco de momento" : "arriostrado en X"),
       h("span", { class: "etiqueta" }, t.material),
-      t.vano_maximo ? h("span", { class: "etiqueta" }, `vano máx. ${t.vano_maximo} m`) : null),
+      t.vano_maximo ? h("span", { class: "etiqueta" }, `vano máx. ${t.vano_maximo} m`) : null,
+      t.techo === "dos_aguas" ? h("span", { class: "etiqueta" }, `viga a dos aguas${t.pendiente ? ` ${t.pendiente}°` : ""}`) : null),
     svg,
     h("ul", {}, roles.map(r => {
       const p = t[r] || {};
@@ -765,6 +786,8 @@ function abrirEditorMarco(t, duplicar) {
   $("#marco-material").replaceChildren(...(metales.length ? metales : estado.catalogo.materiales)
     .map(m => h("option", { value: m.nombre, selected: m.nombre === t?.material }, m.nombre)));
   $("#marco-vano").value = t?.vano_maximo ?? "";
+  $("#marco-techo").value = t?.techo ?? "horizontal";
+  $("#marco-pendiente").value = t?.pendiente ?? "";
   const base = { columna: { forma: "W", b: 0.2, h: 0.2 }, viga: { forma: "W", b: 0.1, h: 0.3 }, diagonal: { forma: "L", b: 0.075, h: 0.075 } };
   $("#marco-perfiles tbody").replaceChildren(...Object.keys(ROLES_MARCO).map(rol => {
     const p = t?.[rol] ?? base[rol];
@@ -786,18 +809,21 @@ function abrirEditorMarco(t, duplicar) {
 }
 
 function actualizarSistemaMarco() {
-  const sis = $("#marco-sistema").value;
-  esquemaMarco($("#marco-esquema"), sis);
+  const sis = $("#marco-sistema").value, techo = $("#marco-techo").value;
+  esquemaMarco($("#marco-esquema"), sis, techo);
+  $("#marco-pendiente").closest("label").classList.toggle("oculto", techo !== "dos_aguas");
   const fila = $('#marco-perfiles tr[data-rol="diagonal"]');
   if (fila) fila.classList.toggle("oculto", sis !== "arriostrado_x");
 }
 $("#marco-sistema").addEventListener("change", actualizarSistemaMarco);
+$("#marco-techo").addEventListener("change", actualizarSistemaMarco);
 
 $("#form-marco").addEventListener("submit", ev => {
   if (ev.submitter?.value !== "ok") return;
   ev.preventDefault();
   const datos = { nombre: $("#marco-nombre").value.trim(), sistema: $("#marco-sistema").value,
-                  material: $("#marco-material").value, vano_maximo: +$("#marco-vano").value || null };
+                  material: $("#marco-material").value, vano_maximo: +$("#marco-vano").value || null,
+                  techo: $("#marco-techo").value, pendiente: +$("#marco-pendiente").value || null };
   $$("#marco-perfiles tbody tr").forEach(tr => {
     if (tr.classList.contains("oculto")) return;
     const v = k => tr.querySelector(`[data-k="${k}"]`).value;

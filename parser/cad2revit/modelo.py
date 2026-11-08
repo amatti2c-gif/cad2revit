@@ -112,6 +112,12 @@ def _alero_de_cortes(vistas_altura: list[dict]) -> float | None:
     return round(aleros[len(aleros) // 2], 2) if aleros else None
 
 
+def _planos_techo(modelo: dict, sup: str | None) -> list:
+    """Planos del techo inclinado si el nivel superior es el de la cubierta (los marcos de ese piso lo siguen)."""
+    cub_nivel = next((l["nivel"] for l in modelo["losas"] if l.get("cubierta")), None)
+    return marcos_mod.planos_de_cubierta(modelo.get("cubierta")) if sup and sup == cub_nivel else []
+
+
 def _calzar(techo: list, planta: list) -> tuple[float, float]:
     """Desplazamiento que lleva el contorno del techo sobre el de la planta con la mayor coincidencia
     (área común / área unida): búsqueda gruesa de ±4 m cada 10 cm alrededor de los centros y luego fina."""
@@ -397,7 +403,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
         # 10) Marcos de acero (líneas en capas de marcos)
         if lod.get("marcos"):
             segs_marco = dib.segmentos_en(cfg.capa("marcos"))
-            modelo["marcos"] += marcos_mod.generar(segs_marco, cfg, nivel, sup, cota, pref, adv)
+            modelo["marcos"] += marcos_mod.generar(segs_marco, cfg, nivel, sup, cota, pref, adv,
+                                                   planos_techo=_planos_techo(modelo, sup))
 
         for m in muros:
             d = dict(id=m.id, nivel=nivel, nivel_superior=sup, inicio=m.a, fin=m.b, espesor=m.espesor,
