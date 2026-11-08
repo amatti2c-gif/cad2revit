@@ -561,3 +561,25 @@ def test_marco_dibujado_reemplaza_al_del_tramo(cliente):
     n1 = [f for f in m["marcos"] if f["nivel"] == "N1" and (f["origen"] == "tramo 2:A-B" or f["origen"].startswith("dibujado"))]
     assert [f["origen"] for f in n1] == ["dibujado en la app #1"]          # un solo marco: el dibujado
     assert [f for f in m["marcos"] if f["origen"] == "tramo 2:A-B" and f["nivel"] == "N2"]   # en N2 sigue el del tramo
+
+
+def test_ejes_fijados_no_cambian_al_cambiar_capas(cliente):
+    """Plano sin capa de ejes (se generan desde los muros): tras editar la estructuración, cambiar las capas
+    de muros no renombra ni mueve los ejes, y las elecciones de tramos siguen calzando."""
+    pid = _crear(cliente)
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "ejes", "capas": ["NO-EXISTE"]})
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    ejes0 = {e["nombre"]: (e["inicio"], e["fin"]) for e in m["ejes"]}
+    tramo = m["tramos"][0]["id"]
+    cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {tramo: "momento"}})          # fija los ejes
+    cliente.put(f"/api/proyectos/{pid}/capas", json={"categoria": "muros", "capas": ["A-MURO-HA"]})  # sin tabiques
+    c2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m2 = cliente.get(f"/api/proyectos/{pid}/corridas/{c2['n']}").json()["modelo"]
+    assert {e["nombre"]: (e["inicio"], e["fin"]) for e in m2["ejes"]} == ejes0
+    assert next(t for t in m2["tramos"] if t["id"] == tramo)["niveles"]["N1"]["eleccion"] == "momento"
+    # regenerar: vuelven a salir desde los muros (sin el eje del tabique)
+    cliente.post(f"/api/proyectos/{pid}/ejes/regenerar")
+    c3 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m3 = cliente.get(f"/api/proyectos/{pid}/corridas/{c3['n']}").json()["modelo"]
+    assert len(m3["ejes"]) < len(m2["ejes"])

@@ -794,6 +794,38 @@ class EleccionesTramos(BaseModel):
     elecciones: dict[str, str] = {}
 
 
+def _fijar_ejes(d: Path) -> bool:
+    """Guarda en proyecto.yaml (ejes_base) los ejes de la última corrida correcta, antes de las ediciones.
+    Los ejes generados desde los muros cambian si cambian las capas o el plano; fijados, las elecciones de
+    tramos y las ediciones siguen calzando. Devuelve True si los fijó ahora."""
+    py = d / "entradas" / "proyecto.yaml"
+    datos = _leer_yaml_seguro(py)
+    if datos.get("ejes_base"):
+        return False
+    for c in sorted((d / "corridas").glob("[0-9]*"), key=lambda c: int(c.name) if c.name.isdigit() else -1, reverse=True):
+        r = c / "resumen.json"
+        if not r.exists() or not json.loads(r.read_text(encoding="utf-8")).get("ok"):
+            continue
+        m = json.loads((c / "modelo.json").read_text(encoding="utf-8"))
+        ejes = m.get("ejes_generados") or ([] if datos.get("ejes_usuario") else m.get("ejes"))
+        if not ejes:
+            return False
+        base = [{"nombre": e["nombre"], "inicio": [round(v, 4) for v in e["inicio"]], "fin": [round(v, 4) for v in e["fin"]],
+                 "origen": "fijado"} for e in ejes]
+        _escribir(py, _reemplazar_bloque(py.read_text(encoding="utf-8"), "ejes_base", base))
+        return True
+    return False
+
+
+@app.post("/api/proyectos/{pid}/ejes/regenerar")
+def regenerar_ejes(pid: str):
+    """Vuelve a generar los ejes desde el plano (se quitan los fijados). Las ediciones pueden dejar de calzar."""
+    d = _proyecto(pid)
+    py = d / "entradas" / "proyecto.yaml"
+    _escribir(py, _reemplazar_bloque(py.read_text(encoding="utf-8"), "ejes_base", None))
+    return {"ok": True}
+
+
 class Ediciones(BaseModel):
     ejes: dict[str, dict | None] | None = None      # ejes_usuario (por nombre de eje)
     muros: list[dict] | None = None                  # muros_usuario (dibujados en la app)
@@ -812,6 +844,7 @@ def leer_ediciones(pid: str):
 def guardar_ediciones(pid: str, datos: Ediciones):
     """Ejes editados y muros dibujados en la pestaña Estructuración (se aplican sobre lo leído del plano)."""
     d = _proyecto(pid)
+    _fijar_ejes(d)
     py = d / "entradas" / "proyecto.yaml"
     niveles = {n.get("nombre") for n in _leer_yaml_seguro(py).get("niveles") or []}
     texto = py.read_text(encoding="utf-8")
@@ -862,6 +895,7 @@ def guardar_tramos(pid: str, datos: EleccionesTramos):
     """Guarda en proyecto.yaml las tipologías elegidas por tramo de eje ("A:1-2") o por tramo
     y piso ("A:1-2@N2"). "auto" (o no estar) = usar la propuesta de la app."""
     d = _proyecto(pid)
+    _fijar_ejes(d)
     from cad2revit.tramos import valida
     tipos = {t.get("nombre") for t in _leer_yaml_seguro(_lineamientos() / "materialidades.yaml").get("tipos_muro") or []}
     malas = [f"{k}: {v}" for k, v in datos.elecciones.items() if not valida(v, tipos)]
@@ -1010,6 +1044,11 @@ class CapasCategoria(BaseModel):
 @app.put("/api/proyectos/{pid}/capas")
 def guardar_capas(pid: str, datos: CapasCategoria):
     d = _proyecto(pid)
+    if datos.categoria not in dict(CATEGORIAS_CAPA):
+        raise HTTPException(400, f"Categoría desconocida: {datos.categoria}")
+    py0 = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    if datos.categoria != "ejes" and any(py0.get(k) for k in ("tramos", "ejes_usuario", "muros_usuario", "muros_quitar", "marcos_usuario")):
+        _fijar_ejes(d)          # cambiar capas no debe mover ni renombrar los ejes sobre los que ya se editó
     if datos.categoria not in dict(CATEGORIAS_CAPA):
         raise HTTPException(400, f"Categoría desconocida: {datos.categoria}")
     py = d / "entradas" / "proyecto.yaml"

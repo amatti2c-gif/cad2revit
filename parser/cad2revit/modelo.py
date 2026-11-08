@@ -408,7 +408,10 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 modelo["recintos"].append(dict(nivel=nivel, nombre=t.texto, punto=t.punto))
 
         # 8) Ejes (desde la primera planta)
-        if lod["ejes"] and idx == 0 and (cfg.estructuracion.get("ejes") or {}).get("leer_del_cad", True):
+        if lod["ejes"] and idx == 0 and cfg.proyecto.get("ejes_base"):
+            # ejes fijados en el proyecto (al editar la estructuración): no cambian aunque cambien los muros
+            modelo["ejes"] += [dict(e, origen=e.get("origen") or "fijado") for e in cfg.proyecto["ejes_base"]]
+        elif lod["ejes"] and idx == 0 and (cfg.estructuracion.get("ejes") or {}).get("leer_del_cad", True):
             ecfg = cfg.estructuracion.get("ejes") or {}
             lineas = ejes_mod.desde_cad(dib.segmentos_en(cfg.capa("ejes")))
             if lineas:
@@ -438,6 +441,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 d["altura"] = ALTURA_POR_DEFECTO
             modelo["muros"].append(d)
 
+    # ejes antes de las ediciones de la app (para fijarlos en el proyecto)
+    modelo["ejes_generados"] = [dict(e) for e in modelo["ejes"]]
     # Ediciones hechas en la app: ejes (mover, extender, agregar, borrar) y muros dibujados
     if cfg.proyecto.get("ejes_usuario"):
         modelo["ejes"] = ejes_mod.editar(modelo["ejes"], cfg.proyecto["ejes_usuario"], adv)

@@ -977,6 +977,16 @@ function pintarDetalleEst() {
   const t = est.modelo.tramos.find(x => x.id === est.tramo);
   if (!t) {
     const nEjes = Object.keys(est.ed.ejes).length, nMuros = est.ed.muros.length + est.ed.quitar.length + est.ed.marcos.length;
+    const fijados = (est.modelo.ejes_generados || est.modelo.ejes || []).some(e => e.origen === "fijado");
+    const notaEjes = h("div", { class: "tenue", style: "margin-top:10px" },
+      fijados ? "Ejes fijados en el proyecto: cambiar capas o el plano no los mueve ni renombra. "
+              : "Los ejes se fijan en el proyecto apenas editas la estructuración. ",
+      fijados ? h("button", { class: "sec", style: "padding:1px 8px;font-size:12px", onclick: () => intentar(async () => {
+        if (!confirm("¿Volver a generar los ejes desde el plano? Tus elecciones de tramos y ediciones de ejes pueden dejar de calzar.")) return;
+        await api("POST", P("/ejes/regenerar"));
+        const c = await api("POST", P("/corridas"), { notas: "Ejes regenerados desde el plano" });
+        await cargarCorridas(c.n); await cargarEstructura();
+      }) }, "Regenerar ejes desde el plano") : null);
     box.replaceChildren(h("p", { class: "tenue" }, "Selecciona un tramo, la burbuja de un eje o un muro en la planta, o usa ",
       h("strong", {}, "＋ Agregar eje"), " / ", h("strong", {}, "✎ Dibujar muro"), " / ", h("strong", {}, "🗑 Borrar muro"), "."),
       nEjes || nMuros ? h("div", {}, h("strong", {}, "Tus cambios sobre el plano"),
@@ -996,7 +1006,7 @@ function pintarDetalleEst() {
           if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
           est.ed = { ejes: {}, muros: [], quitar: [], marcos: [] };
           guardarEdiciones("Ejes y muros: vuelven a los del plano");
-        } }, "Deshacer todos mis cambios")) : null);
+        } }, "Deshacer todos mis cambios")) : null, notaEjes);
     return;
   }
   const niveles = Object.keys(t.niveles);
