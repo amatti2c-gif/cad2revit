@@ -384,7 +384,8 @@
             "enum": [
               "plana",
               "dos aguas",
-              "cuatro aguas"
+              "cuatro aguas",
+              "varias aguas"
             ]
           }
         }

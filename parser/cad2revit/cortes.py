@@ -209,7 +209,8 @@ def techo(dib: DibujoCAD) -> dict | None:
     if Polygon(coords).exterior.is_ccw is False:
         coords.reverse()
     return {"contorno": [[round(x, 3), round(y, 3)] for x, y in coords],
-            "cumbreras": cumbreras, "limatones": len(limatones)}
+            "cumbreras": cumbreras, "limatones": len(limatones),
+            "lineas": [(tuple(s.a), tuple(s.b)) for s in dib.segmentos if math.dist(s.a, s.b) > 0.4]}
 
 
 def cubierta(contorno: list, cumbreras: list, limatones: int, pendiente: float,
@@ -238,3 +239,61 @@ def cubierta(contorno: list, cumbreras: list, limatones: int, pendiente: float,
         if dif < math.radians(10) and math.dist(p, q) > 0.5:
             bordes.append(i)
     return {"forma": "dos aguas", "bordes_pendiente": bordes}
+
+
+def bordes_por_achurado(contorno: list, lineas: list, adentro: float = 0.5, radio: float = 0.35) -> list:
+    """Para cada borde del contorno del techo: True si lleva pendiente, False si es frontón, None si no se sabe.
+    Se mira el achurado de la planta de techo justo adentro del borde: las planchas (y su achurado) van en el
+    sentido en que escurre el agua, así que si llegan perpendiculares al borde el agua cae por ahí (pendiente);
+    si corren paralelas al borde, es un frontón."""
+    from shapely.geometry import LineString, Point, Polygon
+    poli = Polygon(contorno)
+    if not poli.is_valid or poli.area <= 0:
+        return [None] * len(contorno)
+    segs = [(a, b, LineString([a, b])) for a, b in lineas if math.dist(a, b) > 0.4]
+    out = []
+    n = len(contorno)
+    for i in range(n):
+        p, q = contorno[i], contorno[(i + 1) % n]
+        L = math.dist(p, q)
+        if L < 0.3:
+            out.append(None)
+            continue
+        ux, uy = (q[0] - p[0]) / L, (q[1] - p[1]) / L
+        votos = {"pendiente": 0.0, "fronton": 0.0}
+        for f in (0.25, 0.5, 0.75):                    # tres puntos a lo largo del borde
+            mx, my = p[0] + ux * L * f, p[1] + uy * L * f
+            # hacia adentro: probar ambos lados de la normal
+            punto = None
+            for sx, sy in ((-uy, ux), (uy, -ux)):
+                cand = Point(mx + sx * adentro, my + sy * adentro)
+                if poli.contains(cand):
+                    punto = cand
+                    break
+            if punto is None:
+                continue
+            cerca = [(a, b) for a, b, ls in segs if ls.distance(punto) <= radio]
+            if len(cerca) < 3:
+                continue                                # sin achurado aquí
+            # familia dominante (por ángulo, ponderada por largo)
+            bins: dict[int, float] = {}
+            for a, b in cerca:
+                ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) % 180
+                k = int(round(ang / 5)) % 36
+                bins[k] = bins.get(k, 0.0) + math.dist(a, b)
+            k = max(bins, key=bins.get)
+            if sum(1 for a, b in cerca if int(round((math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) % 180) / 5)) % 36 == k) < 3:
+                continue
+            ang_h = math.radians(k * 5)
+            coseno = abs(math.cos(ang_h) * ux + math.sin(ang_h) * uy)    # 1 = paralelo al borde, 0 = perpendicular
+            if coseno < 0.5:
+                votos["pendiente"] += 1
+            elif coseno > 0.87:
+                votos["fronton"] += 1
+        if votos["pendiente"] > votos["fronton"]:
+            out.append(True)
+        elif votos["fronton"] > votos["pendiente"]:
+            out.append(False)
+        else:
+            out.append(None)
+    return out

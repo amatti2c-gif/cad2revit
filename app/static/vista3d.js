@@ -210,80 +210,47 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
 }
 
 
-/** Cubierta inclinada como la hace Revit (techo por contorno): cada borde con pendiente define un plano
- *  que sube hacia adentro; el techo es el más bajo de esos planos. Los bordes sin pendiente son frontones. */
-function techoInclinado(grupo, l, z0, mTecho, mFronton) {
-  let pts = l.contorno.map(p => [p[0], p[1]]);
-  const n = pts.length;
-  let bordes = l.bordes_pendiente.slice();
-  const area = pts.reduce((a, p, i) => { const q = pts[(i + 1) % n]; return a + p[0] * q[1] - q[0] * p[1]; }, 0);
-  if (area < 0) {                      // dejar el contorno antihorario (el interior queda a la izquierda)
-    pts = pts.slice().reverse();
-    bordes = bordes.map(i => (i === n - 1 ? n - 1 : n - 2 - i));
-  }
-  const t = Math.tan(l.pendiente * Math.PI / 180);
-  const planos = bordes.map(i => {
-    const a = pts[i], b = pts[(i + 1) % n];
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-    const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;      // normal hacia el interior
-    // h(p) = c0 + cx*x + cy*y
-    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t };
-  });
-  const h = (pl, p) => pl.c0 + pl.cx * p[0] + pl.cy * p[1];
-  const altura = p => Math.max(0, Math.min(...planos.map(pl => h(pl, p))));
-  const recortar = (poli, f) => {      // Sutherland–Hodgman: deja la parte con f(p) <= 0
-    const out = [];
+/** Cubierta inclinada: malla fina sobre el contorno con la altura del techo en cada punto (planos de pendiente
+ *  con su zona de influencia, como el techo por contorno de Revit). */
+function techoInclinado(grupo, l, z0, mTecho) {
+  const altura = funcionTecho(l);
+  const pts = l.contorno.map(p => [p[0], p[1]]);
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const paso = Math.max(0.3, Math.max(x1 - x0, y1 - y0) / 160);
+  // recorta el contorno a una celda rectangular (Sutherland–Hodgman contra cada lado de la celda)
+  const recortar = (poli, eje, valor, menor) => {
+    const out = [], dentro = q => (menor ? q[eje] <= valor + 1e-9 : q[eje] >= valor - 1e-9);
     for (let i = 0; i < poli.length; i++) {
-      const p = poli[i], q = poli[(i + 1) % poli.length], fp = f(p), fq = f(q);
-      if (fp <= 1e-9) out.push(p);
-      if ((fp < -1e-9 && fq > 1e-9) || (fp > 1e-9 && fq < -1e-9)) {
-        const k = fp / (fp - fq);
+      const p = poli[i], q = poli[(i + 1) % poli.length];
+      if (dentro(p)) out.push(p);
+      if (dentro(p) !== dentro(q)) {
+        const k = (valor - p[eje]) / (q[eje] - p[eje]);
         out.push([p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k]);
       }
     }
     return out;
   };
   const pos = [];
-  const tri = (a, b, c) => pos.push(...a, ...b, ...c);
-  const P3 = (p, z) => [p[0], z, -p[1]];
-  planos.forEach((pl, i) => {
-    let cara = pts;
-    planos.forEach((otro, k) => {
-      if (k !== i) cara = recortar(cara, p => h(pl, p) - h(otro, p));
-    });
-    if (cara.length < 3) return;
-    const idx = THREE.ShapeUtils.triangulateShape(cara.map(p => new THREE.Vector2(p[0], p[1])), []);
-    for (const [a, b, c] of idx) tri(P3(cara[a], z0 + h(pl, cara[a])), P3(cara[b], z0 + h(pl, cara[b])), P3(cara[c], z0 + h(pl, cara[c])));
-  });
+  const P3 = q => [q[0], z0 + altura(q), -q[1]];
+  for (let cx = x0; cx < x1; cx += paso) for (let cy = y0; cy < y1; cy += paso) {
+    let c = pts;
+    c = recortar(c, 0, cx, false); if (c.length < 3) continue;
+    c = recortar(c, 0, cx + paso, true); if (c.length < 3) continue;
+    c = recortar(c, 1, cy, false); if (c.length < 3) continue;
+    c = recortar(c, 1, cy + paso, true); if (c.length < 3) continue;
+    for (const [a, b, d] of THREE.ShapeUtils.triangulateShape(c.map(q => new THREE.Vector2(q[0], q[1])), []))
+      pos.push(...P3(c[a]), ...P3(c[b]), ...P3(c[d]));
+  }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   geo.computeVertexNormals();
   const mt = mTecho.clone(); mt.side = THREE.DoubleSide;
   grupo.add(new THREE.Mesh(geo, mt));
-  // frontones: bajo los bordes sin pendiente, el muro sube hasta el techo
-  const fpos = [];
-  for (let i = 0; i < n; i++) {
-    if (bordes.includes(i)) continue;
-    const a = pts[i], b = pts[(i + 1) % n], m = 24;
-    for (let k = 0; k < m; k++) {
-      const p = [a[0] + (b[0] - a[0]) * k / m, a[1] + (b[1] - a[1]) * k / m];
-      const q = [a[0] + (b[0] - a[0]) * (k + 1) / m, a[1] + (b[1] - a[1]) * (k + 1) / m];
-      const hp = altura(p), hq = altura(q);
-      if (hp < 1e-3 && hq < 1e-3) continue;
-      fpos.push(...P3(p, z0), ...P3(q, z0), ...P3(q, z0 + hq), ...P3(p, z0), ...P3(q, z0 + hq), ...P3(p, z0 + hp));
-    }
-  }
-  if (fpos.length && mFronton) {
-    const g2 = new THREE.BufferGeometry();
-    g2.setAttribute("position", new THREE.Float32BufferAttribute(fpos, 3));
-    g2.computeVertexNormals();
-    const mf = mFronton.clone(); mf.side = THREE.DoubleSide;
-    grupo.add(new THREE.Mesh(g2, mf));
-  }
 }
 
-
-/** Altura del techo inclinado sobre su nivel en un punto de la planta (el menor de los planos de pendiente). */
+/** Altura del techo inclinado sobre su nivel en un punto de la planta. Cada plano de pendiente actúa solo de su
+ *  lado del borde y frente a él (margen de 45°): un acceso a dos aguas perpendicular no corta el resto. */
 function funcionTecho(l) {
   let pts = l.contorno.map(p => [p[0], p[1]]);
   const n = pts.length;
@@ -294,7 +261,19 @@ function funcionTecho(l) {
   const planos = bordes.map(i => {
     const a = pts[i], b = pts[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
-    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t };
+    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t, a, ux: (b[0] - a[0]) / L, uy: (b[1] - a[1]) / L, L };
   });
-  return p => Math.max(0, Math.min(...planos.map(pl => pl.c0 + pl.cx * p[0] + pl.cy * p[1])));
+  return p => {
+    const validos = [], todos = [];
+    for (const pl of planos) {
+      const hv = pl.c0 + pl.cx * p[0] + pl.cy * p[1];
+      if (hv < -1e-9) continue;
+      todos.push(hv);
+      const tp = (p[0] - pl.a[0]) * pl.ux + (p[1] - pl.a[1]) * pl.uy;
+      const d = Math.abs((p[0] - pl.a[0]) * pl.uy - (p[1] - pl.a[1]) * pl.ux);
+      if (tp >= -d - 1e-6 && tp <= pl.L + d + 1e-6) validos.push(hv);
+    }
+    const lista = validos.length ? validos : todos;
+    return lista.length ? Math.max(0, Math.min(...lista)) : 0;
+  };
 }

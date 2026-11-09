@@ -182,6 +182,9 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
         cont = [[round(x + dx, 3), round(y + dy, 3)] for x, y in techo_cad["contorno"]]
         cumbreras = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad["cumbreras"]]
         limatones = techo_cad["limatones"]
+        lineas_techo = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad.get("lineas", [])]
+    else:
+        lineas_techo = []
     # cortes marcados en la planta: letra -> línea de corte
     letras = {v["letra"] for v in vistas_altura if v.get("letra")}
     lineas = cortes_mod.marcas_corte(dib_planta, letras) if letras else {}
@@ -199,6 +202,17 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
         dir_cumbrera = (-(b[1] - a[1]), b[0] - a[0])        # la cumbrera es perpendicular al corte
     cont = _limpiar_contorno(cont)
     forma = cortes_mod.cubierta(cont, cumbreras, limatones, pendiente, dir_cumbrera)
+    # el achurado de la planta de techo dice, borde por borde, por dónde escurre el agua (pendiente) y dónde
+    # hay frontón: así se leen techos con varias cumbreras (p. ej. un acceso a dos aguas perpendicular)
+    if forma["forma"] != "plana" and lineas_techo:
+        por_achurado = cortes_mod.bordes_por_achurado(cont, lineas_techo)
+        conocidos = [i for i, v in enumerate(por_achurado) if v is not None]
+        if len(conocidos) >= 0.6 * len(cont) and sum(1 for v in por_achurado if v) >= 2:
+            bordes = [i for i, v in enumerate(por_achurado) if v or (v is None and i in forma["bordes_pendiente"])]
+            if bordes != forma["bordes_pendiente"]:
+                adv.append("Cubierta: pendientes de cada borde leídas del achurado de la planta de techo "
+                           f"({len(bordes)} bordes con pendiente, {len(cont) - len(bordes)} frontones)")
+            forma = {"forma": "varias aguas" if len(bordes) > 2 else forma["forma"], "bordes_pendiente": bordes}
     if forma["forma"] != "plana" and not forma["bordes_pendiente"]:
         adv.append("Cubierta: no se pudo saber qué bordes llevan pendiente; se deja plana")
         forma = {"forma": "plana", "bordes_pendiente": []}

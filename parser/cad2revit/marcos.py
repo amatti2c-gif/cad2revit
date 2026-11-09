@@ -21,9 +21,9 @@ TECHOS = {"horizontal", "dos_aguas"}
 PENDIENTE_POR_DEFECTO = 15.0          # grados, si el lego es a dos aguas y el edificio no tiene techo inclinado
 
 
-def planos_de_cubierta(cub: dict | None) -> list[tuple[float, float, float]]:
-    """Planos del techo inclinado del edificio como alturas sobre el alero: h(x, y) = c0 + cx*x + cy*y
-    (uno por borde con pendiente; el techo es el menor). Igual que el techo por contorno de Revit."""
+def planos_de_cubierta(cub: dict | None) -> list[tuple]:
+    """Planos del techo inclinado del edificio, uno por borde con pendiente: (c0, cx, cy, a, b) con
+    h(x, y) = c0 + cx*x + cy*y la altura sobre el alero, y a-b el borde que lo origina."""
     if not cub or not cub.get("pendiente") or not cub.get("bordes_pendiente"):
         return []
     pts = [tuple(p) for p in cub["contorno"]]
@@ -39,8 +39,27 @@ def planos_de_cubierta(cub: dict | None) -> list[tuple[float, float, float]]:
         a, b = pts[i], pts[(i + 1) % n]
         L = math.dist(a, b) or 1.0
         nx, ny = -(b[1] - a[1]) / L, (b[0] - a[0]) / L
-        planos.append((-(a[0] * nx + a[1] * ny) * t, nx * t, ny * t))
+        planos.append((-(a[0] * nx + a[1] * ny) * t, nx * t, ny * t, a, b))
     return planos
+
+
+def altura_techo(planos: list, p) -> float:
+    """Altura del techo sobre el alero en el punto p. Cada plano actúa solo de su lado del borde y frente a él
+    (con un margen de 45°): así un acceso a dos aguas perpendicular no corta el resto del techo."""
+    validos, todos = [], []
+    for c0, cx, cy, a, b in planos:
+        hv = c0 + cx * p[0] + cy * p[1]
+        if hv < -1e-9:
+            continue
+        todos.append(hv)
+        L = math.dist(a, b) or 1.0
+        ux, uy = (b[0] - a[0]) / L, (b[1] - a[1]) / L
+        tp = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy
+        d = abs((p[0] - a[0]) * uy - (p[1] - a[1]) * ux)
+        if -d - 1e-6 <= tp <= L + d + 1e-6:
+            validos.append(hv)
+    lista = validos or todos
+    return max(0.0, min(lista)) if lista else 0.0
 
 
 def _perfil_techo(a, b, planos, pendiente: float, cortes: list[float]) -> tuple[list[float], callable]:
@@ -49,21 +68,40 @@ def _perfil_techo(a, b, planos, pendiente: float, cortes: list[float]) -> tuple[
     L = math.dist(a, b)
     u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
     if planos:
-        lin = [(c0 + cx * a[0] + cy * a[1], cx * u[0] + cy * u[1]) for c0, cx, cy in planos]   # h_i(t) = p + q t
-    else:
-        tg = math.tan(math.radians(pendiente))
-        lin = [(0.0, tg), (L * tg, -tg)]
+        def h(t):
+            return altura_techo(planos, (a[0] + u[0] * t, a[1] + u[1] * t))
+        # quiebres (cumbreras, limahoyas): cambios de pendiente a lo largo de la línea, muestreando cada 5 cm
+        n = max(20, int(L / 0.05))
+        ts_m = [L * i / n for i in range(n + 1)]
+        hs = [h(t) for t in ts_m]
+        pend = [(hs[i + 1] - hs[i]) / (ts_m[i + 1] - ts_m[i]) for i in range(n)]
+        quiebres = sorted(ts_m[i] for i in range(1, n) if abs(pend[i] - pend[i - 1]) > 0.05)
+        # de cada grupo de quiebres seguidos se deja el punto exacto: intersección de las dos rectas vecinas
+        limpios, grupo = [], []
+        for t in quiebres + [None]:
+            if grupo and (t is None or t - grupo[-1] > 0.11):
+                i0 = max(0, ts_m.index(grupo[0]) - 1)
+                i1 = min(n, ts_m.index(grupo[-1]) + 1)
+                m0 = pend[i0] if i0 < n else 0.0
+                m1 = pend[i1] if i1 < n else 0.0
+                if abs(m0 - m1) > 1e-9:          # cruce de h(t0)+m0(t-t0) con h(t1)+m1(t-t1)
+                    t0, t1 = ts_m[i0], ts_m[i1]
+                    tx = (hs[i1] - hs[i0] + m0 * t0 - m1 * t1) / (m0 - m1)
+                    limpios.append(round(min(max(tx, t0), t1), 6))
+                else:
+                    limpios.append(max(grupo, key=h))
+                grupo = []
+            if t is not None:
+                grupo.append(t)
+        return sorted(set(cortes) | {0.0, L} | set(limpios)), h
+    tg = math.tan(math.radians(pendiente))
+    lin = [(0.0, tg), (L * tg, -tg)]
+
     def h(t):
         return max(0.0, min(p + q * t for p, q in lin))
     ts = set(cortes) | {0.0, L}
-    for i in range(len(lin)):
-        for j in range(i + 1, len(lin)):
-            (p1, q1), (p2, q2) = lin[i], lin[j]
-            if abs(q1 - q2) < 1e-9:
-                continue
-            t = (p2 - p1) / (q1 - q2)
-            if 1e-3 < t < L - 1e-3 and abs((p1 + q1 * t) - h(t)) < 1e-6:
-                ts.add(round(t, 6))                 # cumbrera / limahoya: cambia el plano que manda
+    if 1e-3 < L / 2 < L - 1e-3:
+        ts.add(round(L / 2, 6))
     return sorted(ts), h
 
 
