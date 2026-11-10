@@ -54,7 +54,9 @@ def clasificar_inserciones(inserciones: list[Insercion], cfg) -> tuple[list[tupl
 
 
 def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg, prefijo: str,
-                    advertencias: list[str]) -> list[Abertura]:
+                    advertencias: list[str], sin_muro: list | None = None) -> list[Abertura]:
+    """sin_muro: si se entrega, ahí quedan las aberturas que no encontraron muro en el plano (para alojarlas
+    después en un muro de la app: dibujado o de un tramo)."""
     nd = cfg.nivel_detalle
     out = []
     for k, (ins, regla) in enumerate(items, 1):
@@ -74,7 +76,12 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
         muro = next((m for m in candidatos
                      if dist_punto_segmento(ins.punto, m.a, m.b) <= m.espesor / 2 + 0.15), None)
         if muro is None:
-            advertencias.append(f"{ab.id} ({ins.nombre}) en {ins.punto}: no se encontró muro anfitrión; omitida")
+            if sin_muro is not None:
+                ab.ancho = ab.ancho or (0.9 if cat == "puerta" else 1.2)
+                ab.centro = (round(ins.punto[0], 4), round(ins.punto[1], 4))
+                sin_muro.append(ab)
+            else:
+                advertencias.append(f"{ab.id} ({ins.nombre}) en {ins.punto}: no se encontró muro anfitrión; omitida")
             continue
         u = muro.direccion
         pts = ins.esquinas or ([ins.extremos[0], ins.extremos[1]] if ins.extremos else [ins.punto])

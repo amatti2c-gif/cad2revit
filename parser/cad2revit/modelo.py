@@ -147,14 +147,20 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
 
     fuera = set()
     for i, q in enumerate(cfg.proyecto.get("muros_quitar") or [], 1):
-        hallados = {d["id"] for d in modelo["muros"] if calza(d, q)}
+        # los muros dibujados en la app se borran de su propia lista, no con «quitar»
+        hallados = {d["id"] for d in modelo["muros"] if calza(d, q) and d.get("capa_cad") != "dibujado en la app"}
         if hallados:
             hechos_q.add(i)
         elif avisar and i not in hechos_q:
             adv.append(f"Muro quitado {i} ({q.get('nivel')}): ya no está en el modelo; no hay nada que quitar")
         fuera |= hallados
     if fuera:
+        # sus puertas y ventanas no se pierden: se pasan al muro que quede en su lugar (ver _realojar)
+        dirs = {d["id"]: (d["nivel"], d["inicio"], d["fin"]) for d in modelo["muros"] if d["id"] in fuera}
         modelo["muros"] = [d for d in modelo["muros"] if d["id"] not in fuera]
+        modelo.setdefault("_huerfanas", []).extend(
+            dict(a, _nivel=dirs[a["muro"]][0], _linea=[dirs[a["muro"]][1], dirs[a["muro"]][2]])
+            for a in modelo["aberturas"] if a["muro"] in fuera)
         modelo["aberturas"] = [a for a in modelo["aberturas"] if a["muro"] not in fuera]
         adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
 
@@ -174,6 +180,53 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
             if q.get("estructural") is not None:
                 d["estructural"] = bool(q["estructural"])
             d["editado"] = True
+
+
+def _realojar(modelo: dict, adv: list) -> None:
+    """Puertas y ventanas cuyo muro se eliminó en la app: pasan al muro que quedó en su lugar (dibujado, de un
+    tramo u otro del plano), paralelo y a menos de 45 cm; si no hay ninguno, se informa."""
+    huerfanas = modelo.pop("_huerfanas", [])
+    if not huerfanas:
+        return
+    movidas, perdidas = 0, []
+    for a in huerfanas:
+        a = dict(a)
+        nivel = a.pop("_nivel", None) or a["id"].split("-")[0]
+        linea = a.pop("_linea", None)
+        u0 = None
+        if linea:
+            L0 = math.dist(linea[0], linea[1]) or 1.0
+            u0 = ((linea[1][0] - linea[0][0]) / L0, (linea[1][1] - linea[0][1]) / L0)
+        mejor = None
+        for w in modelo["muros"]:
+            if w["nivel"] != nivel or w.get("buhardilla"):
+                continue
+            (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+            L = math.hypot(x2 - x1, y2 - y1)
+            if L < 0.3:
+                continue
+            ux, uy = (x2 - x1) / L, (y2 - y1) / L
+            otra_dir = bool(u0) and abs(ux * u0[1] - uy * u0[0]) > 0.17   # se prefiere la dirección del muro original
+            dx, dy = a["centro"][0] - x1, a["centro"][1] - y1
+            t, d = dx * ux + dy * uy, abs(dx * uy - dy * ux)
+            if d > 0.45 or not (-0.05 <= t <= L + 0.05):
+                continue
+            holgura = min(t, L - t) - a["ancho"] / 2           # que el vano quepa en el muro
+            nota = (otra_dir, holgura < -0.05, d)
+            if mejor is None or nota < mejor[0]:
+                tc = max(a["ancho"] / 2, min(L - a["ancho"] / 2, t)) if L >= a["ancho"] else L / 2
+                mejor = (nota, w, (round(x1 + ux * tc, 4), round(y1 + uy * tc, 4)))
+        if mejor:
+            _, w, c = mejor
+            modelo["aberturas"].append(dict(a, muro=w["id"], centro=list(c)))
+            movidas += 1
+        else:
+            perdidas.append(a["id"])
+    if movidas:
+        adv.append(f"{movidas} puertas/ventanas de muros eliminados en la app pasaron al muro que quedó en su lugar")
+    if perdidas:
+        adv.append(f"{len(perdidas)} puertas/ventanas quedaron sin muro: se eliminó el suyo y no hay otro en su lugar "
+                   "(si dibujaste muros dejando el hueco, el vano ya queda abierto): " + ", ".join(perdidas[:15]))
 
 
 def _planos_techo(modelo: dict, sup: str | None) -> list:
@@ -423,11 +476,17 @@ def construir_modelo(cfg: Configuracion) -> dict:
 
         # 3) Aberturas
         if lod["aberturas"] != "ninguna":
-            for ab in asignar_a_muros(abert_ins, muros, cfg, pref, adv):
+            sin_muro = []
+            for ab in asignar_a_muros(abert_ins, muros, cfg, pref, adv, sin_muro=sin_muro):
                 modelo["aberturas"].append(dict(
                     id=ab.id, muro=ab.muro, categoria=ab.categoria, bloque_cad=ab.insercion.nombre,
                     modo=ab.modo or lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=ab.centro,
                     ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho))
+            # sin muro en el plano: quizás lo haya después (dibujado en la app o agregado por un tramo)
+            modelo.setdefault("_huerfanas", []).extend(dict(
+                id=ab.id, muro=None, categoria=ab.categoria, bloque_cad=ab.insercion.nombre,
+                modo=ab.modo or lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=list(ab.centro),
+                ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho, _nivel=nivel) for ab in sin_muro)
 
         # 4) Columnas y vigas
         columnas = detectar_columnas(col_ins, dib.polilineas_en(cfg.capa("columnas")), cfg, pref)
@@ -548,6 +607,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,
                                                cota, adv, marcos_mod)
     _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=True)
+    _realojar(modelo, adv)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
     # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit

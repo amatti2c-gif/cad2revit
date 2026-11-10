@@ -508,6 +508,17 @@ def test_quitar_muro_del_plano(cliente):
     assert len(m2["muros"]) == len(m["muros"]) - 1 and not any(w["id"] == tab["id"] for w in m2["muros"])
     assert len(m2["aberturas"]) == len(m["aberturas"]) - n_ab            # sus vanos se van con él
     assert any("Muros quitados" in a for a in m2["advertencias"])
+    # si en su lugar se dibuja otro muro (u otro lego), las puertas y ventanas pasan a ese muro
+    if n_ab:
+        r = cliente.put(f"/api/proyectos/{pid}/ediciones", json={
+            "quitar": [{"nivel": "N1", "inicio": tab["inicio"], "fin": tab["fin"], "id": tab["id"]}],
+            "muros": [{"nivel": "N1", "inicio": tab["inicio"], "fin": tab["fin"], "tipo": tab["tipo"]}]})
+        assert r.status_code == 200, r.text
+        c3 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+        m3 = cliente.get(f"/api/proyectos/{pid}/corridas/{c3['n']}").json()["modelo"]
+        nuevo = next(w["id"] for w in m3["muros"] if w["capa_cad"] == "dibujado en la app")
+        assert len(m3["aberturas"]) == len(m["aberturas"])
+        assert sum(1 for a in m3["aberturas"] if a["muro"] == nuevo) == n_ab
 
 
 def test_proyecto_danado_se_recupera_de_la_ultima_corrida(cliente, tmp_path):
