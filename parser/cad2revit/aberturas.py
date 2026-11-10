@@ -88,7 +88,7 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
                         continue
                     tol = m.espesor / 2 + 0.15
                     if dist_punto_recta(h, m.a, u) <= tol and dist_punto_recta(e, m.a, u) <= tol \
-                            and -0.3 <= proyectar(h, m.a, u) <= m.largo + 0.3 \
+                            and -1.3 <= proyectar(h, m.a, u) <= m.largo + 1.3 \
                             and -1.3 <= proyectar(e, m.a, u) <= m.largo + 1.3 \
                             and (muro is None or dist_punto_recta(h, m.a, u) < dist_punto_recta(h, muro.a, muro.direccion)):
                         muro = m
@@ -208,7 +208,11 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
             for sg in segmentos or []:
                 if math.dist(sg.a, sg.b) < 0.5 * L:
                     continue
-                if all(abs((q[0] - h[0]) * (e[1] - h[1]) - (q[1] - h[1]) * (e[0] - h[0])) / L < 0.08
+                # la hoja parte de la bisagra (un extremo justo en ella) y va hacia ese extremo del arco; una línea
+                # del marco paralela y algo corrida no cuenta
+                if min(math.dist(sg.a, h), math.dist(sg.b, h)) > 0.03:
+                    continue
+                if all(abs((q[0] - h[0]) * (e[1] - h[1]) - (q[1] - h[1]) * (e[0] - h[0])) / L < 0.06
                        and -0.1 <= ((q[0] - h[0]) * (e[0] - h[0]) + (q[1] - h[1]) * (e[1] - h[1])) / L <= L + 0.1
                        for q in (sg.a, sg.b)):
                     return True
