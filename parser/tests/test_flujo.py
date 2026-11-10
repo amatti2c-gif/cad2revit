@@ -594,6 +594,26 @@ def test_agregar_muro_en_tramo_vacio(proyecto):
     assert len(modelo["muros"]) == len(modelo0["muros"]) + 2
 
 
+
+def test_quitar_y_editar_muro_creado_por_un_tramo(proyecto):
+    """El muro que agrega la elección de un tramo se puede eliminar o cambiar de lego en Estructuración."""
+    py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))
+    py["capas"] = {"muros": ["A-MURO-HA"]}
+    py["tramos"] = {"2:A-B": "muro:MH-20 Hormigón 20 + estuco"}
+    modelo = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    nuevos = [m for m in modelo["muros"] if m["capa_cad"] == "tramo 2:A-B"]
+    assert len(nuevos) == 2
+    n1, n2 = sorted(nuevos, key=lambda m: m["nivel"])
+    py["muros_quitar"] = [{"nivel": n1["nivel"], "inicio": n1["inicio"], "fin": n1["fin"], "id": n1["id"]}]
+    py["muros_editar"] = [{"nivel": n2["nivel"], "inicio": n2["inicio"], "fin": n2["fin"], "id": n2["id"],
+                           "tipo": "MA-14 Albañilería 14 + estuco"}]
+    modelo2 = construir_modelo(cargar(proyecto("proyecto.yaml", py)))
+    quedan = [m for m in modelo2["muros"] if m["capa_cad"] == "tramo 2:A-B"]
+    assert [m["nivel"] for m in quedan] == [n2["nivel"]]
+    assert quedan[0]["tipo"] == "MA-14 Albañilería 14 + estuco" and quedan[0]["editado"]
+    assert not any("ya no está" in a for a in modelo2["advertencias"])
+
+
 def test_ejes_y_muros_editados_en_la_app(proyecto):
     """Mover, extender, agregar y borrar ejes; dibujar muros. Los tramos se arman con los ejes editados."""
     py = yaml.safe_load(proyecto.ruta.read_text(encoding="utf-8"))

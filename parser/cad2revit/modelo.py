@@ -136,6 +136,46 @@ def _limpiar_contorno(cont: list) -> list:
         return cont
 
 
+def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set, avisar: bool) -> None:
+    """Aplica muros_quitar y muros_editar del proyecto. hechos_* recuerdan qué ediciones ya calzaron con un muro;
+    con avisar=True (última pasada) se advierte de las que no calzaron con ninguno."""
+    def calza(d, q):
+        qa, qb = tuple(q.get("inicio") or ()), tuple(q.get("fin") or ())
+        return (d["nivel"] == q.get("nivel") and len(qa) == 2 and len(qb) == 2
+                and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
+                     or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2)))
+
+    fuera = set()
+    for i, q in enumerate(cfg.proyecto.get("muros_quitar") or [], 1):
+        hallados = {d["id"] for d in modelo["muros"] if calza(d, q)}
+        if hallados:
+            hechos_q.add(i)
+        elif avisar and i not in hechos_q:
+            adv.append(f"Muro quitado {i} ({q.get('nivel')}): ya no está en el modelo; no hay nada que quitar")
+        fuera |= hallados
+    if fuera:
+        modelo["muros"] = [d for d in modelo["muros"] if d["id"] not in fuera]
+        modelo["aberturas"] = [a for a in modelo["aberturas"] if a["muro"] not in fuera]
+        adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
+
+    for i, q in enumerate(cfg.proyecto.get("muros_editar") or [], 1):
+        hallados = [d for d in modelo["muros"] if calza(d, q)]
+        if not hallados:
+            if avisar and i not in hechos_e:
+                adv.append(f"Muro editado {i} ({q.get('nivel')}): ya no está en el modelo; no se aplica")
+            continue
+        hechos_e.add(i)
+        t = cfg.tipo_muro(q["tipo"]) if q.get("tipo") else None
+        if q.get("tipo") and t is None:
+            adv.append(f"Muro editado {i}: el lego '{q['tipo']}' no está en el catálogo; se mantiene el tipo")
+        for d in hallados:
+            if t:
+                d["tipo"] = q["tipo"]
+            if q.get("estructural") is not None:
+                d["estructural"] = bool(q["estructural"])
+            d["editado"] = True
+
+
 def _planos_techo(modelo: dict, sup: str | None) -> list:
     """Planos del techo inclinado si el nivel superior es el de la cubierta (los marcos de ese piso lo siguen)."""
     cub_nivel = next((l["nivel"] for l in modelo["losas"] if l.get("cubierta")), None)
@@ -476,46 +516,16 @@ def construir_modelo(cfg: Configuracion) -> dict:
             d["altura"] = ALTURA_POR_DEFECTO
         modelo["muros"].append(d)
 
-    # Muros quitados en la app (se reconocen por su posición: nivel y extremos)
-    quitar = cfg.proyecto.get("muros_quitar") or []
-    if quitar:
-        fuera = set()
-        for i, q in enumerate(quitar, 1):
-            qa, qb = tuple(q.get("inicio") or ()), tuple(q.get("fin") or ())
-            hallados = [d["id"] for d in modelo["muros"] if d["nivel"] == q.get("nivel") and len(qa) == 2 and len(qb) == 2
-                        and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
-                             or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2))]
-            if not hallados:
-                adv.append(f"Muro quitado {i} ({q.get('nivel')}): ya no está en el plano; no hay nada que quitar")
-            fuera |= set(hallados)
-        if fuera:
-            modelo["muros"] = [d for d in modelo["muros"] if d["id"] not in fuera]
-            modelo["aberturas"] = [a for a in modelo["aberturas"] if a["muro"] not in fuera]
-            adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
-
-    # Muros del plano editados en la app: otro lego y/o carácter (se reconocen por su posición)
-    for i, q in enumerate(cfg.proyecto.get("muros_editar") or [], 1):
-        qa, qb = tuple(q.get("inicio") or ()), tuple(q.get("fin") or ())
-        hallados = [d for d in modelo["muros"] if d["nivel"] == q.get("nivel") and len(qa) == 2 and len(qb) == 2
-                    and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
-                         or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2))]
-        if not hallados:
-            adv.append(f"Muro editado {i} ({q.get('nivel')}): ya no está en el plano; no se aplica")
-            continue
-        t = cfg.tipo_muro(q["tipo"]) if q.get("tipo") else None
-        if q.get("tipo") and t is None:
-            adv.append(f"Muro editado {i}: el lego '{q['tipo']}' no está en el catálogo; se mantiene el tipo")
-        for d in hallados:
-            if t:
-                d["tipo"] = q["tipo"]
-            if q.get("estructural") is not None:
-                d["estructural"] = bool(q["estructural"])
-            d["editado"] = True
+    # Muros quitados / editados en la app (se reconocen por su posición: nivel y extremos). Se aplican antes
+    # de los tramos y otra vez después, para alcanzar también los muros que crea la elección de un tramo.
+    hechos_q, hechos_e = set(), set()
+    _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=False)
 
     # Propuesta de estructuración por tramos de eje (y elecciones del proyecto)
     if lod.get("marcos") and cfg.estructuracion.get("propuesta_por_ejes", True):
         modelo["tramos"] = tramos_mod.proponer(modelo, cfg, [p["nivel"] for p in plantas], siguiente,
                                                cota, adv, marcos_mod)
+    _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=True)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
     # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit
