@@ -739,3 +739,25 @@ def test_cuerpos_de_techo_con_acceso_perpendicular():
     assert abs(mc.altura_techo(pl, (1, 3)) - 3 * t) < 2e-3
     assert abs(mc.altura_techo(pl, (4, -2)) - 2 * math.tan(math.radians(20))) < 2e-3   # cumbrera del acceso
     assert abs(mc.altura_techo(pl, (4, 2)) - 2 * t) < 2e-3             # detrás de la limahoya: manda el techo principal
+
+
+def test_marco_dos_aguas_sin_quiebres():
+    """Un marco de acero es recto o a dos aguas con 4 elementos (2 columnas + 2 vigas), con la pendiente del techo
+    en ambas vigas aunque cruce limahoyas o termine fuera de la cubierta."""
+    from cad2revit import cortes as co, marcos
+    from cad2revit.dxf_reader import Segmento
+    cont = [[2, -3], [6, -3], [6, 0], [8, 0], [8, 1], [20, 1], [20, 6], [0, 6], [0, 0], [2, 0]]
+    bordes = [1, 2, 4, 6, 8, 9]
+    t = math.tan(math.radians(30))
+    frontones = [(6.0, 30.0, 3.0 + 3 * t), (4.0, 20.0, 3.0 + 2 * math.tan(math.radians(20)))]
+    cu = co.cuerpos(cont, bordes, 30.0, [((0, 3), (20, 3))], frontones, cota_cubierta=3.0)
+    planos = marcos.planos_de_cubierta({"contorno": cont, "pendiente": 30.0, "bordes_pendiente": bordes, **cu})
+    cota = {"N1": 0.0, "Cubierta": 3.0}
+    for x, y0, y1 in ((14, 1.2, 6.8), (4, -2.8, 5.8), (7, 0.2, 5.8)):     # sale por el fondo; cruza el acceso; limahoya
+        f = marcos.generar([(Segmento((x, y0), (x, y1), "X"), "MM", "m")], _cfg_marco(techo="dos_aguas"), "N1",
+                           "Cubierta", cota, "N1", [], planos_techo=planos)[0]
+        assert len(f["columnas"]) == 2 and len(f["vigas"]) == 2, (x, f["vigas"])
+        for v in f["vigas"][1:] if x == 4 else f["vigas"]:   # x=4 corre por la cumbrera del acceso: solo su viga trasera
+            ang = math.degrees(math.atan2(abs(v["fin"][2] - v["inicio"][2]), math.dist(v["inicio"][:2], v["fin"][:2])))
+            assert abs(ang - 30) < 0.5, (x, ang)
+        assert abs(f["vigas"][0]["fin"][1] - 3) < 0.05 and abs(f["vigas"][0]["fin"][2] - (3 + 3 * t)) < 0.01

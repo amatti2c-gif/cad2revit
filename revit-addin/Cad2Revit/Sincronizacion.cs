@@ -67,7 +67,7 @@ namespace Cad2Revit
         private readonly List<Grupo> _previos = new();
         private (string tipo, string nivel, string pts, string def)? _actual;
         private readonly List<(ElementId id, string tipo, string nivel, string pts, string def)> _registro = new();
-        private int _sCreados, _sActualizados, _sIguales, _sEliminados;
+        private int _sCreados, _sActualizados, _sIguales, _sEliminados, _sRecreados;
         private readonly List<string> _sConflictos = new(), _sConservados = new();
 
         // ---------------------------------------------------------------- huellas
@@ -190,6 +190,13 @@ namespace Cad2Revit
             if (g == null) { _sCreados++; return true; }
             g.Usado = true;
             existentes = g.Ids.Select(_doc.GetElement).Where(x => x != null).ToList();
+            if (existentes.Count == 0)
+            {
+                // ya no existe en Revit: p. ej. una puerta, ventana o vano cuyo muro se volvió a crear en esta misma
+                // actualización (Revit borra lo alojado junto con el muro). Se crea de nuevo.
+                _sRecreados++;
+                return true;
+            }
             if (g.Def == huella) { _sIguales++; _actual = null; return false; }
             if (g.Modificado)
             {
@@ -259,6 +266,7 @@ namespace Cad2Revit
             if (!Actualizar) return;
             _inf.Contar("Sincronización: nuevos", _sCreados);
             _inf.Contar("Sincronización: actualizados", _sActualizados);
+            if (_sRecreados > 0) _inf.Contar("Sincronización: vueltos a crear (no estaban en Revit)", _sRecreados);
             _inf.Contar("Sincronización: sin cambios (no se tocaron)", _sIguales);
             _inf.Contar("Sincronización: eliminados (ya no están en la app)", _sEliminados);
             if (_sConflictos.Count > 0) _inf.Contar("Sincronización: conflictos (se dejó tu versión de Revit)", _sConflictos.Count);

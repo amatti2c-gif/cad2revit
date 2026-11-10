@@ -222,23 +222,52 @@ def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, f
         en = lambda t: (round(s.a[0] + u[0] * t, 4), round(s.a[1] + u[1] * t, 4))   # noqa: E731
         cortes = [largo * i / n for i in range(n + 1)]
         if techo == "dos_aguas":
-            # bajo el techo inclinado del edificio la viga lo sigue; si no, dos aguas propio del marco
-            ts, h = _perfil_techo(s.a, s.b, planos_techo or [], float(lego.get("pendiente") or PENDIENTE_POR_DEFECTO), cortes)
-            cumbre = max(ts, key=h)
-            if 0.3 < cumbre < largo - 0.3 and h(cumbre) > 1e-3:
-                if lego.get("pilar_central"):
-                    # pilar bajo la cumbrera; el vano máximo subdivide cada mitad si hace falta
-                    mitades = [(0.0, cumbre), (cumbre, largo)]
-                    cortes = sorted({round(t0 + (t1 - t0) * i / max(1, math.ceil((t1 - t0) / vano_max - 1e-9)), 6)
-                                     if vano_max > 0 else t0
-                                     for t0, t1 in mitades
-                                     for i in range((max(1, math.ceil((t1 - t0) / vano_max - 1e-9)) if vano_max > 0 else 1) + 1)}
-                                    | {0.0, cumbre, largo})
-                else:
-                    cortes = [0.0, largo]                     # vano libre: columnas solo en los extremos
-                ts, h = _perfil_techo(s.a, s.b, planos_techo or [],
-                                      float(lego.get("pendiente") or PENDIENTE_POR_DEFECTO), cortes)
-                n = len(cortes) - 1
+            # Un marco de acero no tiene quiebres: o es recto (una viga, horizontal o inclinada) o es a dos aguas
+            # con 4 elementos (2 columnas y 2 vigas que se encuentran en la cumbrera). Las alturas salen del
+            # techo del edificio (leído de las secciones y elevaciones) en las columnas y en la cumbrera.
+            ts_t, h_t = _perfil_techo(s.a, s.b, planos_techo or [], float(lego.get("pendiente") or PENDIENTE_POR_DEFECTO),
+                                      [0.0, largo])
+            muestras = sorted(set(ts_t) | {largo * i / 200 for i in range(201)})
+            cumbre = max(muestras, key=lambda t: (round(h_t(t), 4), -abs(t - largo / 2)))
+            h0, h1, hc = h_t(0.0), h_t(largo), h_t(cumbre)
+            if 0.3 < cumbre < largo - 0.3 and hc - h0 > 0.02 and hc - h1 > 0.02:
+                # cada viga mantiene la pendiente que el techo tiene entre la cumbrera y medio camino al alero
+                # (la de las secciones), hasta su columna: aunque la columna quede en el vuelo del alero o fuera
+                # de la cubierta (un eje que sobresale)
+                cont = getattr(planos_techo, "contorno", None)
+
+                def limite(fin):
+                    if not cont:
+                        return fin
+                    ult = cumbre
+                    for i in range(201):
+                        t = cumbre + (fin - cumbre) * i / 200
+                        if _dentro(cont, en(t)) and h_t(t) > 1e-3:
+                            ult = t
+                    return ult
+                for lado, fin in ((0, 0.0), (1, largo)):
+                    t_ref = cumbre + 0.5 * (limite(fin) - cumbre)
+                    if abs(t_ref - cumbre) > 0.15:
+                        h_fin = hc + (h_t(t_ref) - hc) * (fin - cumbre) / (t_ref - cumbre)
+                        if lado == 0:
+                            h0 = h_fin
+                        else:
+                            h1 = h_fin
+                ts = [0.0, round(cumbre, 6), largo]
+                hs = [h0, hc, h1]
+                # pilar central opcional bajo la cumbrera (sin subdividir: las vigas siguen siendo dos)
+                cortes = [0.0, round(cumbre, 6), largo] if lego.get("pilar_central") else [0.0, largo]
+            else:
+                # recto: viga en línea recta de extremo a extremo (columnas intermedias si el vano máximo lo pide)
+                ts, hs = [0.0, largo], [h0, h1]
+                cortes = sorted(cortes)
+            n = len(cortes) - 1
+
+            def h(t, ts=ts, hs=hs):
+                for (ta, ha), (tb, hb) in zip(zip(ts, hs), zip(ts[1:], hs[1:])):
+                    if ta - 1e-9 <= t <= tb + 1e-9:
+                        return ha + (hb - ha) * (t - ta) / ((tb - ta) or 1.0)
+                return hs[-1]
         else:
             ts, h = sorted(cortes), (lambda t: 0.0)
         alto = lambda t: round(z1 + h(t), 4)          # noqa: E731
@@ -250,6 +279,8 @@ def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, f
                 continue                      # columna ya creada por otro marco del mismo piso
             columnas_vistas.add(clave)
             cols.append({"punto": list(p), "z0": z0, "z1": alto(t)})
+        if techo == "dos_aguas" and len(ts) == 2:
+            ts = sorted(cortes)                       # viga recta: un tramo por vano, todos en la misma línea
         vigas = [{"inicio": [*en(t0), alto(t0)], "fin": [*en(t1), alto(t1)]} for t0, t1 in zip(ts, ts[1:])]
         diagonales = []
         if lego["sistema"] == "arriostrado_x":
