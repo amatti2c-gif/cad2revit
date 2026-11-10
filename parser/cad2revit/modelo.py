@@ -377,12 +377,15 @@ def construir_modelo(cfg: Configuracion) -> dict:
 
         # 1) Aberturas/columnas (se clasifican antes para ayudar a unir muros)
         abert_ins, col_ins = clasificar_inserciones(dib.inserciones, cfg)
-        # puertas dibujadas como arco suelto (sin bloque): solo si el plano no trae bloques de puerta
-        if not any(r.get("categoria") == "puerta" for _, r in abert_ins):
-            arcos = aberturas_mod.puertas_de_arcos(dib.arcos, textos=dib.textos)
-            if arcos:
-                abert_ins += arcos
-                adv.append(f"{nivel}: {len(arcos)} puertas leídas de los arcos de abatimiento (el plano no trae bloques de puerta)")
+        # puertas dibujadas como arco suelto (sin bloque). Se leen siempre (aunque haya bloques en la capa de
+        # puertas: puede ser una capa de muebles mal elegida), salvo donde ya hay un bloque de puerta
+        def _sin_bloque(nuevas, categoria):
+            ya = [i.punto for i, r in abert_ins if r.get("categoria") == categoria]
+            return [(i, r) for i, r in nuevas if all(math.dist(i.punto, q) > 0.6 for q in ya)]
+        arcos = _sin_bloque(aberturas_mod.puertas_de_arcos(dib.arcos, textos=dib.textos), "puerta")
+        if arcos:
+            abert_ins += arcos
+            adv.append(f"{nivel}: {len(arcos)} puertas leídas de los arcos de abatimiento")
         puntos_vano = [i.punto for i, _ in abert_ins]
 
         # 2) Muros
@@ -397,10 +400,10 @@ def construir_modelo(cfg: Configuracion) -> dict:
                            + " (puedes cambiarlas en Planos → Capas de tu plano)")
         muros = detectar_muros(segs_muro, det, puntos_vano, pref)
         # ventanas sin bloque: vano en el muro + rótulo de medidas cerca ("Anc:120 H:150 Ant:100")
-        if not any(r.get("categoria") == "ventana" for _, r in abert_ins):
+        if True:
             rotulos = aberturas_mod.rotulos_ventana(dib.textos)
             if rotulos:
-                vent = aberturas_mod.ventanas_en_vanos(muros, rotulos, puntos_vano)
+                vent = _sin_bloque(aberturas_mod.ventanas_en_vanos(muros, rotulos, puntos_vano), "ventana")
                 if vent:
                     abert_ins += vent
                     puntos_vano += [i.punto for i, _ in vent]
