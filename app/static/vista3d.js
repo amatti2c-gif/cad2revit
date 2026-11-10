@@ -172,9 +172,14 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
     const dir = new THREE.Vector3(f.direccion[0], 0, -f.direccion[1]);
     const enPlano = new THREE.Vector3(-f.direccion[1], 0, -f.direccion[0]);   // normal al plano del marco
     const pc = f.perfiles.columna, pv = f.perfiles.viga, pd = f.perfiles.diagonal;
-    for (const c of f.columnas) barra([c.punto[0], c.punto[1], c.z0], [c.punto[0], c.punto[1], c.z1], pc.h, pc.b, mAcero, enPlano);
-    for (const v of f.vigas) barra([v.inicio[0], v.inicio[1], v.inicio[2] - pv.h / 2], [v.fin[0], v.fin[1], v.fin[2] - pv.h / 2],
-                                   pv.b, pv.h, mAcero, new THREE.Vector3(0, 1, 0));
+    for (const c of f.columnas) barra([c.punto[0], c.punto[1], c.z0], [c.punto[0], c.punto[1], c.z1 - 0.02], pc.h, pc.b, mAcero, enPlano);
+    for (const v of f.vigas) {
+      // la línea de la viga es su cara superior (bajo la cubierta): el centro baja h/2 medido en vertical
+      const horiz = Math.hypot(v.fin[0] - v.inicio[0], v.fin[1] - v.inicio[1]) || 1e-9;
+      const baja = pv.h / 2 * Math.hypot(1, (v.fin[2] - v.inicio[2]) / horiz) + 0.02;
+      barra([v.inicio[0], v.inicio[1], v.inicio[2] - baja], [v.fin[0], v.fin[1], v.fin[2] - baja],
+            pv.b, pv.h, mAcero, new THREE.Vector3(0, 1, 0));
+    }
     if (pd) for (const d of f.diagonales) barra(d.inicio, d.fin, pd.b, pd.h, mDiag, enPlano);
     void dir;
   }
@@ -263,13 +268,35 @@ function funcionTecho(l) {
     const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
     return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t, a, ux: (b[0] - a[0]) / L, uy: (b[1] - a[1]) / L, L };
   });
+  const dentro = q => {
+    let c = false;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const [x1, y1] = pts[i], [x2, y2] = pts[j];
+      if ((y1 > q[1]) !== (y2 > q[1]) && q[0] < x1 + (q[1] - y1) * (x2 - x1) / (y2 - y1)) c = !c;
+    }
+    return c;
+  };
+  const alBorde = q => {          // punto del contorno más cercano
+    let mejor = q, dm = Infinity;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const a = pts[j], b = pts[i], dx = b[0] - a[0], dy = b[1] - a[1];
+      const k = Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / (dx * dx + dy * dy || 1e-12)));
+      const r = [a[0] + dx * k, a[1] + dy * k], d = Math.hypot(q[0] - r[0], q[1] - r[1]);
+      if (d < dm) { mejor = r; dm = d; }
+    }
+    return mejor;
+  };
   return p => {
+    if (!dentro(p)) p = alBorde(p);       // fuera de la cubierta: altura del alero o del frontón más cercano
     const validos = [], todos = [];
     for (const pl of planos) {
       const hv = pl.c0 + pl.cx * p[0] + pl.cy * p[1];
-      if (hv < -1e-9) continue;
-      todos.push(hv);
       const tp = (p[0] - pl.a[0]) * pl.ux + (p[1] - pl.a[1]) * pl.uy;
+      if (hv < -1e-9) {
+        if (tp >= -1e-6 && tp <= pl.L + 1e-6) return 0;   // más allá del alero
+        continue;
+      }
+      todos.push(hv);
       const d = Math.abs((p[0] - pl.a[0]) * pl.uy - (p[1] - pl.a[1]) * pl.ux);
       if (tp >= -d - 1e-6 && tp <= pl.L + d + 1e-6) validos.push(hv);
     }

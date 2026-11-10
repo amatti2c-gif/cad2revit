@@ -21,6 +21,34 @@ TECHOS = {"horizontal", "dos_aguas"}
 PENDIENTE_POR_DEFECTO = 15.0          # grados, si el lego es a dos aguas y el edificio no tiene techo inclinado
 
 
+class Planos(list):
+    """Lista de planos del techo que además recuerda el contorno de la cubierta."""
+    contorno: list | None = None
+
+
+def _dentro(pts, p) -> bool:
+    x, y, c = p[0], p[1], False
+    for i in range(len(pts)):
+        (x1, y1), (x2, y2) = pts[i], pts[i - 1]
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            c = not c
+    return c
+
+
+def _mas_cercano_en_borde(pts, p):
+    mejor, dm = p, float("inf")
+    for i in range(len(pts)):
+        a, b = pts[i - 1], pts[i]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L2 = dx * dx + dy * dy or 1e-12
+        k = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+        q = (a[0] + dx * k, a[1] + dy * k)
+        d = math.dist(p, q)
+        if d < dm:
+            mejor, dm = q, d
+    return mejor
+
+
 def planos_de_cubierta(cub: dict | None) -> list[tuple]:
     """Planos del techo inclinado del edificio, uno por borde con pendiente: (c0, cx, cy, a, b) con
     h(x, y) = c0 + cx*x + cy*y la altura sobre el alero, y a-b el borde que lo origina."""
@@ -34,7 +62,8 @@ def planos_de_cubierta(cub: dict | None) -> list[tuple]:
         pts = pts[::-1]
         bordes = [n - 1 if i == n - 1 else n - 2 - i for i in bordes]
     t = math.tan(math.radians(cub["pendiente"]))
-    planos = []
+    planos = Planos()
+    planos.contorno = pts
     for i in bordes:
         a, b = pts[i], pts[(i + 1) % n]
         L = math.dist(a, b) or 1.0
@@ -46,15 +75,22 @@ def planos_de_cubierta(cub: dict | None) -> list[tuple]:
 def altura_techo(planos: list, p) -> float:
     """Altura del techo sobre el alero en el punto p. Cada plano actúa solo de su lado del borde y frente a él
     (con un margen de 45°): así un acceso a dos aguas perpendicular no corta el resto del techo."""
+    contorno = getattr(planos, "contorno", None)
+    if contorno and not _dentro(contorno, p):
+        # fuera de la cubierta (p. ej. un eje que sale del edificio): la altura del borde más cercano,
+        # o sea el alero (0) o el perfil del frontón
+        p = _mas_cercano_en_borde(contorno, p)
     validos, todos = [], []
     for c0, cx, cy, a, b in planos:
         hv = c0 + cx * p[0] + cy * p[1]
-        if hv < -1e-9:
-            continue
-        todos.append(hv)
         L = math.dist(a, b) or 1.0
         ux, uy = (b[0] - a[0]) / L, (b[1] - a[1]) / L
         tp = (p[0] - a[0]) * ux + (p[1] - a[1]) * uy
+        if hv < -1e-9:
+            if -1e-6 <= tp <= L + 1e-6:
+                return 0.0                        # más allá del alero (p. ej. un eje que sale del edificio)
+            continue
+        todos.append(hv)
         d = abs((p[0] - a[0]) * uy - (p[1] - a[1]) * ux)
         if -d - 1e-6 <= tp <= L + d + 1e-6:
             validos.append(hv)

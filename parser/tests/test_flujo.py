@@ -684,3 +684,14 @@ def test_nivel_buhardilla_opcional(proyecto, tmp_path):
     assert len(buh) == 2 and all(m["nivel"] == "Cubierta" and m["unir_techo"] and m["nivel_superior"] is None for m in buh)
     assert all(abs(m["inicio"][1] - m["fin"][1]) > 5 for m in buh)       # los frontones (perpendiculares a la cumbrera)
     assert all(1.6 < m["altura"] < 2.0 for m in buh)                       # hasta la cumbrera (1,75 m sobre el alero)
+
+
+def test_altura_techo_fuera_de_la_cubierta():
+    """Un eje que sale del edificio no debe levantar el techo: fuera del contorno vale la altura del borde."""
+    from cad2revit import marcos as mc
+    cub = {"contorno": [[0, 0], [10, 0], [10, 6], [0, 6]], "pendiente": 45.0, "bordes_pendiente": [0, 2]}
+    pl = mc.planos_de_cubierta(cub)
+    assert abs(mc.altura_techo(pl, (5, 3)) - 3.0) < 1e-6          # cumbrera
+    assert mc.altura_techo(pl, (5, -1)) == 0.0                   # delante del alero
+    assert abs(mc.altura_techo(pl, (-1, 3)) - 3.0) < 1e-6        # más allá del frontón: su perfil
+    assert abs(mc.altura_techo(pl, (12, 1)) - 1.0) < 1e-6
