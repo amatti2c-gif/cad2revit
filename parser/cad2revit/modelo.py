@@ -256,12 +256,28 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
     if forma["forma"] != "plana" and not forma["bordes_pendiente"]:
         adv.append("Cubierta: no se pudo saber qué bordes llevan pendiente; se deja plana")
         forma = {"forma": "plana", "bordes_pendiente": []}
+    # cuerpos del techo: cumbrera, pendiente y altura de alero de cada agua (consistente con las elevaciones)
+    extra = {}
+    if forma["forma"] in ("dos aguas", "varias aguas"):
+        frontones = [fa for v in vistas_altura for fa in v.get("aguas") or []]
+        cota_cub = next((nv["cota"] for nv in modelo["niveles"][::-1]), None) if modelo.get("niveles") else None
+        cu = cortes_mod.cuerpos(cont, forma["bordes_pendiente"], pendiente, cumbreras, frontones, cota_cub)
+        if cu:
+            extra = cu
+            for k, c in enumerate(cu["cuerpos"]):
+                bs = [b for b, ck in zip(forma["bordes_pendiente"], cu["cuerpos_bordes"]) if ck == k]
+                bajo = min(z for z, ck in zip(cu["alturas_bordes"], cu["cuerpos_bordes"]) if ck == k)
+                altos = [z - bajo for z, ck in zip(cu["alturas_bordes"], cu["cuerpos_bordes"]) if ck == k and z - bajo > 0.05]
+                adv.append(f"Cubierta, cuerpo {k + 1} ({len(bs)} aguas): pendiente {c['pendiente']}°, cumbrera a "
+                           f"{c['alto']:.2f} m sobre el nivel de cubierta" + (f"; {len(altos)} alero(s) más alto(s) para llegar a la "
+                                                                  f"misma cumbrera (hasta {max(altos):.2f} m)" if altos else ""))
     if vistas_altura:
         adv.append(f"Cubierta {forma['forma']}" + (f", pendiente {pendiente}°" if forma["forma"] != "plana" else "")
                    + f" (de {len(vistas_altura)} cortes/fachadas" + (" y la planta de techo)" if techo_cad else ")"))
     return {"forma": forma["forma"], "contorno": cont, "pendiente": pendiente if forma["forma"] != "plana" else 0.0,
             "bordes_pendiente": forma["bordes_pendiente"],
-            "cumbreras": [[list(a), list(b)] for a, b in cumbreras], "aleros_de_planta_de_techo": bool(techo_cad)}
+            "cumbreras": [[list(a), list(b)] for a, b in cumbreras], "aleros_de_planta_de_techo": bool(techo_cad),
+            **extra}
 
 
 # ---------------------------------------------------------------- principal
@@ -295,7 +311,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
         tit = cortes_mod.titulos(leer(cfg.ruta(vistas_mod.archivo_de(e)), unidades), [caja]).get(0)
         if pf:
             vistas_altura.append(dict(pf, titulo=tit[2] if tit else Path(vistas_mod.archivo_de(e)).name,
-                                      tipo=tit[0] if tit else "elevacion", letra=tit[1] if tit else None))
+                                      tipo=tit[0] if tit else "elevacion", letra=tit[1] if tit else None,
+                                      aguas=[(w, g, round(y - pf["base"], 3)) for w, g, y in cortes_mod.aguas(dib_e, caja)]))
     techo_cad = None
     if cfg.proyecto.get("techo"):
         t = cfg.proyecto["techo"]
@@ -450,7 +467,9 @@ def construir_modelo(cfg: Configuracion) -> dict:
                     modelo["losas"].append(dict(id=f"{sup}-L001", nivel=sup, tipo=cub_def,
                                                 contorno=cub["contorno"], cubierta=True,
                                                 pendiente=cub["pendiente"], bordes_pendiente=cub["bordes_pendiente"],
-                                                forma=cub["forma"]))
+                                                forma=cub["forma"],
+                                                **{k: cub[k] for k in ("pendientes_bordes", "alturas_bordes",
+                                                                        "cuerpos_bordes", "cuerpos") if k in cub}))
                     modelo["cubierta"] = cub
                     tipos_losa_usados.add(cub_def)
             if lod["cielos"]:

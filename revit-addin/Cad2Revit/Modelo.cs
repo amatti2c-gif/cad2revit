@@ -103,6 +103,10 @@ namespace Cad2Revit
         /// <summary>Cubierta inclinada: grados de pendiente y bordes del contorno que la llevan (0 = plana).</summary>
         public double Pendiente { get; set; }
         public List<int> BordesPendiente { get; set; } = new();
+        /// <summary>Alineadas con BordesPendiente: grados de cada agua y altura de su alero sobre el nivel (m).
+        /// Un techo con varios cuerpos (p. ej. acceso perpendicular más plano) y aleros a distinta altura.</summary>
+        public List<double> PendientesBordes { get; set; } = new();
+        public List<double> AlturasBordes { get; set; } = new();
         public string Forma { get; set; }
         public double Desfase { get; set; }
         public List<double[]> Contorno { get; set; } = new();

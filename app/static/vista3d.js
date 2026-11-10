@@ -218,11 +218,11 @@ export function mostrar(contenedor, modelo, colores, hastaNivel) {
 /** Cubierta inclinada: malla fina sobre el contorno con la altura del techo en cada punto (planos de pendiente
  *  con su zona de influencia, como el techo por contorno de Revit). */
 function techoInclinado(grupo, l, z0, mTecho) {
-  const altura = funcionTecho(l);
+  const altura = funcionTecho(l, true);
   const pts = l.contorno.map(p => [p[0], p[1]]);
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const paso = Math.max(0.3, Math.max(x1 - x0, y1 - y0) / 160);
+  const paso = Math.max(0.1, Math.max(x1 - x0, y1 - y0) / 350);
   // recorta el contorno a una celda rectangular (Sutherland–Hodgman contra cada lado de la celda)
   const recortar = (poli, eje, valor, menor) => {
     const out = [], dentro = q => (menor ? q[eje] <= valor + 1e-9 : q[eje] >= valor - 1e-9);
@@ -256,18 +256,33 @@ function techoInclinado(grupo, l, z0, mTecho) {
 
 /** Altura del techo inclinado sobre su nivel en un punto de la planta. Cada plano de pendiente actúa solo de su
  *  lado del borde y frente a él (margen de 45°): un acceso a dos aguas perpendicular no corta el resto. */
-function funcionTecho(l) {
+function funcionTecho(l, conVuelo = false) {
+  // conVuelo: deja los aleros que vuelan bajo el nivel de cubierta (para dibujar el techo); si no, mínimo 0
+  const piso = conVuelo ? -Infinity : 0;
   let pts = l.contorno.map(p => [p[0], p[1]]);
   const n = pts.length;
   let bordes = l.bordes_pendiente.slice();
+  const k = bordes.length;
+  let pends = l.pendientes_bordes || bordes.map(() => l.pendiente);
+  let altos = l.alturas_bordes || bordes.map(() => 0);
+  let cuerpoDe = l.cuerpos_bordes || bordes.map(() => 0);
+  if (pends.length !== k || altos.length !== k || cuerpoDe.length !== k) {
+    pends = bordes.map(() => l.pendiente); altos = bordes.map(() => 0); cuerpoDe = bordes.map(() => 0);
+  }
+  const cuerpos = l.cuerpos || [];
   const area = pts.reduce((a, p, i) => { const q = pts[(i + 1) % n]; return a + p[0] * q[1] - q[0] * p[1]; }, 0);
   if (area < 0) { pts = pts.slice().reverse(); bordes = bordes.map(i => (i === n - 1 ? n - 1 : n - 2 - i)); }
-  const t = Math.tan(l.pendiente * Math.PI / 180);
-  const planos = bordes.map(i => {
+  const planos = bordes.map((i, j) => {
+    const t = Math.tan(pends[j] * Math.PI / 180);
     const a = pts[i], b = pts[(i + 1) % n], L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
     const nx = -(b[1] - a[1]) / L, ny = (b[0] - a[0]) / L;
-    return { c0: -(a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t, a, ux: (b[0] - a[0]) / L, uy: (b[1] - a[1]) / L, L };
+    return { c0: altos[j] - (a[0] * nx + a[1] * ny) * t, cx: nx * t, cy: ny * t, a, ux: (b[0] - a[0]) / L, uy: (b[1] - a[1]) / L, L,
+             cuerpo: cuerpoDe[j] };
   });
+  const enCuerpo = (c, p) => {
+    const [ux, uy] = c.direccion, s = -uy * p[0] + ux * p[1], t = ux * p[0] + uy * p[1];
+    return s >= c.franja[0] - 0.05 && s <= c.franja[1] + 0.05 && t >= c.tramo[0] - 0.05 && t <= c.tramo[1] + 0.05;
+  };
   const dentro = q => {
     let c = false;
     for (let i = 0, j = n - 1; i < n; j = i++) {
@@ -288,19 +303,26 @@ function funcionTecho(l) {
   };
   return p => {
     if (!dentro(p)) p = alBorde(p);       // fuera de la cubierta: altura del alero o del frontón más cercano
+    if (cuerpos.length > 1) {
+      // cada cuerpo es un dos aguas (mínimo de sus planos); el techo es el más alto de los cuerpos (limahoyas)
+      const vals = [];
+      cuerpos.forEach((c, kc) => {
+        if (!enCuerpo(c, p)) return;
+        const hs = planos.filter(pl => pl.cuerpo === kc).map(pl => pl.c0 + pl.cx * p[0] + pl.cy * p[1]);
+        if (hs.length) vals.push(Math.min(...hs));
+      });
+      if (vals.length) return Math.max(piso, ...vals);
+    }
     const validos = [], todos = [];
     for (const pl of planos) {
       const hv = pl.c0 + pl.cx * p[0] + pl.cy * p[1];
       const tp = (p[0] - pl.a[0]) * pl.ux + (p[1] - pl.a[1]) * pl.uy;
-      if (hv < -1e-9) {
-        if (tp >= -1e-6 && tp <= pl.L + 1e-6) return 0;   // más allá del alero
-        continue;
-      }
+      if (hv < (conVuelo ? -5 : -1e-9)) continue;
       todos.push(hv);
       const d = Math.abs((p[0] - pl.a[0]) * pl.uy - (p[1] - pl.a[1]) * pl.ux);
       if (tp >= -d - 1e-6 && tp <= pl.L + d + 1e-6) validos.push(hv);
     }
     const lista = validos.length ? validos : todos;
-    return lista.length ? Math.max(0, Math.min(...lista)) : 0;
+    return lista.length ? Math.max(piso, Math.min(...lista)) : 0;
   };
 }

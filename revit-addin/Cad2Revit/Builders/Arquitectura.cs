@@ -169,7 +169,14 @@ namespace Cad2Revit
             var techo = _doc.Create.NewFootPrintRoof(bordes, nivel, tipo, out curvas)
                         ?? throw new Exception("Revit no pudo crear el techo con ese contorno");
             if (curvas == null || curvas.Size == 0) throw new Exception("Revit no devolvió los bordes del techo");
-            double tangente = Math.Tan(l.Pendiente * Math.PI / 180.0);
+            int nb = l.BordesPendiente.Count;
+            bool porBorde = l.PendientesBordes != null && l.PendientesBordes.Count == nb;
+            bool conAlturas = l.AlturasBordes != null && l.AlturasBordes.Count == nb;
+            // aleros a distinta altura: el techo parte del más bajo (bajo el nivel si el alero vuela) y cada
+            // borde sube lo suyo
+            double baseTecho = conAlturas && nb > 0 ? Math.Min(0.0, l.AlturasBordes.Min()) : 0.0;
+            if (Math.Abs(baseTecho) > 1e-6)
+                U.Fijar(techo, BuiltInParameter.ROOF_LEVEL_OFFSET_PARAM, U.M(baseTecho));
             foreach (ModelCurve mc in curvas)
             {
                 var c = mc.GeometryCurve;
@@ -177,9 +184,21 @@ namespace Cad2Revit
                 var borde = extremos.FirstOrDefault(e =>
                     (e.a.IsAlmostEqualTo(p0, 1e-4) && e.b.IsAlmostEqualTo(p1, 1e-4)) ||
                     (e.a.IsAlmostEqualTo(p1, 1e-4) && e.b.IsAlmostEqualTo(p0, 1e-4)));
-                bool pendiente = borde.a != null && l.BordesPendiente.Contains(borde.i);
+                int j = borde.a != null ? l.BordesPendiente.IndexOf(borde.i) : -1;
+                bool pendiente = j >= 0;
                 techo.set_DefinesSlope(mc, pendiente);
-                if (pendiente) techo.set_SlopeAngle(mc, tangente);
+                if (!pendiente) continue;
+                double grados = porBorde ? l.PendientesBordes[j] : l.Pendiente;
+                techo.set_SlopeAngle(mc, Math.Tan(grados * Math.PI / 180.0));
+                if (conAlturas)
+                {
+                    double sube = l.AlturasBordes[j] - baseTecho;
+                    if (sube > 1e-4)
+                    {
+                        try { techo.set_Offset(mc, U.M(sube)); }
+                        catch (Exception ex) { _inf.Advertencia($"{l.Id}: no se pudo subir el alero de un borde {sube:0.00} m ({ex.Message})"); }
+                    }
+                }
             }
             Marcar(techo, l.Id);
             _inf.Contar($"Cubiertas inclinadas ({l.Forma})");
@@ -266,6 +285,10 @@ namespace Cad2Revit
                         {
                             var simple = new LosaDef { Id = l.Id, Nivel = l.Nivel, Tipo = l.Tipo, Cubierta = true, Forma = l.Forma,
                                                        Pendiente = l.Pendiente, Contorno = l.Contorno, BordesPendiente = principales };
+                            if (l.PendientesBordes.Count == l.BordesPendiente.Count)
+                                simple.PendientesBordes = principales.Select(i => l.PendientesBordes[l.BordesPendiente.IndexOf(i)]).ToList();
+                            if (l.AlturasBordes.Count == l.BordesPendiente.Count)
+                                simple.AlturasBordes = principales.Select(i => l.AlturasBordes[l.BordesPendiente.IndexOf(i)]).ToList();
                             if (Intentar(l.Id + " (techo simplificado)", () => CrearTechoInclinado(simple, nivel), false))
                             {
                                 _inf.Advertencia($"{l.Id}: el techo a {l.Forma} completo no se pudo crear ({motivo}); se creó con pendiente " +

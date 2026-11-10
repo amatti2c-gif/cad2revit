@@ -77,14 +77,58 @@ def marcas_corte(dib: DibujoCAD, letras: set[str]) -> dict[str, tuple[tuple, tup
         m = RX_LETRA.match(texto) or re.match(r"^\s*([A-Z0-9]{1,2})\s*[-–]\s*\1\s*$", texto)
         if m and m.group(1).upper() in letras:
             puntos.setdefault(m.group(1).upper(), []).append(p)
+    # las letras de corte suelen repetir los nombres de los ejes (A, B, C…): se prefiere el par unido por la
+    # línea de corte dibujada; si no, el par alineado en X o en Y; si no, el más lejano
+    segs = [(s.a, s.b) for s in dib.segmentos if math.dist(s.a, s.b) >= 1.0]
+
+    def unidos(p, q):
+        for a, b in segs:
+            if (math.dist(a, p) < 0.8 and math.dist(b, q) < 0.8) or (math.dist(a, q) < 0.8 and math.dist(b, p) < 0.8):
+                return True
+        return False
+
     out = {}
     for letra, ps in puntos.items():
-        if len(ps) < 2:
+        pares = [(p, q) for i, p in enumerate(ps) for q in ps[i + 1:] if math.dist(p, q) >= 1.0]
+        if not pares:
             continue
-        a, b = max(((p, q) for i, p in enumerate(ps) for q in ps[i + 1:]), key=lambda pq: math.dist(*pq))
-        if math.dist(a, b) >= 1.0:
-            out[letra] = (tuple(a), tuple(b))
+        def nota(pq):
+            p, q = pq
+            alineado = min(abs(p[0] - q[0]), abs(p[1] - q[1])) < 0.2
+            return (unidos(p, q), alineado, math.dist(p, q))
+        a, b = max(pares, key=nota)
+        out[letra] = (tuple(a), tuple(b))
     return out
+
+
+def aguas(dib: DibujoCAD, caja) -> list[tuple[float, float, float]]:
+    """Frontones simétricos (/\\) dibujados en un corte o fachada: (ancho horizontal, pendiente en grados,
+    cota Y de la cumbrera en el dibujo).
+    Sirven para saber la pendiente de cada cuerpo del techo según su ancho."""
+    x0, y0, x1, y1 = caja
+    inc = []
+    for s in dib.segmentos:
+        if not all(x0 - 0.01 <= q[0] <= x1 + 0.01 and y0 - 0.01 <= q[1] <= y1 + 0.01 for q in (s.a, s.b)):
+            continue
+        dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+        L = math.hypot(dx, dy)
+        if L < 0.8 or not 0.1 < abs(dy) / L < 0.95:
+            continue
+        alto, bajo = (s.a, s.b) if s.a[1] > s.b[1] else (s.b, s.a)
+        inc.append((alto, bajo, math.degrees(math.atan2(abs(dy), abs(dx)))))
+    out = set()
+    for i, (t1, b1, g1) in enumerate(inc):
+        for t2, b2, g2 in inc[i + 1:]:
+            if math.dist(t1, t2) > 0.03 or abs(g1 - g2) > 0.5:
+                continue
+            w1, w2 = b1[0] - t1[0], b2[0] - t2[0]
+            if w1 * w2 >= 0 or abs(abs(w1) - abs(w2)) > 0.15:
+                continue                                  # mismo lado, o asimétrico
+            out.add((round(abs(w1) + abs(w2), 2), round((g1 + g2) / 2, 1), round(t1[1], 3), round(t1[0], 3)))
+    # de las líneas paralelas de un mismo techo (cubierta, costanera, cielo…) queda solo la de más arriba
+    exterior = [f for f in out if not any(abs(o[3] - f[3]) < 0.05 and abs(o[1] - f[1]) < 0.5 and o[2] > f[2] + 1e-3
+                                          for o in out)]
+    return sorted((w, g, y) for w, g, y, _ in exterior)
 
 
 def _base(dib: DibujoCAD, caja, patron_nivel: str | None) -> float:
@@ -297,3 +341,95 @@ def bordes_por_achurado(contorno: list, lineas: list, adentro: float = 0.5, radi
         else:
             out.append(None)
     return out
+
+
+def cuerpos(contorno: list, bordes: list, pendiente: float, cumbreras: list, frontones: list,
+            cota_cubierta: float | None = None) -> dict | None:
+    """Cuerpos del techo: los bordes con pendiente se agrupan por dirección (un cuerpo principal y, p. ej., un
+    acceso perpendicular). En cada cuerpo:
+      - la cumbrera es la de la planta de techo (si está dibujada) o la línea media entre los aleros extremos;
+      - la pendiente es la del frontón de las elevaciones cuyo ancho calza con el del cuerpo (o la general);
+      - todas las aguas llegan a la misma cumbrera: un alero más cercano a ella queda más alto (alturas_bordes).
+    Devuelve, alineado con `bordes`: pendientes_bordes (grados), alturas_bordes (m sobre el nivel de cubierta),
+    cuerpos_bordes (índice de cuerpo) y la lista de cuerpos (dirección, franja y tramo que cubren)."""
+    n = len(contorno)
+    if not bordes or n < 3:
+        return None
+    def direc(i):
+        a, b = contorno[i], contorno[(i + 1) % n]
+        L = math.dist(a, b) or 1.0
+        return ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+
+    grupos: list[list[int]] = []
+    for i in sorted(bordes, key=lambda i: -math.dist(contorno[i], contorno[(i + 1) % n])):
+        u = direc(i)
+        for g in grupos:
+            v = direc(g[0])
+            if abs(u[0] * v[1] - u[1] * v[0]) < math.sin(math.radians(10)):
+                g.append(i)
+                break
+        else:
+            grupos.append([i])
+
+    datos = {}
+    lista = []
+    for k, g in enumerate(grupos):
+        u = direc(g[0])
+        nrm = (-u[1], u[0])
+        S = lambda p: nrm[0] * p[0] + nrm[1] * p[1]          # noqa: E731  (coordenada a través de la cumbrera)
+        T = lambda p: u[0] * p[0] + u[1] * p[1]              # noqa: E731  (coordenada a lo largo)
+        s_b = {i: (S(contorno[i]) + S(contorno[(i + 1) % n])) / 2 for i in g}
+        s0, s1 = min(s_b.values()), max(s_b.values())
+        ts = [T(contorno[j]) for i in g for j in (i, (i + 1) % n)]
+        t0, t1 = min(ts), max(ts)
+        # cumbrera dibujada en la planta de techo, paralela y dentro de la franja del cuerpo
+        cands = []
+        for a, b in cumbreras:
+            L = math.dist(a, b)
+            if L < 0.5 or abs((b[0] - a[0]) * nrm[0] + (b[1] - a[1]) * nrm[1]) / L > math.sin(math.radians(5)):
+                continue
+            sr = (S(a) + S(b)) / 2
+            ta, tb = sorted((T(a), T(b)))
+            if s0 + 0.3 < sr < s1 - 0.3 and min(tb, t1) - max(ta, t0) >= 0.5 * L:
+                cands.append(sr)
+        if cands and s1 - s0 > 0.6:
+            sr = max(cands, key=lambda sr: min(sr - s0, s1 - sr))
+        else:
+            sr = (s0 + s1) / 2
+        # pendiente: frontón de las elevaciones con el mismo ancho que el cuerpo
+        ancho = s1 - s0
+        cerca = sorted((abs(f[0] - ancho), -f[2] if len(f) > 2 and f[2] is not None else 0.0, f) for f in frontones
+                       if abs(f[0] - ancho) <= 0.35)
+        elegido = cerca[0][2] if cerca else None
+        pend = elegido[1] if elegido else pendiente
+        tg = math.tan(math.radians(pend))
+        lados = {s_b[i] < sr for i in g}
+        alto = max(tg * abs(s_b[i] - sr) for i in g)
+        if elegido and len(elegido) > 2 and elegido[2] is not None and cota_cubierta is not None and len(lados) == 2:
+            # altura de la cumbrera leída del frontón (sobre el nivel de cubierta): los aleros quedan bajo el
+            # nivel lo que corresponde a su vuelo
+            if 0.3 < elegido[2] - cota_cubierta < alto + 1.0:
+                alto = elegido[2] - cota_cubierta
+        for i in g:
+            sube = alto - tg * abs(s_b[i] - sr) if len(lados) == 2 else 0.0
+            datos[i] = (pend, round(sube, 3), k)
+        lista.append({"direccion": [round(u[0], 6), round(u[1], 6)], "franja": [round(s0, 3), round(s1, 3)],
+                      "tramo": [round(t0, 3), round(t1, 3)], "cumbrera": round(sr, 3), "pendiente": pend,
+                      "alto": round(alto, 3)})
+    # cada cuerpo se prolonga a lo largo hasta la cumbrera de otro cuerpo que lo cruza (allí se mete bajo él)
+    for k, c in enumerate(lista):
+        u = c["direccion"]
+        for j, o in enumerate(lista):
+            if j == k or abs(u[0] * o["direccion"][0] + u[1] * o["direccion"][1]) > 0.2:
+                continue
+            # la cumbrera del otro cuerpo, medida a lo largo de este (son perpendiculares)
+            on = (-o["direccion"][1], o["direccion"][0])
+            tr = o["cumbrera"] * (u[0] * on[0] + u[1] * on[1])
+            ancho = c["franja"][1] - c["franja"][0]
+            t0, t1 = c["tramo"]
+            if t1 < tr <= t1 + ancho:
+                c["tramo"][1] = round(tr, 3)
+            elif t0 - ancho <= tr < t0:
+                c["tramo"][0] = round(tr, 3)
+    return {"pendientes_bordes": [datos[i][0] for i in bordes], "alturas_bordes": [datos[i][1] for i in bordes],
+            "cuerpos_bordes": [datos[i][2] for i in bordes], "cuerpos": lista}

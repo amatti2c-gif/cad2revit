@@ -387,6 +387,34 @@
               "cuatro aguas",
               "varias aguas"
             ]
+          },
+          "pendientes_bordes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Grados de cada agua, alineado con bordes_pendiente"
+          },
+          "alturas_bordes": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Altura del alero de cada agua sobre el nivel (m), alineado con bordes_pendiente; negativa si el alero vuela bajo el nivel"
+          },
+          "cuerpos_bordes": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Cuerpo del techo de cada agua, alineado con bordes_pendiente"
+          },
+          "cuerpos": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Cuerpos del techo: dirección de la cumbrera, franja y tramo que cubren, pendiente y altura"
           }
         }
       }

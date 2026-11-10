@@ -703,7 +703,8 @@ def test_nivel_buhardilla_opcional(proyecto, tmp_path):
     buh = [m for m in modelo["muros"] if m.get("buhardilla")]
     assert len(buh) == 2 and all(m["nivel"] == "Cubierta" and m["unir_techo"] and m["nivel_superior"] is None for m in buh)
     assert all(abs(m["inicio"][1] - m["fin"][1]) > 5 for m in buh)       # los frontones (perpendiculares a la cumbrera)
-    assert all(1.6 < m["altura"] < 2.0 for m in buh)                       # hasta la cumbrera (1,75 m sobre el alero)
+    # hasta la cumbrera: 4,0 en el corte, 1,5 m sobre el nivel de cubierta (2,5); el alero vuela 0,5 m bajo él
+    assert all(1.45 < m["altura"] < 1.65 for m in buh), [m["altura"] for m in buh]
 
 
 def test_altura_techo_fuera_de_la_cubierta():
@@ -715,3 +716,26 @@ def test_altura_techo_fuera_de_la_cubierta():
     assert mc.altura_techo(pl, (5, -1)) == 0.0                   # delante del alero
     assert abs(mc.altura_techo(pl, (-1, 3)) - 3.0) < 1e-6        # más allá del frontón: su perfil
     assert abs(mc.altura_techo(pl, (12, 1)) - 1.0) < 1e-6
+
+
+def test_cuerpos_de_techo_con_acceso_perpendicular():
+    """Cuerpo principal con un tramo retirado (su alero sube para llegar a la misma cumbrera) y un acceso con
+    su propio dos aguas, más plano, leído del frontón de la fachada."""
+    from cad2revit import cortes as co, marcos as mc
+    # principal 0..20 x 0..6, salvo x 8..20 cuyo frente está en y=1; acceso 2..6 sale hasta y=-3
+    cont = [[2, -3], [6, -3], [6, 0], [8, 0], [8, 1], [20, 1], [20, 6], [0, 6], [0, 0], [2, 0]]
+    bordes = [1, 2, 4, 6, 8, 9]       # costados del acceso; frentes, frente retirado y fondo del cuerpo principal
+    t = math.tan(math.radians(30))
+    frontones = [(6.0, 30.0, 3.0 + 3 * t), (4.0, 20.0, 3.0 + 2 * math.tan(math.radians(20)))]
+    cu = co.cuerpos(cont, bordes, 30.0, [((0, 3), (20, 3))], frontones, cota_cubierta=3.0)
+    assert len(cu["cuerpos"]) == 2
+    por = dict(zip(bordes, zip(cu["pendientes_bordes"], cu["alturas_bordes"])))
+    assert por[1][0] == 20.0 and por[9][0] == 20.0                     # acceso
+    assert por[6][0] == 30.0 and abs(por[6][1]) < 1e-3                  # fondo
+    assert abs(por[4][1] - t) < 1e-3                                   # frente retirado 1 m: alero más alto
+    cub = {"contorno": cont, "pendiente": 30.0, "bordes_pendiente": bordes, **cu}
+    pl = mc.planos_de_cubierta(cub)
+    assert abs(mc.altura_techo(pl, (14, 3)) - 3 * t) < 2e-3            # misma cumbrera en todo el largo
+    assert abs(mc.altura_techo(pl, (1, 3)) - 3 * t) < 2e-3
+    assert abs(mc.altura_techo(pl, (4, -2)) - 2 * math.tan(math.radians(20))) < 2e-3   # cumbrera del acceso
+    assert abs(mc.altura_techo(pl, (4, 2)) - 2 * t) < 2e-3             # detrás de la limahoya: manda el techo principal
