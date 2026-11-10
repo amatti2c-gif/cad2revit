@@ -21,6 +21,7 @@ class Abertura:
     antepecho: float
     muro: str | None = None
     centro: Punto | None = None
+    linea: tuple | None = None          # dirección de su muro (puerta de arco sin muro en el plano)
     modo: str | None = None      # None = el del nivel de detalle; "hueco" = forzar vano
 
 
@@ -73,8 +74,37 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
         )
         # Muro más cercano al punto de inserción
         candidatos = sorted(muros, key=lambda m: dist_punto_segmento(ins.punto, m.a, m.b))
-        muro = next((m for m in candidatos
-                     if dist_punto_segmento(ins.punto, m.a, m.b) <= m.espesor / 2 + 0.15), None)
+        muro = None
+        if ins.nombre == "puerta (arco)" and ins.esquinas and len(ins.esquinas) == 3:
+            # puerta dibujada como arco: el muro es el que pasa por la bisagra y por uno de los extremos del arco
+            # (la otra jamba); el tabique perpendicular que llega a la bisagra no es el suyo
+            h = ins.esquinas[0]
+            for e in (ins.esquinas[1:2] if regla.get("jamba") else ins.esquinas[1:]):
+                dx, dy = e[0] - h[0], e[1] - h[1]
+                le = math.hypot(dx, dy) or 1.0
+                for m in candidatos:
+                    u = m.direccion
+                    if abs(u[0] * dy / le - u[1] * dx / le) > 0.1:
+                        continue
+                    tol = m.espesor / 2 + 0.15
+                    if dist_punto_recta(h, m.a, u) <= tol and dist_punto_recta(e, m.a, u) <= tol \
+                            and -0.3 <= proyectar(h, m.a, u) <= m.largo + 0.3 \
+                            and -1.3 <= proyectar(e, m.a, u) <= m.largo + 1.3 \
+                            and (muro is None or dist_punto_recta(h, m.a, u) < dist_punto_recta(h, muro.a, muro.direccion)):
+                        muro = m
+        if muro is None and regla.get("jamba") and sin_muro is not None:
+            # se sabe en qué dirección va su muro (bisagra -> jamba) pero no está en el plano: queda a la espera
+            # del muro que se ponga en su lugar (dibujado o de un tramo)
+            h, j = ins.esquinas[0], ins.esquinas[1]
+            L = math.dist(h, j) or 1.0
+            ab.ancho = float(regla.get("vano") or round(L, 3))
+            ab.centro = (round(h[0] + (j[0] - h[0]) / L * ab.ancho / 2, 4), round(h[1] + (j[1] - h[1]) / L * ab.ancho / 2, 4))
+            ab.linea = (h, j)
+            sin_muro.append(ab)
+            continue
+        if muro is None:
+            muro = next((m for m in candidatos
+                         if dist_punto_segmento(ins.punto, m.a, m.b) <= m.espesor / 2 + 0.15), None)
         if muro is None:
             if sin_muro is not None:
                 ab.ancho = ab.ancho or (0.9 if cat == "puerta" else 1.2)
@@ -97,7 +127,8 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
             lado = 1 if (t0 + t1) / 2 >= tb else -1
             ab.ancho = float(regla["vano"])
             tc = tb + lado * ab.ancho / 2
-        tc = max(ab.ancho / 2, min(muro.largo - ab.ancho / 2, tc))
+        if not regla.get("jamba"):
+            tc = max(ab.ancho / 2, min(muro.largo - ab.ancho / 2, tc))
         ab.centro = (round(muro.a[0] + u[0] * tc, 4), round(muro.a[1] + u[1] * tc, 4))
         ab.muro = muro.id
         _regla_muro_delgado(ab, muro, cfg, advertencias)
@@ -152,9 +183,12 @@ def _medida(rx, texto: str) -> float | None:
 RX_VANO_PUERTA = re.compile(r"(?i)(?:^|[\s\n])v(?:ano)?\s*[:=]\s*(\d+(?:[.,]\d+)?)")
 
 
-def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, textos=None) -> list[tuple[Insercion, dict]]:
+def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, textos=None,
+                     segmentos=None) -> list[tuple[Insercion, dict]]:
     """Arcos de ~90° con radio de hoja de puerta: bisagra en el centro; el ancho es el radio, o el vano
-    del rótulo cercano ("P:90 V:95": hoja 90, vano 95 cm), que es la medida real del hueco en el muro."""
+    del rótulo cercano ("P:90 V:95": hoja 90, vano 95 cm), que es la medida real del hueco en el muro.
+    Con los segmentos del dibujo se distingue la hoja (línea desde la bisagra) de la jamba (el otro extremo
+    del arco, sobre el muro): así la puerta va en su muro y no en el tabique contra el que abre."""
     rotulos = []
     for t in textos or []:
         v = _medida(RX_VANO_PUERTA, t.texto)
@@ -169,9 +203,26 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
         ang = math.degrees(math.acos(max(-1.0, min(1.0, (v0[0] * v1[0] + v0[1] * v1[1]) / (a.radio ** 2)))))
         if not 75 <= ang <= 105:
             continue
-        ins = Insercion(nombre="puerta (arco)", capa=a.capa, punto=a.centro, rotacion=0.0, extremos=None,
-                        esquinas=[a.centro, a.p0, a.p1])
+        def hay_hoja(e, h=a.centro):
+            L = math.dist(h, e) or 1.0
+            for sg in segmentos or []:
+                if math.dist(sg.a, sg.b) < 0.5 * L:
+                    continue
+                if all(abs((q[0] - h[0]) * (e[1] - h[1]) - (q[1] - h[1]) * (e[0] - h[0])) / L < 0.08
+                       and -0.1 <= ((q[0] - h[0]) * (e[0] - h[0]) + (q[1] - h[1]) * (e[1] - h[1])) / L <= L + 0.1
+                       for q in (sg.a, sg.b)):
+                    return True
+            return False
+        hojas = [hay_hoja(a.p0), hay_hoja(a.p1)] if segmentos else [False, False]
         regla = {"categoria": "puerta"}
+        if hojas[0] != hojas[1]:
+            jamba, hoja = (a.p1, a.p0) if hojas[0] else (a.p0, a.p1)
+            esquinas = [a.centro, jamba, hoja]
+            regla["jamba"] = True
+        else:
+            esquinas = [a.centro, a.p0, a.p1]
+        ins = Insercion(nombre="puerta (arco)", capa=a.capa, punto=a.centro, rotacion=0.0, extremos=None,
+                        esquinas=esquinas)
         cerca = [(math.dist(p, a.centro), v) for p, v in rotulos
                  if math.dist(p, a.centro) <= 2.0 and abs(v - a.radio) <= 0.25]
         if cerca:
@@ -193,7 +244,7 @@ def rotulos_ventana(textos) -> list[dict]:
 
 
 def ventanas_en_vanos(muros: list[Muro], rotulos: list[dict], puntos_puerta: list[Punto],
-                      distancia_max: float = 3.0) -> list[tuple[Insercion, dict]]:
+                      distancia_max: float = 3.0, segmentos=None) -> list[tuple[Insercion, dict]]:
     """Vanos (dos tramos colineales del mismo espesor separados 0,3–3,6 m, sin puerta) con un
     rótulo de ventana cerca: ventana con las medidas del rótulo, centrada en el vano."""
     vanos = []
@@ -223,46 +274,72 @@ def ventanas_en_vanos(muros: list[Muro], rotulos: list[dict], puntos_puerta: lis
                    for p in puntos_puerta):
                 continue                          # es el vano de una puerta
             vanos.append({"a": pa, "b": pb, "centro": ((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2), "largo": g1 - g0})
-    out, usados = [], set()
-    pares = sorted(((math.dist(r["punto"], v["centro"]) + 2 * abs(r["ancho"] - v["largo"]), i, j)
-                    for i, r in enumerate(rotulos) for j, v in enumerate(vanos)
-                    if math.dist(r["punto"], v["centro"]) <= distancia_max))
-    rot_usados = set()
+    # Cada rótulo va frente al centro de su ventana (así los pone ArchiCAD): la ventana queda en la proyección
+    # del rótulo sobre el muro (o vano) más cercano en perpendicular. Así no se confunde con otro vano cercano.
+    tramos = [(m.a, m.direccion, m.largo) for m in muros] + \
+             [(v["a"], ((v["b"][0] - v["a"][0]) / v["largo"], (v["b"][1] - v["a"][1]) / v["largo"]), v["largo"]) for v in vanos]
+    out = []
+    ocupados = [(p, 0.9) for p in puntos_puerta]
+    # 1) el hueco del muro con el mismo ancho que dice el rótulo (la posición exacta de la ventana)
+    pares = sorted((math.dist(r["punto"], v["centro"]), i, j) for i, r in enumerate(rotulos) for j, v in enumerate(vanos)
+                   if abs(v["largo"] - r["ancho"]) <= 0.12 and math.dist(r["punto"], v["centro"]) <= 2.5)
+    rot_usados, vano_usado = set(), set()
     for _, i, j in pares:
-        if i in rot_usados or j in usados:
+        if i in rot_usados or j in vano_usado:
             continue
         r, v = rotulos[i], vanos[j]
         rot_usados.add(i)
-        usados.add(j)
-        regla = {"categoria": "ventana", "ancho": round(min(r["ancho"], v["largo"]), 3)}
+        vano_usado.add(j)
+        regla = {"categoria": "ventana", "ancho": round(v["largo"], 3)}
         if r["alto"]:
             regla["alto"] = r["alto"]
         if r["antepecho"] is not None:
             regla["antepecho"] = r["antepecho"]
-        ins = Insercion(nombre="ventana (rótulo)", capa="rótulo", punto=v["centro"], rotacion=0.0, extremos=None,
-                        esquinas=[v["a"], v["b"]])
-        out.append((ins, regla))
-    # sin vano (la ventana está dibujada dentro del muro): sobre el muro más cercano frente al rótulo
-    ocupados = [(i.punto, r.get("ancho") or 0.9) for i, r in out] + [(p, 0.9) for p in puntos_puerta]
+        out.append((Insercion(nombre="ventana (rótulo)", capa="rótulo", punto=v["centro"], rotacion=0.0, extremos=None,
+                              esquinas=[v["a"], v["b"]]), regla))
+        ocupados.append((v["centro"], v["largo"]))
+    # 2) sin hueco que calce: el vidrio dibujado (línea del ancho de la ventana) más cercano al rótulo
     for i, r in enumerate(rotulos):
-        if i in rot_usados:
+        if i in rot_usados or not segmentos:
             continue
         mejor = None
-        for m in muros:
-            u = m.direccion
-            t = proyectar(r["punto"], m.a, u)
-            d = dist_punto_recta(r["punto"], m.a, u)
-            if d > distancia_max * 0.7 or not (-0.2 <= t <= m.largo + 0.2) or m.largo < r["ancho"]:
+        for sg in segmentos:
+            L = math.dist(sg.a, sg.b)
+            if abs(L - r["ancho"]) > 0.08:
                 continue
-            if mejor is None or d < mejor[0]:
-                mejor = (d, m, t)
+            mx, my = (sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2
+            d = math.dist((mx, my), r["punto"])
+            if d <= 1.2 and (mejor is None or d < mejor[0]):
+                mejor = (d, sg, (round(mx, 4), round(my, 4)))
         if mejor is None:
             continue
-        _, m, t = mejor
-        u = m.direccion
-        t = max(r["ancho"] / 2, min(m.largo - r["ancho"] / 2, t))
-        c = (m.a[0] + u[0] * t, m.a[1] + u[1] * t)
-        if any(math.dist(c, q) < (r["ancho"] + w) / 2 for q, w in ocupados):
+        _, sg, c = mejor
+        if any(math.dist(c, q) < (r["ancho"] + w) / 2 - 0.05 for q, w in ocupados):
+            continue
+        rot_usados.add(i)
+        regla = {"categoria": "ventana", "ancho": round(math.dist(sg.a, sg.b), 3)}
+        if r["alto"]:
+            regla["alto"] = r["alto"]
+        if r["antepecho"] is not None:
+            regla["antepecho"] = r["antepecho"]
+        out.append((Insercion(nombre="ventana (rótulo)", capa="rótulo", punto=c, rotacion=0.0, extremos=None,
+                              esquinas=[tuple(sg.a), tuple(sg.b)]), regla))
+        ocupados.append((c, r["ancho"]))
+    # 3) tampoco hay vidrio: frente al rótulo, sobre el muro más cercano en perpendicular
+    for r in sorted((r for i, r in enumerate(rotulos) if i not in rot_usados), key=lambda r: -r["ancho"]):
+        mejor = None
+        for a, u, L in tramos:
+            t = proyectar(r["punto"], a, u)
+            d = dist_punto_recta(r["punto"], a, u)
+            if d > 1.5 or not (-0.1 <= t <= L + 0.1):
+                continue
+            if mejor is None or d < mejor[0] - 1e-6:
+                mejor = (d, a, u, t)
+        if mejor is None:
+            continue
+        _, a, u, t = mejor
+        c = (round(a[0] + u[0] * t, 4), round(a[1] + u[1] * t, 4))
+        if any(math.dist(c, q) < (r["ancho"] + w) / 2 - 0.05 for q, w in ocupados):
             continue                              # se tocaría con otra ventana o con una puerta
         regla = {"categoria": "ventana", "ancho": r["ancho"]}
         if r["alto"]:

@@ -180,9 +180,12 @@ def _alinear_a_ejes(a, b, ejes: list, tol: float = 0.35):
             if dd <= tol and (best is None or dd < best[0]):
                 best = (dd, c)
         return best[1] if best else x
-    a2, b2 = al_cruce(a2), al_cruce(b2)
+    a3, b3 = al_cruce(a2), al_cruce(b2)
+    if math.dist(a3, b3) < 0.5 * math.dist(a2, b2) or math.dist(a3, b3) < 0.05:
+        # muro corto: sus dos extremos irían al mismo cruce; se deja sobre el eje con su largo
+        a3, b3 = a2, b2
     r4 = lambda x: [round(x[0], 4), round(x[1], 4)]           # noqa: E731
-    return r4(a2), r4(b2), True
+    return r4(a3), r4(b3), True
 
 
 def _muros_a_ejes(modelo: dict, adv: list) -> None:
@@ -206,7 +209,6 @@ def _muros_a_ejes(modelo: dict, adv: list) -> None:
                 if ab["muro"] != w["id"]:
                     continue
                 t = (ab["centro"][0] - a[0]) * u[0] + (ab["centro"][1] - a[1]) * u[1]
-                t = max(ab["ancho"] / 2, min(L - ab["ancho"] / 2, t)) if L >= ab["ancho"] else L / 2
                 ab["centro"] = [round(a[0] + u[0] * t, 4), round(a[1] + u[1] * t, 4)]
             w["inicio"], w["fin"] = a, b
     # muros que tras alinearse quedaron uno sobre otro: se deja uno (con las aberturas de ambos)
@@ -229,6 +231,120 @@ def _muros_a_ejes(modelo: dict, adv: list) -> None:
     if fuera:
         adv.append(f"{len(fuera)} muros no calzan con ningún eje (a más de 35 cm): {', '.join(fuera[:20])}. "
                    "Agrega el eje que falte en Estructuración para alinearlos")
+
+
+def _unir_para_vanos(modelo: dict, adv: list) -> None:
+    """Una puerta o ventana que no cabe en su muro porque el muro se cortó en un eje (tramos) se queda donde la
+    dibujaste: el muro se une con el tramo vecino de la misma línea y el mismo lego. Si aun así no cabe, se
+    informa (y se centra en el muro para que Revit pueda crearla)."""
+    unidos = []
+    cambio = True
+    while cambio:
+        cambio = False
+        muros = {w["id"]: w for w in modelo["muros"]}
+        for ab in modelo["aberturas"]:
+            w = muros.get(ab["muro"])
+            if not w:
+                continue
+            (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+            L = math.hypot(x2 - x1, y2 - y1) or 1.0
+            u = ((x2 - x1) / L, (y2 - y1) / L)
+            t = (ab["centro"][0] - x1) * u[0] + (ab["centro"][1] - y1) * u[1]
+            for lado, sale in ((0, t - ab["ancho"] / 2 < -0.02), (1, t + ab["ancho"] / 2 > L + 0.02)):
+                if not sale:
+                    continue
+                punta = w["inicio"] if lado == 0 else w["fin"]
+                hacia = (-u[0], -u[1]) if lado == 0 else u
+
+                def en_linea(q):
+                    return abs((q[0] - x1) * u[1] - (q[1] - y1) * u[0]) < 0.03
+
+                def avance(q):
+                    return (q[0] - punta[0]) * hacia[0] + (q[1] - punta[1]) * hacia[1]
+                # el tramo siguiente de la misma línea y el mismo lego: pegado, o al otro lado del hueco de la puerta
+                cands = [x for x in modelo["muros"] if x is not w and x["nivel"] == w["nivel"]
+                         and x["tipo"] == w["tipo"] and not x.get("buhardilla")
+                         and en_linea(x["inicio"]) and en_linea(x["fin"])
+                         and -0.01 <= min(avance(x["inicio"]), avance(x["fin"])) <= ab["ancho"] + 1.5]
+                vecino = min(cands, key=lambda x: min(avance(x["inicio"]), avance(x["fin"])), default=None)
+                if vecino is None:
+                    continue
+                lejos = max((vecino["inicio"], vecino["fin"]), key=avance)
+                if lado == 0:
+                    w["inicio"] = list(lejos)
+                else:
+                    w["fin"] = list(lejos)
+                for x in modelo["aberturas"]:
+                    if x["muro"] == vecino["id"]:
+                        x["muro"] = w["id"]
+                modelo["muros"] = [x for x in modelo["muros"] if x is not vecino]
+                unidos.append(f"{w['id']}+{vecino['id']}")
+                cambio = True
+                break
+            if cambio:
+                break
+    if unidos:
+        adv.append("Muros unidos para que quepa su puerta o ventana (cruzaba un eje): " + ", ".join(unidos))
+    # lo que aún sobresale por un extremo libre (la puerta está en el hueco junto al muro): el muro se alarga
+    alargados = []
+    muros = {w["id"]: w for w in modelo["muros"]}
+    for ab in modelo["aberturas"]:
+        w = muros.get(ab["muro"])
+        if not w:
+            continue
+        (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+        L = math.hypot(x2 - x1, y2 - y1) or 1.0
+        u = ((x2 - x1) / L, (y2 - y1) / L)
+        t = (ab["centro"][0] - x1) * u[0] + (ab["centro"][1] - y1) * u[1]
+        t0, t1 = t - ab["ancho"] / 2, t + ab["ancho"] / 2
+        if -ab["ancho"] - 0.5 <= t0 < -0.02:
+            w["inicio"] = [round(x1 + u[0] * t0, 4), round(y1 + u[1] * t0, 4)]
+            alargados.append(w["id"])
+        elif L + 0.02 < t1 <= L + ab["ancho"] + 0.5:
+            w["fin"] = [round(x1 + u[0] * t1, 4), round(y1 + u[1] * t1, 4)]
+            alargados.append(w["id"])
+    if alargados:
+        adv.append("Muros alargados hasta el borde de su puerta o ventana: " + ", ".join(sorted(set(alargados))))
+    # lo que aún no cabe: se ajusta dentro del muro y se avisa
+    muros = {w["id"]: w for w in modelo["muros"]}
+    for ab in modelo["aberturas"]:
+        w = muros.get(ab["muro"])
+        if not w:
+            continue
+        (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+        L = math.hypot(x2 - x1, y2 - y1) or 1.0
+        u = ((x2 - x1) / L, (y2 - y1) / L)
+        t = (ab["centro"][0] - x1) * u[0] + (ab["centro"][1] - y1) * u[1]
+        tc = max(ab["ancho"] / 2, min(L - ab["ancho"] / 2, t)) if L >= ab["ancho"] else L / 2
+        if abs(tc - t) > 0.02:
+            adv.append(f"{ab['id']}: no cabe en {w['id']} donde está dibujada; se corrió {abs(tc - t) * 100:.0f} cm")
+            ab["centro"] = [round(x1 + u[0] * tc, 4), round(y1 + u[1] * tc, 4)]
+
+
+def ab_centro(ab):
+    return list(ab.centro) if ab.centro else None
+
+
+def _al_vidrio(c, u, ancho, espesor, segmentos):
+    """Centro y ancho de la ventana según su vidrio: segmento paralelo al muro, dentro de su espesor, del largo de
+    la ventana (±10 cm) y a menos de 0,8 m del centro supuesto. None si no hay."""
+    mejor = None
+    for sg in segmentos:
+        dx, dy = sg.b[0] - sg.a[0], sg.b[1] - sg.a[1]
+        L = math.hypot(dx, dy)
+        if abs(L - ancho) > 0.1 or L < 0.3:
+            continue
+        if abs(dx / L * u[1] - dy / L * u[0]) > 0.02:
+            continue
+        mx, my = (sg.a[0] + sg.b[0]) / 2, (sg.a[1] + sg.b[1]) / 2
+        perp = abs((mx - c[0]) * u[1] - (my - c[1]) * u[0])
+        largo = abs((mx - c[0]) * u[0] + (my - c[1]) * u[1])
+        if perp > espesor / 2 + 0.05 or largo > 0.8:
+            continue
+        if mejor is None or (largo, perp) < mejor[0]:
+            mejor = ((largo, perp), (round(c[0] + u[0] * ((mx - c[0]) * u[0] + (my - c[1]) * u[1]), 4),
+                                     round(c[1] + u[1] * ((mx - c[0]) * u[0] + (my - c[1]) * u[1]), 4)), round(L, 3))
+    return ([mejor[1][0], mejor[1][1]], mejor[2]) if mejor else None
 
 
 def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set, avisar: bool) -> None:
@@ -288,6 +404,7 @@ def _realojar(modelo: dict, adv: list) -> None:
         a = dict(a)
         nivel = a.pop("_nivel", None) or a["id"].split("-")[0]
         linea = a.pop("_linea", None)
+        estricta = a.pop("_estricta", False)      # puerta: su muro va de la bisagra a la jamba, no en otra dirección
         u0 = None
         if linea:
             L0 = math.dist(linea[0], linea[1]) or 1.0
@@ -302,6 +419,8 @@ def _realojar(modelo: dict, adv: list) -> None:
                 continue
             ux, uy = (x2 - x1) / L, (y2 - y1) / L
             otra_dir = bool(u0) and abs(ux * u0[1] - uy * u0[0]) > 0.17   # se prefiere la dirección del muro original
+            if otra_dir and estricta:
+                continue
             dx, dy = a["centro"][0] - x1, a["centro"][1] - y1
             t, d = dx * ux + dy * uy, abs(dx * uy - dy * ux)
             if d > 0.45 or not (-0.05 <= t <= L + 0.05):
@@ -309,7 +428,7 @@ def _realojar(modelo: dict, adv: list) -> None:
             holgura = min(t, L - t) - a["ancho"] / 2           # que el vano quepa en el muro
             nota = (otra_dir, holgura < -0.05, d)
             if mejor is None or nota < mejor[0]:
-                tc = max(a["ancho"] / 2, min(L - a["ancho"] / 2, t)) if L >= a["ancho"] else L / 2
+                tc = min(max(t, 0.0), L)        # sin correrla: si no cabe, se une con el muro vecino (_unir_para_vanos)
                 mejor = (nota, w, (round(x1 + ux * tc, 4), round(y1 + uy * tc, 4)))
         if mejor:
             _, w, c = mejor
@@ -700,7 +819,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
         def _sin_bloque(nuevas, categoria):
             ya = [i.punto for i, r in abert_ins if r.get("categoria") == categoria]
             return [(i, r) for i, r in nuevas if all(math.dist(i.punto, q) > 0.6 for q in ya)]
-        arcos = _sin_bloque(aberturas_mod.puertas_de_arcos(dib.arcos, textos=dib.textos), "puerta")
+        arcos = _sin_bloque(aberturas_mod.puertas_de_arcos(dib.arcos, textos=dib.textos, segmentos=dib.segmentos), "puerta")
         if arcos:
             abert_ins += arcos
             adv.append(f"{nivel}: {len(arcos)} puertas leídas de los arcos de abatimiento")
@@ -721,13 +840,24 @@ def construir_modelo(cfg: Configuracion) -> dict:
         if True:
             rotulos = aberturas_mod.rotulos_ventana(dib.textos)
             if rotulos:
-                vent = _sin_bloque(aberturas_mod.ventanas_en_vanos(muros, rotulos, puntos_vano), "ventana")
+                vent = _sin_bloque(aberturas_mod.ventanas_en_vanos(muros, rotulos, puntos_vano, segmentos=dib.segmentos), "ventana")
                 if vent:
                     abert_ins += vent
                     puntos_vano += [i.punto for i, _ in vent]
                     muros = detectar_muros(segs_muro, det, puntos_vano, pref)     # el muro continúa sobre la ventana
                     adv.append(f"{nivel}: {len(vent)} ventanas leídas de los rótulos de medidas "
                                f"({len(rotulos)} rótulos en el plano)")
+        # las hojas de puerta dibujadas (dos líneas finas desde la bisagra) no son muros
+        hojas = [(i.esquinas[0], i.esquinas[2]) for i, r in abert_ins if r.get("jamba") and i.esquinas]
+        if hojas:
+            def es_hoja(m):
+                return any(abs(m.largo - math.dist(h, t)) < 0.15
+                           and min(math.dist(m.a, h) + math.dist(m.b, t), math.dist(m.a, t) + math.dist(m.b, h)) < 0.2
+                           for h, t in hojas)
+            hojas_muro = [m for m in muros if es_hoja(m)]
+            if hojas_muro:
+                muros = [m for m in muros if m not in hojas_muro]
+                adv.append(f"{nivel}: {len(hojas_muro)} hojas de puerta dibujadas no se toman como muros")
         muros, encimados = quitar_encimados(muros)
         if encimados:
             adv.append(f"{nivel}: {len(encimados)} 'muros' quedaban dentro de otros más gruesos (vidrios, marcos o muebles "
@@ -747,11 +877,31 @@ def construir_modelo(cfg: Configuracion) -> dict:
                     id=ab.id, muro=ab.muro, categoria=ab.categoria, bloque_cad=ab.insercion.nombre,
                     modo=ab.modo or lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=ab.centro,
                     ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho))
+            # cada ventana al centro de su vidrio dibujado (línea dentro del muro con el ancho de la ventana)
+            por_id = {m.id: m for m in muros}
+            n_aj = 0
+            for d in [x for x in modelo["aberturas"] if x["id"].startswith(f"{pref}-V")] + \
+                     [ab for ab in sin_muro if ab.categoria == "ventana"]:
+                es_dict = isinstance(d, dict)
+                c = d["centro"] if es_dict else ab_centro(d)
+                m = por_id.get(d["muro"] if es_dict else d.muro)
+                if m is None or c is None:
+                    continue
+                ancho = d["ancho"] if es_dict else d.ancho
+                nuevo = _al_vidrio(c, m.direccion, ancho, m.espesor, dib.segmentos)
+                if nuevo:
+                    if es_dict:
+                        d["centro"], d["ancho"] = nuevo
+                    else:
+                        d.centro, d.ancho = tuple(nuevo[0]), nuevo[1]
+                    n_aj += 1
             # sin muro en el plano: quizás lo haya después (dibujado en la app o agregado por un tramo)
             modelo.setdefault("_huerfanas", []).extend(dict(
                 id=ab.id, muro=None, categoria=ab.categoria, bloque_cad=ab.insercion.nombre,
                 modo=ab.modo or lod["aberturas"], familia=ab.familia, tipo=ab.tipo, centro=list(ab.centro),
-                ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho, _nivel=nivel) for ab in sin_muro)
+                ancho=ab.ancho, alto=ab.alto, antepecho=ab.antepecho, _nivel=nivel,
+                **({"_linea": [list(ab.linea[0]), list(ab.linea[1])], "_estricta": True} if getattr(ab, "linea", None) else {}))
+                for ab in sin_muro)
 
         # 4) Columnas y vigas
         columnas = detectar_columnas(col_ins, dib.polilineas_en(cfg.capa("columnas")), cfg, pref)
@@ -877,6 +1027,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=True)
     _realojar(modelo, adv)
     _muros_a_ejes(modelo, adv)
+    _unir_para_vanos(modelo, adv)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
     # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit
