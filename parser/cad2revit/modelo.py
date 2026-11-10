@@ -136,6 +136,101 @@ def _limpiar_contorno(cont: list) -> list:
         return cont
 
 
+def _alinear_a_ejes(a, b, ejes: list, tol: float = 0.35):
+    """Lleva un segmento (muro o marco) sobre el eje paralelo más cercano (a menos de `tol`) y sus extremos al
+    cruce con el eje perpendicular más cercano. Devuelve (a, b, alineado)."""
+    L = math.dist(a, b)
+    if L < 1e-6 or not ejes:
+        return a, b, False
+    u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+    m = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
+    mejor = None
+    for e in ejes:
+        p, q = e["inicio"], e["fin"]
+        le = math.dist(p, q)
+        if le < 1e-6:
+            continue
+        v = ((q[0] - p[0]) / le, (q[1] - p[1]) / le)
+        if abs(u[0] * v[1] - u[1] * v[0]) > 0.05:
+            continue
+        d = abs((m[0] - p[0]) * v[1] - (m[1] - p[1]) * v[0])
+        if d <= tol and (mejor is None or d < mejor[0]):
+            mejor = (d, p, v)
+    if mejor is None:
+        return a, b, False
+    _, p, v = mejor
+    proy = lambda x: (p[0] + v[0] * ((x[0] - p[0]) * v[0] + (x[1] - p[1]) * v[1]),       # noqa: E731
+                      p[1] + v[1] * ((x[0] - p[0]) * v[0] + (x[1] - p[1]) * v[1]))
+    a2, b2 = proy(a), proy(b)
+    # extremos: al cruce con un eje que corta a este (el más cercano, a menos de tol)
+    def al_cruce(x):
+        best = None
+        for e in ejes:
+            r, s_ = e["inicio"], e["fin"]
+            le = math.dist(r, s_)
+            if le < 1e-6:
+                continue
+            w = ((s_[0] - r[0]) / le, (s_[1] - r[1]) / le)
+            den = v[0] * w[1] - v[1] * w[0]
+            if abs(den) < 0.2:
+                continue
+            t = ((r[0] - p[0]) * w[1] - (r[1] - p[1]) * w[0]) / den
+            c = (p[0] + v[0] * t, p[1] + v[1] * t)
+            dd = math.dist(c, x)
+            if dd <= tol and (best is None or dd < best[0]):
+                best = (dd, c)
+        return best[1] if best else x
+    a2, b2 = al_cruce(a2), al_cruce(b2)
+    r4 = lambda x: [round(x[0], 4), round(x[1], 4)]           # noqa: E731
+    return r4(a2), r4(b2), True
+
+
+def _muros_a_ejes(modelo: dict, adv: list) -> None:
+    """Todos los muros sobre los ejes dibujados (con sus puertas y ventanas); se informan los que no calzan."""
+    ejes = modelo.get("ejes") or []
+    if not ejes:
+        return
+    movidos, fuera = 0, []
+    for w in modelo["muros"]:
+        if w.get("buhardilla"):
+            continue
+        a, b, ok = _alinear_a_ejes(w["inicio"], w["fin"], ejes)
+        if not ok:
+            fuera.append(w["id"])
+            continue
+        if math.dist(a, w["inicio"]) > 1e-4 or math.dist(b, w["fin"]) > 1e-4:
+            movidos += 1
+            L = math.dist(a, b) or 1.0
+            u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+            for ab in modelo["aberturas"]:
+                if ab["muro"] != w["id"]:
+                    continue
+                t = (ab["centro"][0] - a[0]) * u[0] + (ab["centro"][1] - a[1]) * u[1]
+                t = max(ab["ancho"] / 2, min(L - ab["ancho"] / 2, t)) if L >= ab["ancho"] else L / 2
+                ab["centro"] = [round(a[0] + u[0] * t, 4), round(a[1] + u[1] * t, 4)]
+            w["inicio"], w["fin"] = a, b
+    # muros que tras alinearse quedaron uno sobre otro: se deja uno (con las aberturas de ambos)
+    quitar = set()
+    for i, w in enumerate(modelo["muros"]):
+        for x in modelo["muros"][i + 1:]:
+            if w["id"] in quitar or x["id"] in quitar or w["nivel"] != x["nivel"] or w.get("buhardilla") or x.get("buhardilla"):
+                continue
+            if {tuple(w["inicio"]), tuple(w["fin"])} == {tuple(x["inicio"]), tuple(x["fin"])}:
+                quedar, sale = (x, w) if w["id"].startswith(f"{w['nivel']}-M") and not x["id"].startswith(f"{x['nivel']}-M") else (w, x)
+                quitar.add(sale["id"])
+                for ab in modelo["aberturas"]:
+                    if ab["muro"] == sale["id"]:
+                        ab["muro"] = quedar["id"]
+    if quitar:
+        modelo["muros"] = [w for w in modelo["muros"] if w["id"] not in quitar]
+        adv.append(f"Muros repetidos sobre el mismo eje (se dejó uno): {', '.join(sorted(quitar))}")
+    if movidos:
+        adv.append(f"{movidos} muros alineados a los ejes")
+    if fuera:
+        adv.append(f"{len(fuera)} muros no calzan con ningún eje (a más de 35 cm): {', '.join(fuera[:20])}. "
+                   "Agrega el eje que falte en Estructuración para alinearlos")
+
+
 def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set, avisar: bool) -> None:
     """Aplica muros_quitar y muros_editar del proyecto. hechos_* recuerdan qué ediciones ya calzaron con un muro;
     con avisar=True (última pasada) se advierte de las que no calzaron con ninguno."""
@@ -735,7 +830,10 @@ def construir_modelo(cfg: Configuracion) -> dict:
 
         # 10) Marcos de acero (líneas en capas de marcos)
         if lod.get("marcos"):
-            segs_marco = dib.segmentos_en(cfg.capa("marcos"))
+            segs_marco = []
+            for sm in dib.segmentos_en(cfg.capa("marcos")):
+                fa, fb, _ = _alinear_a_ejes(sm.a, sm.b, modelo.get("ejes") or [])
+                segs_marco.append(Segmento(tuple(fa), tuple(fb), sm.capa))
             modelo["marcos"] += marcos_mod.generar(segs_marco, cfg, nivel, sup, cota, pref, adv,
                                                    planos_techo=_planos_techo(modelo, sup))
 
@@ -778,6 +876,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
                                                cota, adv, marcos_mod)
     _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=True)
     _realojar(modelo, adv)
+    _muros_a_ejes(modelo, adv)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
     # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit
@@ -846,7 +945,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if f.get("tipo") not in nombres:
                     adv.append(f"Marco dibujado {i}: el lego '{f.get('tipo')}' no está en el catálogo de marcos; se omite")
                     continue
-                items.append((Segmento(tuple(f["inicio"]), tuple(f["fin"]), "dibujado en la app"), f["tipo"],
+                fa, fb, _ = _alinear_a_ejes(f["inicio"], f["fin"], modelo.get("ejes") or [])
+                items.append((Segmento(tuple(fa), tuple(fb), "dibujado en la app"), f["tipo"],
                               f"dibujado en la app #{i}"))
             if not items:
                 continue
