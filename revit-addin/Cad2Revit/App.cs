@@ -60,7 +60,7 @@ namespace Cad2Revit
             }
 
             var constructor = new Constructor(doc, modelo);
-            var previos = Constructor.ElementosPrevios(doc).Count;
+            var previos = modelo.EsParcial ? 0 : Constructor.ElementosPrevios(doc).Count;   // parcial: no pregunta ni borra
             if (previos > 0 && Constructor.TieneSincronizacion(doc))
             {
                 var pregunta = new TaskDialog("cad2revit")

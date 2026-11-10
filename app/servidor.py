@@ -1496,6 +1496,112 @@ def descargar_modelo(pid: str, n: int):
     return FileResponse(f, media_type="application/json", filename=f"{pid}-corrida{n}-modelo.json")
 
 
+def _orden_natural(nombre: str):
+    return [(0, int(t), "") if t.isdigit() else (1, 0, t.upper()) for t in re.findall(r"\d+|\D+", str(nombre))]
+
+
+def ejes_y_niveles(m: dict, n: int | None = None, vistas_cortes: list | None = None) -> dict:
+    """Modelo básico, ordenado: niveles de abajo hacia arriba (con la altura de cada piso) y ejes agrupados en
+    verticales (de izquierda a derecha) y horizontales (de abajo hacia arriba), con su posición y la distancia
+    al anterior; cortes y fachadas como referencia. Coordenadas al milímetro. El complemento de Revit solo crea
+    o ajusta niveles y ejes con este archivo (alcance), sin tocar nada más."""
+    r3 = lambda v: round(float(v), 3)                                      # noqa: E731
+    niveles = sorted(m.get("niveles") or [], key=lambda x: x["cota"])
+    niv = []
+    for i, x in enumerate(niveles):
+        d = {"nombre": x["nombre"], "cota": r3(x["cota"])}
+        if i + 1 < len(niveles):
+            d["altura_hasta_siguiente"] = r3(niveles[i + 1]["cota"] - x["cota"])
+        niv.append(d)
+    verticales, horizontales, otros = [], [], []
+    for e in m.get("ejes") or []:
+        (x1, y1), (x2, y2) = e["inicio"], e["fin"]
+        if abs(x2 - x1) <= 0.01 * abs(y2 - y1):
+            a, b = sorted([(r3(x1), r3(y1)), (r3(x2), r3(y2))], key=lambda q: q[1])     # de abajo hacia arriba
+            verticales.append({"nombre": e["nombre"], "inicio": list(a), "fin": list(b), "orientacion": "vertical",
+                               "x": r3((x1 + x2) / 2)})
+        elif abs(y2 - y1) <= 0.01 * abs(x2 - x1):
+            a, b = sorted([(r3(x1), r3(y1)), (r3(x2), r3(y2))], key=lambda q: q[0])     # de izquierda a derecha
+            horizontales.append({"nombre": e["nombre"], "inicio": list(a), "fin": list(b), "orientacion": "horizontal",
+                                 "y": r3((y1 + y2) / 2)})
+        else:
+            otros.append({"nombre": e["nombre"], "inicio": [r3(x1), r3(y1)], "fin": [r3(x2), r3(y2)],
+                          "orientacion": "inclinado"})
+    verticales.sort(key=lambda e: (e["x"], _orden_natural(e["nombre"])))
+    horizontales.sort(key=lambda e: (e["y"], _orden_natural(e["nombre"])))
+    otros.sort(key=lambda e: _orden_natural(e["nombre"]))
+    for grupo, k in ((verticales, "x"), (horizontales, "y")):
+        for i, e in enumerate(grupo):
+            if i:
+                e["distancia_anterior"] = r3(e[k] - grupo[i - 1][k])
+    cortes = []
+    lista = m.get("cortes") or []
+    nums = vistas_cortes if vistas_cortes and len(vistas_cortes) == len(lista) else [None] * len(lista)
+    for c, vn in zip(lista, nums):
+        es_corte = c.get("tipo") == "corte"
+        titulo = c.get("titulo") if es_corte else ("Fachada" + (f" (vista {vn})" if vn else ""))
+        d = {"titulo": titulo, "tipo": "corte" if es_corte else "fachada", "letra": c.get("letra")}
+        if vn:
+            d["vista"] = vn
+        d["cumbrera"] = c.get("cumbrera")
+        if c.get("pendiente"):
+            d["alero"], d["pendiente"] = c.get("alero"), c.get("pendiente")
+        if c.get("linea"):
+            (x1, y1), (x2, y2) = c["linea"]
+            # línea de corte ortogonal si lo es casi (marcas dibujadas unos cm corridas)
+            if abs(x2 - x1) < 0.06 * abs(y2 - y1):
+                x1 = x2 = (x1 + x2) / 2
+            elif abs(y2 - y1) < 0.06 * abs(x2 - x1):
+                y1 = y2 = (y1 + y2) / 2
+            d["linea"] = [[r3(x1), r3(y1)], [r3(x2), r3(y2)]]
+        cortes.append(d)
+    cortes.sort(key=lambda c: (c["tipo"] != "corte", _orden_natural(c.get("letra") or ""), c.get("vista") or 0))
+    fund = m.get("fundaciones")
+    return {
+        "version": m.get("version"), "unidades": m.get("unidades", "m"), "proyecto": m.get("proyecto", ""),
+        "alcance": ["niveles", "ejes"],
+        "lod": m.get("lod") or {},
+        "niveles": niv,
+        "ejes": verticales + horizontales + otros,
+        "resumen_ejes": {
+            "verticales": [f"{e['nombre']} x={e['x']}" + (f" (+{e['distancia_anterior']})" if "distancia_anterior" in e else "")
+                           for e in verticales],
+            "horizontales": [f"{e['nombre']} y={e['y']}" + (f" (+{e['distancia_anterior']})" if "distancia_anterior" in e else "")
+                             for e in horizontales],
+        },
+        "cortes": cortes,
+        "materiales": [], "tipos_muro": [], "tipos_losa": [], "muros": [], "aberturas": [], "losas": [],
+        "columnas": [], "vigas": [], "fundaciones": {k: [] for k in fund} if isinstance(fund, dict) else [],
+        "recintos": [],
+        "advertencias": [f"Modelo básico{f' de la corrida {n}' if n else ''}: {len(niv)} niveles y "
+                         f"{len(verticales) + len(horizontales) + len(otros)} ejes ({len(verticales)} verticales, "
+                         f"{len(horizontales)} horizontales)"],
+    }
+
+
+@app.get("/api/proyectos/{pid}/corridas/{n}/ejes-niveles.json")
+def descargar_ejes_niveles(pid: str, n: int):
+    """Modelo básico de la corrida: solo niveles y ejes, ordenados (ver ejes_y_niveles)."""
+    d = _proyecto(pid)
+    f = _corrida_dir(d, n) / "modelo.json"
+    if not f.exists():
+        raise HTTPException(404, "Esta corrida no generó modelo (tuvo errores)")
+    # número de vista (como en Planos) de cada corte o fachada, en el orden de las elevaciones del proyecto
+    nums = []
+    try:
+        from cad2revit.vistas import archivo_de, zonas_de
+        py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+        for e in py.get("elevaciones") or []:
+            zonas = zonas_de(e)
+            k = _k_de_caja(_vistas_de(d, Path(archivo_de(e)).name), zonas[0]) if zonas else None
+            nums.append(k + 1 if k is not None else None)
+    except Exception:
+        nums = []
+    basico = ejes_y_niveles(json.loads(f.read_text(encoding="utf-8")), n, nums)
+    return Response(json.dumps(basico, ensure_ascii=False, indent=1), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{pid}-corrida{n}-ejes-niveles.json"'})
+
+
 @app.put("/api/proyectos/{pid}/corridas/{n}/notas")
 def guardar_notas(pid: str, n: int, datos: Notas):
     c = _corrida_dir(_proyecto(pid), n)

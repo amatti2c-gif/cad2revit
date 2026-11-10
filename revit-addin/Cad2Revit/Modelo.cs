@@ -30,6 +30,10 @@ namespace Cad2Revit
         public List<RecintoDef> Recintos { get; set; } = new();
         public List<EntramadoDef> Entramados { get; set; } = new();
         public List<MarcoDef> Marcos { get; set; } = new();
+        /// <summary>Modelo parcial: qué trae (p. ej. ["niveles", "ejes"]). Vacío = modelo completo. Un modelo parcial
+        /// solo crea o actualiza lo que trae y no borra nada del resto.</summary>
+        public List<string> Alcance { get; set; } = new();
+        public bool EsParcial => Alcance != null && Alcance.Count > 0;
         public List<string> Advertencias { get; set; } = new();
 
         public static Modelo Leer(string ruta)

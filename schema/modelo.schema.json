@@ -956,6 +956,17 @@
         "null"
       ],
       "description": "Forma de la cubierta deducida de cortes, fachadas y planta de techo"
+    },
+    "alcance": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "niveles",
+          "ejes"
+        ]
+      },
+      "description": "Modelo parcial: qué trae. Vacío o ausente = modelo completo. El complemento solo crea o ajusta eso y no borra nada más."
     }
   }
 }

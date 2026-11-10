@@ -143,6 +143,19 @@ namespace Cad2Revit
         {
             foreach (var a in _m.Advertencias) _inf.Advertencia("parser: " + a);
             FijarOrigen();
+            if (_m.EsParcial)
+            {
+                // solo niveles y ejes: se crean o se ajustan; nada más se toca ni se borra
+                using (var grupo = new TransactionGroup(_doc, "cad2revit: niveles y ejes"))
+                {
+                    grupo.Start();
+                    Etapa("Niveles y ejes", CrearNivelesYEjes);
+                    grupo.Assimilate();
+                }
+                _inf.Advertencia("Modelo parcial (" + string.Join(", ", _m.Alcance) + "): solo se crearon o ajustaron los " +
+                                 "niveles y ejes; el resto del archivo no se modificó.");
+                return _inf;
+            }
             if (Actualizar) LeerSincronizacion();
 
             using (var grupo = new TransactionGroup(_doc, "cad2revit: construir modelo"))

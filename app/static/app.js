@@ -1647,6 +1647,9 @@ async function abrirCorrida(n) {
   const dl = $("#btn-descargar");
   dl.classList.toggle("oculto", !r.modelo);
   dl.href = P(`/corridas/${n}/modelo.json`);
+  const dlEjes = $("#btn-descargar-ejes");
+  dlEjes.classList.toggle("oculto", !r.modelo);
+  dlEjes.href = P(`/corridas/${n}/ejes-niveles.json`);
 
   // tarjetas con diferencia respecto de la corrida anterior
   const idx = estado.corridas.findIndex(c => c.n === n);

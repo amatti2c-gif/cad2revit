@@ -8,6 +8,7 @@ import yaml
 import base64
 import importlib
 import sys
+import json
 from pathlib import Path
 
 import pytest
@@ -610,3 +611,23 @@ def test_editar_muro_del_plano(cliente):
     w2 = next(x for x in m2["muros"] if x["id"] == w["id"])
     assert w2["tipo"] == madera and not w2["estructural"] and w2["editado"]
     assert any(e["muro"] == w["id"] for e in m2["entramados"])            # el tabique de madera con su entramado
+
+
+def test_ejes_y_niveles_ordenados(cliente):
+    """Modelo básico: solo niveles y ejes, ordenados, con alcance para que Revit no toque nada más."""
+    pid = _crear(cliente)
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    r = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}/ejes-niveles.json")
+    assert r.status_code == 200 and "ejes-niveles.json" in r.headers["content-disposition"]
+    b = r.json()
+    assert b["alcance"] == ["niveles", "ejes"] and b["muros"] == [] and b["aberturas"] == []
+    cotas = [x["cota"] for x in b["niveles"]]
+    assert cotas == sorted(cotas) and "altura_hasta_siguiente" in b["niveles"][0]
+    vert = [e for e in b["ejes"] if e["orientacion"] == "vertical"]
+    hor = [e for e in b["ejes"] if e["orientacion"] == "horizontal"]
+    assert b["ejes"][:len(vert)] == vert                                  # primero los verticales
+    assert [e["x"] for e in vert] == sorted(e["x"] for e in vert)
+    assert [e["y"] for e in hor] == sorted(e["y"] for e in hor)
+    assert all(e["inicio"][1] <= e["fin"][1] for e in vert) and all(e["inicio"][0] <= e["fin"][0] for e in hor)
+    import jsonschema
+    jsonschema.validate(b, json.loads((Path(__file__).parents[2] / "schema" / "modelo.schema.json").read_text(encoding="utf-8")))
