@@ -433,3 +433,35 @@ def cuerpos(contorno: list, bordes: list, pendiente: float, cumbreras: list, fro
                 c["tramo"][0] = round(tr, 3)
     return {"pendientes_bordes": [datos[i][0] for i in bordes], "alturas_bordes": [datos[i][1] for i in bordes],
             "cuerpos_bordes": [datos[i][2] for i in bordes], "cuerpos": lista}
+
+
+def medidas_corte(dib: DibujoCAD, caja, base: float) -> dict | None:
+    """Medidas horizontales de un corte o fachada a dos aguas: X de la cumbrera, de las puntas de los aleros y de
+    las caras exteriores de los muros (verticales que nacen del suelo, bajo el techo). Con ellas se ubica la
+    cumbrera respecto de los muros, que es lo que manda al armar el techo."""
+    x0, y0, x1, y1 = caja
+    segs = [s for s in dib.segmentos if all(x0 - 0.01 <= q[0] <= x1 + 0.01 and y0 - 0.01 <= q[1] <= y1 + 0.01
+                                            for q in (s.a, s.b))]
+    inc = []
+    for s in segs:
+        dx, dy = s.b[0] - s.a[0], s.b[1] - s.a[1]
+        L = math.hypot(dx, dy)
+        if L > 0.8 and 0.1 < abs(dy) / L < 0.95:
+            alto, bajo = (s.a, s.b) if s.a[1] > s.b[1] else (s.b, s.a)
+            inc.append((alto, bajo))
+    if not inc:
+        return None
+    pico = max(inc, key=lambda ab: ab[0][1])[0]
+    desde = [(a, b) for a, b in inc if math.dist(a, pico) < 0.03]
+    izq = [b for a, b in desde if b[0] < pico[0]]
+    der = [b for a, b in desde if b[0] > pico[0]]
+    if not izq or not der:
+        return None
+    pl, pr = min(izq, key=lambda q: q[0]), max(der, key=lambda q: q[0])
+    verticales = sorted({round(s.a[0], 3) for s in segs if abs(s.a[0] - s.b[0]) < 0.005
+                         and min(s.a[1], s.b[1]) - base < 0.3 and abs(s.a[1] - s.b[1]) > 2.0
+                         and pl[0] - 0.05 <= s.a[0] <= pr[0] + 0.05})
+    if len(verticales) < 2 or verticales[-1] - verticales[0] < 1.0:
+        return None
+    return {"cumbrera": round(pico[0], 3), "alero_izq": round(pl[0], 3), "alero_der": round(pr[0], 3),
+            "muro_izq": verticales[0], "muro_der": verticales[-1]}

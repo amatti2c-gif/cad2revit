@@ -262,7 +262,112 @@ def _calzar(techo: list, planta: list) -> tuple[float, float]:
     return round(mejor[1], 3), round(mejor[2], 3)
 
 
-def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> dict:
+def _unir_paralelas(lineas: list, sep: float = 0.3) -> list:
+    out = []
+    usadas = set()
+    for i, (a, b) in enumerate(lineas):
+        if i in usadas:
+            continue
+        L = math.dist(a, b) or 1.0
+        u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+        grupo = [(a, b)]
+        for j in range(i + 1, len(lineas)):
+            c, d = lineas[j]
+            Lj = math.dist(c, d) or 1.0
+            if abs((d[0] - c[0]) / Lj * u[1] - (d[1] - c[1]) / Lj * u[0]) > 0.02:
+                continue
+            dist = abs((c[0] - a[0]) * u[1] - (c[1] - a[1]) * u[0])
+            ta = sorted(((c[0] - a[0]) * u[0] + (c[1] - a[1]) * u[1], (d[0] - a[0]) * u[0] + (d[1] - a[1]) * u[1]))
+            if dist < sep and min(ta[1], L) - max(ta[0], 0.0) > 0.5 * min(L, Lj):
+                grupo.append((c, d))
+                usadas.add(j)
+        if len(grupo) == 1:
+            out.append((a, b))
+            continue
+        # desplazamiento medio, perpendicular a la primera línea
+        nrm = (-u[1], u[0])
+        off = sum((c[0] - a[0]) * nrm[0] + (c[1] - a[1]) * nrm[1] for c, _ in grupo) / len(grupo)
+        out.append(((a[0] + nrm[0] * off, a[1] + nrm[1] * off), (b[0] + nrm[0] * off, b[1] + nrm[1] * off)))
+    return out
+
+
+def _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, contorno_planta=None):
+    """Desplazamiento de la planta de techo para que, en cada corte marcado en la planta, la cumbrera quede a la
+    distancia de los muros que mide el corte. Devuelve (dx, dy, detalle) o None."""
+    movs, usados = [], []
+    for v in vistas_altura:
+        med, letra = v.get("medidas"), v.get("letra")
+        if not med or letra not in lineas:
+            continue
+        a, b = lineas[letra]
+        L = math.dist(a, b)
+        if L < 1:
+            continue
+        u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
+        # muros que cruzan la línea de corte: posición (a lo largo del corte) de sus caras
+        caras = []
+        for m in muros_planta:
+            (xa, ya), (xb, yb) = m.a, m.b
+            dx, dy = xb - xa, yb - ya
+            den = dx * u[1] - dy * u[0]
+            if abs(den) < 1e-9:
+                continue
+            # intersección de la recta del corte con el eje del muro
+            t = ((xa - a[0]) * dy - (ya - a[1]) * dx) / (u[0] * dy - u[1] * dx)
+            k = ((xa - a[0]) * u[1] - (ya - a[1]) * u[0]) / (u[0] * dy - u[1] * dx)
+            if -0.3 <= t <= L + 0.3 and -0.01 <= k <= 1.01:
+                medio = m.espesor / 2 / max(0.2, abs(den) / math.hypot(dx, dy))
+                caras += [t - medio, t + medio]
+        # mejor aún: el contorno exterior de la planta (no se corta en las ventanas grandes)
+        if contorno_planta and len(contorno_planta) >= 3:
+            from shapely.geometry import LineString, Polygon
+            try:
+                cruce = Polygon(contorno_planta).intersection(
+                    LineString([(a[0] - u[0] * 2, a[1] - u[1] * 2), (b[0] + u[0] * 2, b[1] + u[1] * 2)]))
+                ts = [(q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1]
+                      for g in getattr(cruce, "geoms", [cruce]) for q in getattr(g, "coords", [])]
+                if len(ts) >= 2 and max(ts) - min(ts) > 1.0:
+                    caras = [min(ts), max(ts)]
+            except Exception:
+                pass
+        if len(caras) < 2:
+            continue
+        f0, f1 = min(caras), max(caras)
+        ancho_corte = med["muro_der"] - med["muro_izq"]
+        if abs((f1 - f0) - ancho_corte) > 0.4:
+            continue                                    # el corte no calza con los muros de la planta
+        # la cumbrera de la planta de techo que cruza este corte
+        mejor = None
+        for c0, c1 in cumbreras:
+            cx, cy = c1[0] - c0[0], c1[1] - c0[1]
+            den = cx * u[1] - cy * u[0]
+            if abs(den) < 1e-9:
+                continue
+            t = ((c0[0] - a[0]) * cy - (c0[1] - a[1]) * cx) / (u[0] * cy - u[1] * cx)
+            k = ((c0[0] - a[0]) * u[1] - (c0[1] - a[1]) * u[0]) / (u[0] * cy - u[1] * cx)
+            if -0.01 <= k <= 1.01 and f0 < t < f1:
+                centro = abs(t - (f0 + f1) / 2)
+                if mejor is None or centro < mejor[0]:
+                    mejor = (centro, t)
+        if mejor is None:
+            continue
+        t_r = mejor[1]
+        d_izq = med["cumbrera"] - med["muro_izq"]
+        # el corte puede mirarse desde cualquier lado: se toma la orientación más cercana a la planta de techo
+        cand = [f0 + d_izq, f1 - d_izq]
+        t_obj = min(cand, key=lambda t: abs(t - t_r))
+        movs.append((t_obj - t_r, u))
+        usados.append(f"{letra}-{letra}")
+    if not movs:
+        return None
+    mx = sum(d * u[0] for d, u in movs) / len(movs)
+    my = sum(d * u[1] for d, u in movs) / len(movs)
+    if math.hypot(mx, my) < 0.02 or math.hypot(mx, my) > 1.0:
+        return None
+    return mx, my, "corte " + ", ".join(usados)
+
+
+def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo, muros_planta=()) -> dict:
     """Forma de la cubierta: contorno de la planta de techo (alineado con la planta) o de la planta,
     pendiente desde cortes/fachadas y cumbrera desde la planta de techo o desde el corte más inclinado."""
     pendiente = max((v["pendiente"] for v in vistas_altura), default=0.0)
@@ -288,6 +393,19 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo) -> di
                                      alero=v["alero"], cumbrera=v["cumbrera"], pendiente=v["pendiente"]))
         if v.get("letra") and not linea:
             adv.append(f"{v['titulo']}: no se encontró la marca de corte {v['letra']} en la planta")
+    # una cumbrera dibujada como dos líneas paralelas muy juntas (el caballete) es una sola: su eje
+    cumbreras = _unir_paralelas(cumbreras)
+    # Los cortes mandan: la planta de techo se corre (a lo largo de cada corte) hasta que la cumbrera quede
+    # donde el corte la mide respecto de las caras exteriores de los muros
+    if techo_cad and cumbreras and muros_planta:
+        mov = _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, contorno)
+        if mov:
+            mx, my, detalle = mov
+            cont = [[round(x + mx, 3), round(y + my, 3)] for x, y in cont]
+            cumbreras = [((a[0] + mx, a[1] + my), (b[0] + mx, b[1] + my)) for a, b in cumbreras]
+            lineas_techo = [((a[0] + mx, a[1] + my), (b[0] + mx, b[1] + my)) for a, b in lineas_techo]
+            adv.append(f"Cubierta ubicada según los cortes ({detalle}): planta de techo corrida "
+                       f"{math.hypot(mx, my) * 100:.0f} cm")
     dir_cumbrera = None
     inclinados = [v for v in vistas_altura if v.get("letra") in lineas and v["pendiente"] >= 3]
     if inclinados and not cumbreras:
@@ -365,7 +483,8 @@ def construir_modelo(cfg: Configuracion) -> dict:
         if pf:
             vistas_altura.append(dict(pf, titulo=tit[2] if tit else Path(vistas_mod.archivo_de(e)).name,
                                       tipo=tit[0] if tit else "elevacion", letra=tit[1] if tit else None,
-                                      aguas=[(w, g, round(y - pf["base"], 3)) for w, g, y in cortes_mod.aguas(dib_e, caja)]))
+                                      aguas=[(w, g, round(y - pf["base"], 3)) for w, g, y in cortes_mod.aguas(dib_e, caja)],
+                                      medidas=cortes_mod.medidas_corte(dib_e, caja, pf["base"])))
     techo_cad = None
     if cfg.proyecto.get("techo"):
         t = cfg.proyecto["techo"]
@@ -525,7 +644,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
                 if sup is None:
                     adv.append(f"{nivel}: no hay nivel superior para la cubierta; agrega un nivel 'Cubierta'")
                 elif cub_def:
-                    cub = _cubierta(contorno, techo_cad, vistas_altura, dib, adv, modelo)
+                    cub = _cubierta(contorno, techo_cad, vistas_altura, dib, adv, modelo, muros)
                     modelo["losas"].append(dict(id=f"{sup}-L001", nivel=sup, tipo=cub_def,
                                                 contorno=cub["contorno"], cubierta=True,
                                                 pendiente=cub["pendiente"], bordes_pendiente=cub["bordes_pendiente"],
