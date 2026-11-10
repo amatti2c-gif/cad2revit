@@ -293,8 +293,9 @@ def _unir_paralelas(lineas: list, sep: float = 0.3) -> list:
 
 def _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, contorno_planta=None):
     """Desplazamiento de la planta de techo para que, en cada corte marcado en la planta, la cumbrera quede a la
-    distancia de los muros que mide el corte. Devuelve (dx, dy, detalle) o None."""
-    movs, usados = [], []
+    distancia de los muros que mide el corte. Un corte simétrico (cumbrera al centro de sus muros) manda sobre los
+    demás y deja la cumbrera exactamente al centro de los muros de la planta. Devuelve (dx, dy, detalle) o None."""
+    movs = []
     for v in vistas_altura:
         med, letra = v.get("medidas"), v.get("letra")
         if not med or letra not in lineas:
@@ -304,21 +305,25 @@ def _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, con
         if L < 1:
             continue
         u = ((b[0] - a[0]) / L, (b[1] - a[1]) / L)
-        # muros que cruzan la línea de corte: posición (a lo largo del corte) de sus caras
+        ancho_corte = med["muro_der"] - med["muro_izq"]
+        opciones = []
+        # caras de los muros que cruzan la línea de corte (un muro cortado por una ventana grande cuenta igual)
         caras = []
         for m in muros_planta:
             (xa, ya), (xb, yb) = m.a, m.b
             dx, dy = xb - xa, yb - ya
-            den = dx * u[1] - dy * u[0]
-            if abs(den) < 1e-9:
+            lm = math.hypot(dx, dy)
+            den = u[0] * dy - u[1] * dx
+            if lm < 1e-9 or abs(den) < 1e-9:
                 continue
-            # intersección de la recta del corte con el eje del muro
-            t = ((xa - a[0]) * dy - (ya - a[1]) * dx) / (u[0] * dy - u[1] * dx)
-            k = ((xa - a[0]) * u[1] - (ya - a[1]) * u[0]) / (u[0] * dy - u[1] * dx)
-            if -0.3 <= t <= L + 0.3 and -0.01 <= k <= 1.01:
-                medio = m.espesor / 2 / max(0.2, abs(den) / math.hypot(dx, dy))
+            t = ((xa - a[0]) * dy - (ya - a[1]) * dx) / den
+            k = ((xa - a[0]) * u[1] - (ya - a[1]) * u[0]) / den
+            holgura = 2.0 / lm
+            if -0.5 <= t <= L + 0.5 and -holgura <= k <= 1 + holgura:
+                medio = m.espesor / 2 / max(0.2, abs(den) / lm)
                 caras += [t - medio, t + medio]
-        # mejor aún: el contorno exterior de la planta (no se corta en las ventanas grandes)
+        if len(caras) >= 2:
+            opciones.append((min(caras), max(caras)))
         if contorno_planta and len(contorno_planta) >= 3:
             from shapely.geometry import LineString, Polygon
             try:
@@ -326,45 +331,87 @@ def _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, con
                     LineString([(a[0] - u[0] * 2, a[1] - u[1] * 2), (b[0] + u[0] * 2, b[1] + u[1] * 2)]))
                 ts = [(q[0] - a[0]) * u[0] + (q[1] - a[1]) * u[1]
                       for g in getattr(cruce, "geoms", [cruce]) for q in getattr(g, "coords", [])]
-                if len(ts) >= 2 and max(ts) - min(ts) > 1.0:
-                    caras = [min(ts), max(ts)]
+                if len(ts) >= 2:
+                    opciones.append((min(ts), max(ts)))
             except Exception:
                 pass
-        if len(caras) < 2:
+        opciones = [o for o in opciones if abs((o[1] - o[0]) - ancho_corte) <= 0.4]
+        if not opciones:
             continue
-        f0, f1 = min(caras), max(caras)
-        ancho_corte = med["muro_der"] - med["muro_izq"]
-        if abs((f1 - f0) - ancho_corte) > 0.4:
-            continue                                    # el corte no calza con los muros de la planta
+        f0, f1 = min(opciones, key=lambda o: abs((o[1] - o[0]) - ancho_corte))
         # la cumbrera de la planta de techo que cruza este corte
         mejor = None
         for c0, c1 in cumbreras:
             cx, cy = c1[0] - c0[0], c1[1] - c0[1]
-            den = cx * u[1] - cy * u[0]
+            den = u[0] * cy - u[1] * cx
             if abs(den) < 1e-9:
                 continue
-            t = ((c0[0] - a[0]) * cy - (c0[1] - a[1]) * cx) / (u[0] * cy - u[1] * cx)
-            k = ((c0[0] - a[0]) * u[1] - (c0[1] - a[1]) * u[0]) / (u[0] * cy - u[1] * cx)
+            t = ((c0[0] - a[0]) * cy - (c0[1] - a[1]) * cx) / den
+            k = ((c0[0] - a[0]) * u[1] - (c0[1] - a[1]) * u[0]) / den
             if -0.01 <= k <= 1.01 and f0 < t < f1:
+                lc = math.hypot(cx, cy)
                 centro = abs(t - (f0 + f1) / 2)
                 if mejor is None or centro < mejor[0]:
-                    mejor = (centro, t)
+                    mejor = (centro, t, (-cy / lc, cx / lc))
         if mejor is None:
             continue
-        t_r = mejor[1]
-        d_izq = med["cumbrera"] - med["muro_izq"]
-        # el corte puede mirarse desde cualquier lado: se toma la orientación más cercana a la planta de techo
-        cand = [f0 + d_izq, f1 - d_izq]
-        t_obj = min(cand, key=lambda t: abs(t - t_r))
-        movs.append((t_obj - t_r, u))
-        usados.append(f"{letra}-{letra}")
+        _, t_r, nrm = mejor
+        d_izq, d_der = med["cumbrera"] - med["muro_izq"], med["muro_der"] - med["cumbrera"]
+        simetrico = abs(d_izq - d_der) < 0.06
+        if simetrico:
+            t_obj = (f0 + f1) / 2                       # simétrico: exactamente al centro de los muros
+        else:
+            # el corte puede mirarse desde cualquier lado: la orientación más cercana a la planta de techo
+            t_obj = min((f0 + d_izq, f1 - d_izq), key=lambda t: abs(t - t_r))
+        # se mueve perpendicular a la cumbrera (la línea de corte puede no ser exactamente perpendicular)
+        un = u[0] * nrm[0] + u[1] * nrm[1]
+        d = (t_obj - t_r) * un
+        movs.append((simetrico, d, nrm, f"{letra}-{letra}" + (" simétrico" if simetrico else "")))
     if not movs:
         return None
-    mx = sum(d * u[0] for d, u in movs) / len(movs)
-    my = sum(d * u[1] for d, u in movs) / len(movs)
-    if math.hypot(mx, my) < 0.02 or math.hypot(mx, my) > 1.0:
+    if any(x[0] for x in movs):
+        movs = [x for x in movs if x[0]]
+    mx = sum(d * n[0] for _, d, n, _ in movs) / len(movs)
+    my = sum(d * n[1] for _, d, n, _ in movs) / len(movs)
+    if math.hypot(mx, my) < 1e-4 or math.hypot(mx, my) > 1.0:
         return None
-    return mx, my, "corte " + ", ".join(usados)
+    return mx, my, "corte " + ", ".join(x[3] for x in movs)
+
+
+def _simetrizar_aleros(cont: list, bordes: list, cumbreras: list, tol: float = 0.15) -> tuple[list, str | None]:
+    """Si los aleros extremos a ambos lados de la cumbrera vuelan casi lo mismo, quedan exactamente iguales
+    (centrados en la cumbrera): las diferencias de dibujo de unos centímetros no deben romper la simetría."""
+    if not cumbreras or len(bordes) < 2:
+        return cont, None
+    c0, c1 = max(cumbreras, key=lambda c: math.dist(*c))
+    lc = math.dist(c0, c1) or 1.0
+    u = ((c1[0] - c0[0]) / lc, (c1[1] - c0[1]) / lc)
+    nrm = (-u[1], u[0])
+    S = lambda p: (p[0] - c0[0]) * nrm[0] + (p[1] - c0[1]) * nrm[1]     # noqa: E731
+    n = len(cont)
+    paralelos = []
+    for i in bordes:
+        p, q = cont[i], cont[(i + 1) % n]
+        L = math.dist(p, q) or 1.0
+        if abs(((q[0] - p[0]) * nrm[0] + (q[1] - p[1]) * nrm[1]) / L) < 0.02:
+            paralelos.append((S(p) + S(q)) / 2)
+    if len(paralelos) < 2:
+        return cont, None
+    s_lo, s_hi = min(paralelos), max(paralelos)
+    if not (s_lo < 0 < s_hi) or abs(-s_lo - s_hi) > tol or abs(-s_lo - s_hi) < 1e-4:
+        return cont, None
+    medio = (s_hi - s_lo) / 2
+    out = []
+    for p in cont:
+        s = S(p)
+        if abs(s - s_lo) < 0.005:
+            d = -medio - s
+        elif abs(s - s_hi) < 0.005:
+            d = medio - s
+        else:
+            d = 0.0
+        out.append([round(p[0] + nrm[0] * d, 4), round(p[1] + nrm[1] * d, 4)])
+    return out, f"aleros iguales a ambos lados de la cumbrera ({medio:.2f} m), antes {-s_lo:.2f} y {s_hi:.2f} m"
 
 
 def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo, muros_planta=()) -> dict:
@@ -429,6 +476,10 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo, muros
         forma = {"forma": "plana", "bordes_pendiente": []}
     # cuerpos del techo: cumbrera, pendiente y altura de alero de cada agua (consistente con las elevaciones)
     extra = {}
+    if forma["forma"] in ("dos aguas", "varias aguas") and cumbreras:
+        cont, nota = _simetrizar_aleros(cont, forma["bordes_pendiente"], cumbreras)
+        if nota:
+            adv.append("Cubierta: " + nota)
     if forma["forma"] in ("dos aguas", "varias aguas"):
         frontones = [fa for v in vistas_altura for fa in v.get("aguas") or []]
         cota_cub = next((nv["cota"] for nv in modelo["niveles"][::-1]), None) if modelo.get("niveles") else None

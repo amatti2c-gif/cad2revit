@@ -253,6 +253,10 @@ def generar(segmentos: list, cfg, nivel: str, sup: str | None, cota: dict[str, f
                             h0 = h_fin
                         else:
                             h1 = h_fin
+                # casi simétrico (cumbrera a menos de 10 cm del centro y columnas parecidas): simétrico exacto
+                if abs(cumbre - largo / 2) < 0.10 and abs(h0 - h1) < 0.08:
+                    cumbre = largo / 2
+                    h0 = h1 = (h0 + h1) / 2
                 ts = [0.0, round(cumbre, 6), largo]
                 hs = [h0, hc, h1]
                 # pilar central opcional bajo la cumbrera (sin subdividir: las vigas siguen siendo dos)
