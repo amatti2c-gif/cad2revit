@@ -147,14 +147,19 @@ namespace Cad2Revit
             // vigas: a la separación pedida desde el borde
             double sMin = lazosL.SelectMany(l => l).Min(p => p.s), sMax = lazosL.SelectMany(l => l).Max(p => p.s);
             var lineas = new List<(double s, List<(double r0, double r1)> tramos)>();
-            if (c.Perimetrales) lineas.Add((sMin + B / 2, Cortes(sMin + B / 2 + 0.001)));
-            for (double s = sMin + c.Separacion; s < sMax - B - 0.05; s += c.Separacion)
+            // ejes cada «Separacion» desde el eje de la viga de borde (o de la primera viga); el último espacio, lo que quede
+            void Viga(double s)
             {
                 var tramos = Cortes(s).Select(t => (t.r0 + rec, t.r1 - rec)).Where(t => t.Item2 - t.Item1 > 0.1).ToList();
                 foreach (var (r0, r1) in tramos) Pieza(Glo(s, r0), Glo(s, r1), "viga");
                 lineas.Add((s, tramos));
             }
-            if (c.Perimetrales) lineas.Add((sMax - B / 2, Cortes(sMax - B / 2 - 0.001)));
+            double sIni = sMin + B / 2, sFin = sMax - B / 2;
+            if (c.Perimetrales) lineas.Add((sIni, Cortes(sIni + 0.001)));
+            else Viga(sIni + 0.001);
+            for (double s = sIni + c.Separacion; s < sFin - B - 0.01; s += c.Separacion) Viga(s);
+            if (c.Perimetrales) lineas.Add((sFin, Cortes(sFin - 0.001)));
+            else Viga(sFin - 0.001);
 
             // cadenetas: líneas a lo largo de la luz, entre vigas vecinas
             int nCad = 0;
@@ -167,7 +172,9 @@ namespace Cad2Revit
                         {
                             double r0 = Math.Max(a0, b0), r1 = Math.Min(a1, b1);
                             // líneas cada «Cadenetas» desde el inicio de la luz; el último espacio queda con lo que sobre
-                            for (double r = r0 + c.Cadenetas; r < r1 - 0.05; r += c.Cadenetas)
+                            // desde el eje de la viga de borde (o desde el extremo de la viga)
+                            double rIni = r0 - (c.Perimetrales ? B / 2 : 0), rFin = r1 + (c.Perimetrales ? B / 2 : 0);
+                            for (double r = rIni + c.Cadenetas; r < rFin - B - 0.01; r += c.Cadenetas)
                             {
                                 Pieza(Glo(s0 + B / 2, r), Glo(s1 - B / 2, r), "cadeneta");
                                 nCad++;
