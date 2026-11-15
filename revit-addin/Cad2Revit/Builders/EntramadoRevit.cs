@@ -164,20 +164,38 @@ namespace Cad2Revit
             }
 
             // pilares y vigas existentes que atraviesan el muro: el entramado no se superpone con ellos y se apoya en ellos
-            var obs = ObstaculosEnMuro(w, a, ux, uy, largo, zBase, zBase + alto);
-            double zTope = zBase + alto;
+            // borde superior real del muro (frontón, muro unido al techo o con perfil editado): envolvente superior
+            // de su geometría a lo largo del eje
+            var perfil = PerfilSuperior(w, a, ux, uy, largo, zBase + alto);
+            double PerfilEn(double t)
+            {
+                if (perfil.Count < 2) return zBase + alto;
+                if (t <= perfil[0].t) return perfil[0].z;
+                for (int i = 0; i + 1 < perfil.Count; i++)
+                    if (t <= perfil[i + 1].t)
+                    {
+                        var (ta, za) = perfil[i]; var (tb, zb2) = perfil[i + 1];
+                        return tb - ta < 1e-9 ? Math.Min(za, zb2) : za + (zb2 - za) * (t - ta) / (tb - ta);
+                    }
+                return perfil[^1].z;
+            }
+            double zTope = perfil.Count >= 2 ? perfil.Max(x => x.z) : zBase + alto;
+            var obs = ObstaculosEnMuro(w, a, ux, uy, largo, zBase, zTope);
             vanos.AddRange(obs.Vanos);
             // tope del entramado: bajo las vigas que corren dentro del muro en su parte alta (horizontales o inclinadas)
             Func<double, double> topeEn = t =>
             {
-                double z = zTope;
+                double z = PerfilEn(t);
                 foreach (var (t0, t1, z0, z1) in obs.Vigas)
                     if (t >= t0 - 1e-6 && t <= t1 + 1e-6)
                         z = Math.Min(z, t1 - t0 < 1e-6 ? z0 : z0 + (z1 - z0) * (t - t0) / (t1 - t0));
                 return z;
             };
             // en los extremos de cada viga el tope cambia de golpe: quiebres a ambos lados (escalón, no rampa)
-            var quiebres = obs.Vigas.SelectMany(v => new[] { v.t0 - 0.001, v.t0, v.t1, v.t1 + 0.001 }).ToList();
+            var quiebres = obs.Vigas.SelectMany(v => new[] { v.t0 - 0.001, v.t0, v.t1, v.t1 + 0.001 })
+                                    .Concat(perfil.Select(x => x.t)).ToList();
+            if (perfil.Count > 2 || (perfil.Count == 2 && Math.Abs(perfil[0].z - perfil[1].z) > 0.01))
+                _inf.Advertencia($"Muro {w.Id}: el entramado sigue su borde superior inclinado (cumbrera a {perfil.Max(x => x.z) - zBase:0.00} m)");
             // tramos entre pilares: cada uno se arma por separado y sus soleras y pies derechos extremos llegan a la cara
             // del pilar (sin superponerse)
             var tramos = new List<(double s0, double s1)>();
@@ -299,6 +317,39 @@ namespace Cad2Revit
                 o.Vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = Math.Max(z0, zBase), ZSup = Math.Min(z1, zTope), Puerta = z0 <= zBase + 0.01 });
             }
             return o;
+        }
+
+        /// <summary>Borde superior del muro a lo largo de su eje: envolvente superior (convexa) de los vértices de su
+        /// geometría, en (t, z) m. En un frontón da los dos tramos inclinados hasta la cumbrera; en un muro recto, su tope.</summary>
+        private List<(double t, double z)> PerfilSuperior(Wall w, double[] a, double ux, double uy, double largo, double zDefecto)
+        {
+            var pts = PuntosGeometria(w)
+                .Select(q => (t: Math.Min(Math.Max((Mt(q.X) - a[0]) * ux + (Mt(q.Y) - a[1]) * uy, 0), largo), z: Mt(q.Z)))
+                .OrderBy(x => x.t).ThenBy(x => x.z).ToList();
+            if (pts.Count < 2) return new List<(double, double)>();
+            // cadena superior del casco convexo (monotone chain)
+            var sup = new List<(double t, double z)>();
+            foreach (var p in pts.OrderBy(x => x.t).ThenByDescending(x => x.z))
+            {
+                while (sup.Count >= 2)
+                {
+                    var (t1, z1) = sup[^2]; var (t2, z2) = sup[^1];
+                    if ((t2 - t1) * (p.z - z1) - (z2 - z1) * (p.t - t1) >= -1e-9) sup.RemoveAt(sup.Count - 1);
+                    else break;
+                }
+                if (sup.Count > 0 && Math.Abs(sup[^1].t - p.t) < 1e-6) continue;   // mismo t: se queda el más alto
+                sup.Add(p);
+            }
+            // sin quiebres de menos de 1 cm de altura
+            var limpio = new List<(double t, double z)> { sup[0] };
+            for (int i = 1; i + 1 < sup.Count; i++)
+            {
+                var (ta, za) = limpio[^1]; var (tb, zb) = sup[i]; var (tc, zc) = sup[i + 1];
+                double zl = za + (zc - za) * (tb - ta) / Math.Max(tc - ta, 1e-9);
+                if (Math.Abs(zb - zl) > 0.01) limpio.Add(sup[i]);
+            }
+            limpio.Add(sup[^1]);
+            return limpio.Count >= 2 && limpio.Max(x => x.z) > zDefecto - 2 ? limpio : new List<(double, double)>();
         }
 
         /// <summary>Puntos de la geometría (aristas de los sólidos) de un elemento, en coordenadas del modelo.</summary>
