@@ -16,7 +16,8 @@ namespace Cad2Revit
         public double DiametroPerno = 16;
         public double LargoPerno = 500;      // total
         public double Sobresale = 60;        // del perno sobre la cara superior de la placa
-        public double Borde = 40;            // del centro del perno al borde de la placa
+        public double BordeAncho = 40;       // del centro del perno al borde de la placa, medido en la dirección del ancho
+        public double BordeLargo = 40;       // ídem en la dirección del largo
         public double LadoGolilla = 50;      // golilla cuadrada del extremo embebido
         public double EspesorGolilla = 5;
     }
@@ -88,12 +89,14 @@ namespace Cad2Revit
                         double Redondear(double pies) => U.M(Math.Ceiling(Mt(pies) * 100 - 1e-6) / 100);   // a 10 mm
                         double ax = c.Ancho > 0 ? mm(c.Ancho) : Redondear((x1 - x0) + 2 * mm(c.Vuelo));
                         double ay = c.Largo > 0 ? mm(c.Largo) : Redondear((y1 - y0) + 2 * mm(c.Vuelo));
-                        double e = mm(c.Espesor), b = mm(c.Borde), d = mm(c.DiametroPerno);
+                        double e = mm(c.Espesor), bx = mm(c.BordeAncho), by = mm(c.BordeLargo), d = mm(c.DiametroPerno);
                         if (ax < x1 - x0 || ay < y1 - y0)
                             _inf.Advertencia($"Pilar {p.Id}: la placa ({Mt(ax) * 1000:0}x{Mt(ay) * 1000:0}) es más chica que el perfil");
-                        if (ax / 2 - b < (x1 - x0) / 2 + d / 2 && ay / 2 - b < (y1 - y0) / 2 + d / 2)
+                        if (ax / 2 - bx < (x1 - x0) / 2 + d / 2 && ay / 2 - by < (y1 - y0) / 2 + d / 2)
                             _inf.Advertencia($"Pilar {p.Id}: los pernos chocan con el perfil; aumenta el vuelo o reduce la distancia al borde");
 
+                        if (2 * bx >= ax - d || 2 * by >= ay - d)
+                            throw new Exception("la distancia de los pernos al borde es mayor que la mitad de la placa");
                         // placa: cara superior en la base del pilar
                         var placa = Caja(centro, ex, ey, ax, ay, -e, 0, opciones);
 
@@ -110,7 +113,7 @@ namespace Cad2Revit
                         var anclajes = new List<GeometryObject>();
                         foreach (var (sx, sy) in new[] { (-1, -1), (1, -1), (1, 1), (-1, 1) })
                         {
-                            var q = centro + ex * (sx * (ax / 2 - b)) + ey * (sy * (ay / 2 - b));
+                            var q = centro + ex * (sx * (ax / 2 - bx)) + ey * (sy * (ay / 2 - by));
                             anclajes.Add(Cilindro(q, d / 2, zInf, zSup, opciones));
                             anclajes.Add(Hexagono(q, ex, sTuerca / 2, zTuerca, zTuerca + hTuerca, opciones));
                             anclajes.Add(Caja(q, ex, ey, lg, lg, zTuerca + hTuerca, zTuerca + hTuerca + g, opciones));
@@ -130,7 +133,8 @@ namespace Cad2Revit
                         try { dsA.Name = $"4 pernos Ø{c.DiametroPerno:0} L={c.LargoPerno:0}, golilla {c.LadoGolilla:0}x{c.LadoGolilla:0}x{c.EspesorGolilla:0} y tuerca abajo; golilla plana y doble tuerca arriba"; } catch { }
                         dsA.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} pernos");
                         hechas++;
-                        _inf.Advertencia($"Pilar {p.Id}: {nombre} mm, pernos a {c.Borde:0} mm del borde, " +
+                        _inf.Advertencia($"Pilar {p.Id}: {nombre} mm, pernos a {c.BordeAncho:0} mm del borde en el ancho y {c.BordeLargo:0} mm en el largo " +
+                                         $"(separación {Mt(ax - 2 * bx) * 1000:0} x {Mt(ay - 2 * by) * 1000:0} mm), " +
                                          $"{c.LargoPerno - c.Sobresale - c.Espesor:0} mm bajo la placa");
                     });
                 }

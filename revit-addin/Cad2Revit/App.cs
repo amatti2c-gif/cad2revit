@@ -522,7 +522,8 @@ namespace Cad2Revit
                 ("Diámetro de los pernos", () => c.DiametroPerno, v => c.DiametroPerno = v),
                 ("Largo total de los pernos", () => c.LargoPerno, v => c.LargoPerno = v),
                 ("Perno sobre la cara superior de la placa", () => c.Sobresale, v => c.Sobresale = v),
-                ("Centro del perno al borde de la placa", () => c.Borde, v => c.Borde = v),
+                ("Perno al borde, dirección del ancho (alas)", () => c.BordeAncho, v => c.BordeAncho = v),
+                ("Perno al borde, dirección del largo (alma)", () => c.BordeLargo, v => c.BordeLargo = v),
                 ("Lado de la golilla cuadrada", () => c.LadoGolilla, v => c.LadoGolilla = v),
                 ("Espesor de la golilla", () => c.EspesorGolilla, v => c.EspesorGolilla = v),
             };
