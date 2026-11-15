@@ -38,6 +38,28 @@ namespace Cad2Revit
                 using (var grupo = new TransactionGroup(_doc, "cad2revit: entramado en muros"))
                 {
                     grupo.Start();
+                    // muros apilados justo encima en la misma línea (p. ej. el triángulo de un frontón): también
+                    var lista = muros.ToList();
+                    for (int i = 0; i < lista.Count; i++)
+                    {
+                        var w0 = lista[i];
+                        if (!(w0.Location is LocationCurve lc0) || !(lc0.Curve is Line l0)) continue;
+                        var (_, zt0) = AlturaMuro(w0);
+                        foreach (var o in todos)
+                        {
+                            if (lista.Any(x => x.Id == o.Id)) continue;
+                            var lo = (Line)((LocationCurve)o.Location).Curve;
+                            if (Math.Abs(lo.Direction.X * l0.Direction.Y - lo.Direction.Y * l0.Direction.X) > 0.01) continue;
+                            var pl = Line.CreateUnbound(new XYZ(l0.GetEndPoint(0).X, l0.GetEndPoint(0).Y, 0), new XYZ(l0.Direction.X, l0.Direction.Y, 0));
+                            var oa = new XYZ(lo.GetEndPoint(0).X, lo.GetEndPoint(0).Y, 0); var ob = new XYZ(lo.GetEndPoint(1).X, lo.GetEndPoint(1).Y, 0);
+                            if (Mt(pl.Distance(oa)) > 0.05 || Mt(pl.Distance(ob)) > 0.05) continue;
+                            var (zb1, _) = AlturaMuro(o);
+                            if (Math.Abs(zb1 - zt0) > 0.20) continue;
+                            lista.Add(o);
+                            _inf.Advertencia($"Muro {o.Id}: incluido (está sobre el muro {w0.Id}, en la misma línea)");
+                        }
+                    }
+                    muros = lista;
                     Etapa("Entramado en muros de Revit", () =>
                     {
                         foreach (var w in muros)
@@ -209,8 +231,23 @@ namespace Cad2Revit
             if (inicio < largo - r1) tramos.Add((inicio, largo - r1));
             var piezas = new List<PiezaDef>();
             foreach (var (t0, t1) in tramos)
-                if (t1 - t0 > 2 * conf.B + 0.02)
-                    piezas.AddRange(GeneradorEntramado.Generar(a, b, zBase, zTope, t0, largo - t1, vanos, conf, topeEn, quiebres));
+            {
+                // sub-tramos según las vigas en la base: sobre ellas el entramado parte de su cara superior
+                var cortes = new SortedSet<double> { t0, t1 };
+                foreach (var (b0, b1, _) in obs.Bases) { if (b0 > t0 && b0 < t1) cortes.Add(b0); if (b1 > t0 && b1 < t1) cortes.Add(b1); }
+                var cs = cortes.ToList();
+                for (int k = 0; k + 1 < cs.Count; k++)
+                {
+                    double s0 = cs[k], s1 = cs[k + 1], tm = (s0 + s1) / 2;
+                    if (s1 - s0 <= 2 * conf.B + 0.02) continue;
+                    double zb = zBase;
+                    foreach (var (b0, b1, zs) in obs.Bases) if (tm >= b0 && tm <= b1) zb = Math.Max(zb, zs);
+                    var vanosAqui = zb > zBase ? vanos.Where(v => v.ZInf >= zb - 0.01).ToList() : vanos;
+                    piezas.AddRange(GeneradorEntramado.Generar(a, b, zb, zTope, s0, largo - s1, vanosAqui, conf, topeEn, quiebres));
+                }
+            }
+            if (obs.Bases.Count > 0)
+                _inf.Advertencia($"Muro {w.Id}: el entramado parte sobre {obs.Bases.Count} viga(s) en su base");
             // vigas con muro por encima (p. ej. la del alero en un frontón): sobre ellas se arma otra zona de entramado,
             // con su solera inferior apoyada en la viga y hasta el borde superior del muro
             for (int iv = 0; iv < obs.Vigas.Count; iv++)
@@ -287,6 +324,7 @@ namespace Cad2Revit
             public List<(double t0, double t1)> Pilares = new();                    // de toda la altura: cortan el muro en tramos
             public List<(double t0, double t1, double z0, double z1)> Vigas = new(); // en la parte alta: cara inferior en t0 y t1
             public List<(double z0, double z1)> CaraSuperior = new();               // de cada viga, en t0 y t1
+            public List<(double t0, double t1, double zSup)> Bases = new();         // vigas en la base: el entramado parte sobre ellas
             public List<VanoMuro> Vanos = new();                                    // el resto: se rodea como un vano
             public List<string> Ignorados = new();
         }
@@ -334,12 +372,19 @@ namespace Cad2Revit
                     bool paralela = horiz > 1e-6 && Math.Abs(dir.X / horiz * uy - dir.Y / horiz * ux) < 0.1;
                     if (paralela)
                     {
-                        if (z0 < zBase + 0.3 * alto)
+                        double Inf(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
+                        bool horizontal = Math.Abs(Inf(t0) - Inf(t1)) < 0.05;
+                        if (!horizontal && z0 < zBase + 0.3 * alto)
                         {
                             o.Ignorados.Add(nombre + " (diagonal)");      // arriostramiento de altura completa
                             continue;
                         }
-                        if (z0 >= zBase + 0.5 * alto)
+                        if (horizontal && z0 <= zBase + 0.3)
+                        {
+                            o.Bases.Add((t0, t1, Math.Min(z1, zTope)));      // viga en la base del muro: el entramado parte sobre ella
+                            continue;
+                        }
+                        if (horizontal || z0 >= zBase + 0.5 * alto)
                         {
                             // cara inferior en cada extremo del tramo que ocupa en el muro
                             double Inferior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
