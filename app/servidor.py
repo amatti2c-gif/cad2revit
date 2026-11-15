@@ -20,6 +20,7 @@ import binascii
 import difflib
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -1577,6 +1578,75 @@ def ejes_y_niveles(m: dict, n: int | None = None, vistas_cortes: list | None = N
                          f"{len(verticales) + len(horizontales) + len(otros)} ejes ({len(verticales)} verticales, "
                          f"{len(horizontales)} horizontales)"],
     }
+
+
+def aberturas_ordenadas(m: dict, n: int | None = None) -> dict:
+    """Puertas y ventanas de la corrida, para abrir sus vanos en un modelo de Revit (botón «Puertas y ventanas»):
+    nivel, eje del muro, posición (centro en el eje del muro), ancho, alto y antepecho; ordenadas por nivel, eje y
+    posición a lo largo del eje. Incluye el origen que usa la importación, por si el archivo de Revit no lo tiene."""
+    r3 = lambda v: round(float(v), 3)                                      # noqa: E731
+    cota = {x["nombre"]: x["cota"] for x in m.get("niveles") or []}
+    muros = {w["id"]: w for w in m.get("muros") or []}
+    org = ejes_y_niveles(m)["ejes"]
+    orden_eje = {e["nombre"]: i for i, e in enumerate(org)}
+
+    def eje_de(w):
+        (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+        L = math.hypot(x2 - x1, y2 - y1) or 1.0
+        for e in m.get("ejes") or []:
+            (a1, b1), (a2, b2) = e["inicio"], e["fin"]
+            le = math.hypot(a2 - a1, b2 - b1) or 1.0
+            if abs((x2 - x1) / L * (b2 - b1) / le - (y2 - y1) / L * (a2 - a1) / le) > 0.02:
+                continue
+            if all(abs((q[0] - a1) * (b2 - b1) - (q[1] - b1) * (a2 - a1)) / le < 0.02 for q in (w["inicio"], w["fin"])):
+                return e["nombre"]
+        return None
+
+    out = []
+    for a in m.get("aberturas") or []:
+        w = muros.get(a["muro"])
+        if not w:
+            continue
+        (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+        L = math.hypot(x2 - x1, y2 - y1) or 1.0
+        u = ((x2 - x1) / L, (y2 - y1) / L)
+        if (u[0] < -1e-9) or (abs(u[0]) < 1e-9 and u[1] < 0):
+            u = (-u[0], -u[1])                       # dirección de izquierda a derecha / de abajo hacia arriba
+        eje = eje_de(w)
+        out.append({
+            "id": a["id"], "categoria": a["categoria"], "nivel": w["nivel"], "cota_nivel": r3(cota.get(w["nivel"], 0.0)),
+            "eje": eje, "muro": w["id"], "tipo_muro": w.get("tipo"), "direccion_muro": [round(u[0], 6), round(u[1], 6)],
+            "centro": [r3(a["centro"][0]), r3(a["centro"][1])],
+            "ancho": r3(a["ancho"]), "alto": r3(a["alto"]), "antepecho": r3(a["antepecho"]),
+        })
+    out.sort(key=lambda a: (cota.get(a["nivel"], 0.0), orden_eje.get(a["eje"], 10 ** 6), a["eje"] or "",
+                            a["centro"][0] * a["direccion_muro"][0] + a["centro"][1] * a["direccion_muro"][1]))
+    xs = [p[0] for w in m.get("muros") or [] for p in (w["inicio"], w["fin"])] + \
+         [p[0] for e in m.get("ejes") or [] for p in (e["inicio"], e["fin"])]
+    ys = [p[1] for w in m.get("muros") or [] for p in (w["inicio"], w["fin"])] + \
+         [p[1] for e in m.get("ejes") or [] for p in (e["inicio"], e["fin"])]
+    origen = [0.0, 0.0]
+    if xs and not (abs(min(xs)) < 200 and abs(min(ys)) < 200):
+        origen = [math.floor(min(xs) / 10) * 10, math.floor(min(ys) / 10) * 10]
+    return {
+        "tipo_archivo": "cad2revit-aberturas", "version": m.get("version"), "unidades": "m",
+        "proyecto": m.get("proyecto", ""), "corrida": n, "origen_sugerido": origen,
+        "resumen": {"puertas": sum(a["categoria"] == "puerta" for a in out),
+                    "ventanas": sum(a["categoria"] == "ventana" for a in out)},
+        "aberturas": out,
+    }
+
+
+@app.get("/api/proyectos/{pid}/corridas/{n}/aberturas.json")
+def descargar_aberturas(pid: str, n: int):
+    """Puertas y ventanas ordenadas de la corrida (ver aberturas_ordenadas)."""
+    d = _proyecto(pid)
+    f = _corrida_dir(d, n) / "modelo.json"
+    if not f.exists():
+        raise HTTPException(404, "Esta corrida no generó modelo (tuvo errores)")
+    datos = aberturas_ordenadas(json.loads(f.read_text(encoding="utf-8")), n)
+    return Response(json.dumps(datos, ensure_ascii=False, indent=1), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{pid}-corrida{n}-aberturas.json"'})
 
 
 @app.get("/api/proyectos/{pid}/corridas/{n}/ejes-niveles.json")

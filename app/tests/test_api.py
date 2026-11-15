@@ -631,3 +631,25 @@ def test_ejes_y_niveles_ordenados(cliente):
     assert all(e["inicio"][1] <= e["fin"][1] for e in vert) and all(e["inicio"][0] <= e["fin"][0] for e in hor)
     import jsonschema
     jsonschema.validate(b, json.loads((Path(__file__).parents[2] / "schema" / "modelo.schema.json").read_text(encoding="utf-8")))
+
+
+def test_aberturas_json(cliente):
+    """Puertas y ventanas para abrir sus vanos en Revit: posición en el eje de su muro, medidas y orden."""
+    pid = _crear(cliente)
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    r = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}/aberturas.json")
+    assert r.status_code == 200 and "aberturas.json" in r.headers["content-disposition"]
+    b = r.json()
+    assert b["tipo_archivo"] == "cad2revit-aberturas" and b["unidades"] == "m" and len(b["origen_sugerido"]) == 2
+    assert len(b["aberturas"]) == len(m["aberturas"]) and b["aberturas"]
+    muros = {w["id"]: w for w in m["muros"]}
+    for a in b["aberturas"]:
+        assert {"id", "categoria", "nivel", "cota_nivel", "eje", "centro", "ancho", "alto", "antepecho", "direccion_muro"} <= set(a)
+        w = muros[a["muro"]]
+        (x1, y1), (x2, y2) = w["inicio"], w["fin"]
+        L = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
+        d = abs((a["centro"][0] - x1) * (y2 - y1) - (a["centro"][1] - y1) * (x2 - x1)) / L
+        assert d < 0.01                                                       # sobre el eje de su muro
+    cotas = [a["cota_nivel"] for a in b["aberturas"]]
+    assert cotas == sorted(cotas)

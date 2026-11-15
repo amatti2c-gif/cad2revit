@@ -29,6 +29,13 @@ namespace Cad2Revit
                           "Lee el largo, la altura, los encuentros y las puertas y ventanas de cada muro. Si el muro ya tenía " +
                           "entramado generado así, se reemplaza."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitAberturas", "Puertas y\nventanas",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoAberturas).FullName)
+            {
+                ToolTip = "Lee aberturas.json (app → Resultado → ⬇ aberturas.json) y abre en tus muros de Revit el vano exacto " +
+                          "de cada puerta y ventana (ancho, alto y antepecho). Al volver a cargarlo sincroniza: ajusta lo que " +
+                          "cambió y borra lo que ya no está, solo en lo que creó este botón. Rehace el entramado de los muros que lo tenían."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -235,6 +242,35 @@ namespace Cad2Revit
             {
                 MainInstruction = informe.Errores.Count == 0 && informe.CantidadFaltantes == 0
                     ? "Entramado creado" : "Entramado creado con observaciones (ver detalle)",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Vanos de puertas y ventanas de la app (aberturas.json) en los muros del modelo de Revit.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoAberturas : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var doc = data.Application.ActiveUIDocument?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var dlg = new FileOpenDialog("Puertas y ventanas cad2revit (*.json)|*.json") { Title = "Selecciona aberturas.json" };
+            if (dlg.Show() != ItemSelectionDialogResult.Confirmed) return Result.Cancelled;
+            var ruta = ModelPathUtils.ConvertModelPathToUserVisiblePath(dlg.GetSelectedModelPath());
+            ArchivoAberturas archivo;
+            try { archivo = ArchivoAberturas.Leer(ruta); }
+            catch (System.Exception ex) { message = "No se pudo leer el archivo: " + ex.Message; return Result.Failed; }
+
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).CargarAberturas(archivo);
+            try { informe.Guardar(System.IO.Path.ChangeExtension(ruta, ".informe.txt")); } catch { /* carpeta sin permiso */ }
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = informe.Errores.Count == 0 && informe.Advertencias.Count == 0
+                    ? "Vanos de puertas y ventanas listos" : "Vanos listos, con observaciones (ver detalle)",
                 MainContent = informe.Resumen(),
                 ExpandedContent = informe.Detalle(),
             }.Show();
