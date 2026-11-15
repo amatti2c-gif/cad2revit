@@ -75,9 +75,9 @@ namespace Cad2Revit
             panel.AddItem(new PushButtonData("Cad2RevitEntramadoPiso", "Entramado\nde piso",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoEntramadoPiso).FullName)
             {
-                ToolTip = "Entramado horizontal de madera bajo un piso: vigas a la separación pedida salvando la luz corta y " +
-                          "cadenetas entre ellas, que parten y terminan en los elementos de borde que ya existen (vigas, " +
-                          "muros, pilares); vigas de borde nuevas solo donde no los hay. En los pisos seleccionados (o los eliges)."
+                ToolTip = "Entramado horizontal de madera al nivel de un piso: vigas de borde en todo su contorno, vigas entre " +
+                          "ellas a la separación pedida (luz corta) y cadenetas entre las vigas. Queda unido al piso. " +
+                          "En los pisos seleccionados (o los eliges)."
             });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)

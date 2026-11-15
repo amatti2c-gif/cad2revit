@@ -110,12 +110,10 @@ namespace Cad2Revit
                 piezas.Add(new PiezaDef { Rol = rol, Inicio = new[] { a.x, a.y, zc }, Fin = new[] { b.x, b.y, zc }, Ancho = B, Profundidad = c.H });
             }
 
-            // ---- elementos de borde que ya existen (vigas, muros, pilares) a la altura del entramado ----
-            // las vigas y cadenetas parten y terminan en sus caras, aunque el piso sea más grande o más chico que el
-            // espacio entre ellos; donde los hay no se ponen vigas de borde nuevas
-            const double Holgura = 0.60;
-            var hulls = ElementosDeBorde(piso, zInf - c.H, zInf, Holgura)
-                .Select(pts => Casco(pts.Select(q => Loc((q.x, q.y))).ToList())).Where(h => h.Count >= 3).ToList();
+            // ---- orden del entramado: 1) vigas de borde en TODO el contorno del piso, 2) vigas entre ellas,
+            // 3) cadenetas entre las vigas. No se toman en cuenta otros elementos del modelo ----
+            const double Holgura = 0.0;
+            var hulls = new List<List<(double s, double r)>>();
             List<(double a, double b)> CortaPoligono(List<(double s, double r)> pol, bool porS, double v)
             {
                 // intervalos (en r si porS, en s si no) donde la recta s = v (o r = v) está dentro del polígono
