@@ -261,10 +261,21 @@ namespace Cad2Revit
                 throw new Exception("no hay familias de madera (Dimension Lumber); cárgalas con Insertar → Cargar familia de Autodesk");
             sh = ConMedidas(sh, $"{c.B * 1000:0}x{c.H * 1000:0}", (null, NombresAnchoMadera, c.B), (null, NombresAltoMadera, c.H));
             var mat = IdMaterial(c.Material);
+            // en partes: 1) el contorno (vigas de borde), 2) las vigas, 3) las cadenetas
             int hechas = 0;
             var colocadas = new List<FamilyInstance>();
-            foreach (var p in piezas)
-                if (Intentar($"piso {piso.Id} {p.Rol}", () => colocadas.Add(ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}")))) hechas++;
+            var resumen = new List<string>();
+            foreach (var (rol, nombre) in new[] { ("viga_borde", "vigas de borde (contorno)"), ("viga", "vigas"), ("cadeneta", "cadenetas") })
+            {
+                var parte = piezas.Where(p => p.Rol == rol).ToList();
+                int ok = 0;
+                foreach (var p in parte)
+                    if (Intentar($"piso {piso.Id} {p.Rol}", () => colocadas.Add(ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}")))) ok++;
+                if (rol == "viga_borde") _doc.Regenerate();
+                hechas += ok;
+                resumen.Add(ok == parte.Count ? $"{ok} {nombre}" : $"{ok} de {parte.Count} {nombre}");
+            }
+            _inf.Advertencia($"Piso {piso.Id}: " + string.Join(", luego ", resumen));
 
             // eje fuerte vertical: la altura de cada pieza debe ser H (no B); si la familia la dejó acostada, se gira 90°
             _doc.Regenerate();
