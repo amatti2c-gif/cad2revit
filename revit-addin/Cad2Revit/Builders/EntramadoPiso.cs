@@ -114,6 +114,18 @@ namespace Cad2Revit
             // 3) cadenetas entre las vigas. No se toman en cuenta otros elementos del modelo ----
             const double Holgura = 0.0;
             var hulls = new List<List<(double s, double r)>>();
+            // el contorno se ajusta a los elementos que ya existen en sus bordes (vigas, muros, pilares): si el piso
+            // pasa por debajo de uno, su borde se corre a la cara interior del elemento; si queda corto (hasta 60 cm),
+            // se alarga hasta esa cara. Así las vigas de borde quedan contra ellos y no escondidas dentro.
+            var existentes = ElementosDeBorde(piso, zInf - c.H, zInf, 0.6)
+                .Select(pts => Casco(pts.Select(q => Loc((q.x, q.y))).ToList())).Where(h => h.Count >= 3).ToList();
+            int bordesAjustados = 0;
+            if (existentes.Count > 0)
+            {
+                var ajustados = new List<List<(double s, double r)>>();
+                foreach (var l in lazosL) ajustados.Add(AjustarContorno(l, lazosL, existentes, ref bordesAjustados));
+                lazosL = ajustados;
+            }
             List<(double a, double b)> CortaPoligono(List<(double s, double r)> pol, bool porS, double v)
             {
                 // intervalos (en r si porS, en s si no) donde la recta s = v (o r = v) está dentro del polígono
@@ -283,6 +295,8 @@ namespace Cad2Revit
                 _inf.Advertencia($"Piso {piso.Id}: {malas} pieza(s) no quedaron con la altura de {c.H * 1000:0} mm en vertical; revisa la familia");
             else
                 _inf.Advertencia($"Piso {piso.Id}: comprobado, todas las piezas tienen su altura de {c.H * 1000:0} mm en vertical (eje fuerte)");
+            if (bordesAjustados > 0)
+                _inf.Advertencia($"Piso {piso.Id}: {bordesAjustados} borde(s) se ajustaron a la cara de vigas o muros que ya existen");
             _inf.Contar("Pisos con entramado", 1);
             _inf.Contar("Entramado de piso: piezas", hechas);
             _inf.Advertencia($"Piso {piso.Id}: {piezas.Count(p => p.Rol == "viga")} vigas {c.Escuadria} ({c.B * 1000:0}x{c.H * 1000:0}) " +
@@ -310,6 +324,72 @@ namespace Cad2Revit
                 var pts = PuntosGeometria(e).Where(q => Mt(q.Z) > z0 - 0.3 && Mt(q.Z) < z1 + 0.3).ToList();
                 if (pts.Count == 0) pts = PuntosGeometria(e);
                 if (pts.Count >= 3) res.Add(pts.Select(q => (Mt(q.X), Mt(q.Y))).ToList());
+            }
+            return res;
+        }
+
+        private static bool EnPoligono(List<(double s, double r)> pol, double s, double r)
+        {
+            bool dentro = false;
+            for (int i = 0, j = pol.Count - 1; i < pol.Count; j = i++)
+                if ((pol[i].r > r) != (pol[j].r > r) &&
+                    s < (pol[j].s - pol[i].s) * (r - pol[i].r) / (pol[j].r - pol[i].r) + pol[i].s)
+                    dentro = !dentro;
+            return dentro;
+        }
+
+        /// <summary>Corre cada arista del lazo hasta la cara del elemento existente que la cubre (hacia adentro) o que
+        /// está a menos de 60 cm (hacia afuera), y recalcula los vértices como cruces de aristas vecinas.</summary>
+        private static List<(double s, double r)> AjustarContorno(List<(double s, double r)> l, List<List<(double s, double r)>> todos,
+                                                                  List<List<(double s, double r)>> existentes, ref int ajustados)
+        {
+            int n = l.Count;
+            bool DentroPiso(double s, double r)
+            {
+                int k = 0;
+                foreach (var x in todos) if (EnPoligono(x, s, r)) k++;
+                return k % 2 == 1;
+            }
+            bool EnExistente(double s, double r) => existentes.Any(h => EnPoligono(h, s, r));
+            var lineas = new List<((double s, double r) p, (double s, double r) t)>();
+            for (int i = 0; i < n; i++)
+            {
+                var p = l[i]; var q = l[(i + 1) % n];
+                double len = Math.Sqrt(Math.Pow(q.s - p.s, 2) + Math.Pow(q.r - p.r, 2));
+                if (len < 1e-6) { lineas.Add((p, (1, 0))); continue; }
+                (double s, double r) t = ((q.s - p.s) / len, (q.r - p.r) / len), nr = (-t.r, t.s);
+                var mid = ((p.s + q.s) / 2, (p.r + q.r) / 2);
+                if (!DentroPiso(mid.Item1 + nr.s * 0.02, mid.Item2 + nr.r * 0.02)) nr = (-nr.s, -nr.r);   // nr: hacia adentro
+                // desplazamiento en 5 puntos de la arista: + hacia adentro (el elemento cubre el borde), − hacia afuera
+                var despl = new List<double>();
+                for (int m = 1; m <= 5; m++)
+                {
+                    double f = m / 6.0;
+                    var pm = (s: p.s + (q.s - p.s) * f, r: p.r + (q.r - p.r) * f);
+                    double? d = null;
+                    if (EnExistente(pm.s + nr.s * 0.005, pm.r + nr.r * 0.005))
+                    {
+                        double x = 0.005;
+                        while (x < 0.6 && EnExistente(pm.s + nr.s * x, pm.r + nr.r * x)) x += 0.005;
+                        if (x < 0.6) d = x;
+                    }
+                    else
+                        for (double x = 0.005; x <= 0.6; x += 0.005)
+                            if (EnExistente(pm.s - nr.s * x, pm.r - nr.r * x)) { d = -(x - 0.005); break; }
+                    if (d.HasValue) despl.Add(d.Value);
+                }
+                double dd = despl.Count >= 3 ? despl.OrderBy(x => x).ElementAt(despl.Count / 2) : 0;
+                if (Math.Abs(dd) > 0.005) ajustados++; else dd = 0;
+                lineas.Add(((p.s + nr.s * dd, p.r + nr.r * dd), t));
+            }
+            var res = new List<(double s, double r)>();
+            for (int i = 0; i < n; i++)
+            {
+                var (p1, t1) = lineas[(i - 1 + n) % n]; var (p2, t2) = lineas[i];
+                double den = t1.s * t2.r - t1.r * t2.s;
+                if (Math.Abs(den) < 1e-9) { res.Add(p2); continue; }               // aristas paralelas: se queda el punto
+                double u = ((p2.s - p1.s) * t2.r - (p2.r - p1.r) * t2.s) / den;
+                res.Add((p1.s + t1.s * u, p1.r + t1.r * u));
             }
             return res;
         }
