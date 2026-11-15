@@ -436,6 +436,25 @@ def puertas_plegables(textos, segmentos, muros: list[Muro], ya: list[Punto]) -> 
             tc = (min(ts) + max(ts)) / 2
         else:
             tc = proyectar(t.punto, m.a, u)
+        # el zigzag suele dibujarse plegado contra una jamba: si hay un hueco entre extremos de muros en la misma
+        # recta con el ancho del rótulo, la puerta va centrada en ese hueco
+        extremos = []
+        for w in muros:
+            if abs(w.direccion[0] * u[1] - w.direccion[1] * u[0]) > 0.05:
+                continue
+            if any(dist_punto_recta(q, m.a, u) > m.espesor / 2 + 0.05 for q in (w.a, w.b)):
+                continue
+            ta, tb = sorted((proyectar(w.a, m.a, u), proyectar(w.b, m.a, u)))
+            extremos.append((ta, tb))
+        huecos = []
+        for (a0, a1) in extremos:
+            for (b0, b1) in extremos:
+                if b0 > a1 and abs((b0 - a1) - ancho) <= 0.15 and a1 - 0.1 <= tc <= b0 + 0.1:
+                    if not any(o0 < b0 - 0.01 and o1 > a1 + 0.01 for (o0, o1) in extremos):
+                        huecos.append((a1, b0))
+        if huecos:
+            a1, b0 = min(huecos, key=lambda h: abs((h[0] + h[1]) / 2 - tc))
+            tc = (a1 + b0) / 2
         c = (round(m.a[0] + u[0] * tc, 4), round(m.a[1] + u[1] * tc, 4))
         a_ = (c[0] - u[0] * ancho / 2, c[1] - u[1] * ancho / 2)
         b_ = (c[0] + u[0] * ancho / 2, c[1] + u[1] * ancho / 2)
