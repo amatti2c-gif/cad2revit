@@ -246,6 +246,15 @@ namespace Cad2Revit
                 inicio = Math.Max(inicio, c1);
             }
             if (inicio < largo - r1) tramos.Add((inicio, largo - r1));
+            // vanos que quedan detrás de un pilar o del borde del muro: la jamba queda en la cara del pilar/borde
+            int nPropios = vanos.Count - obs.Vanos.Count;
+            foreach (var v in vanos.Take(nPropios))
+            {
+                bool libre = tramos.Any(tr => v.T0 >= tr.s0 + conf.B - 0.005 && v.T1 <= tr.s1 - conf.B + 0.005);
+                if (!libre && tramos.Any(tr => v.T1 > tr.s0 && v.T0 < tr.s1))
+                    _inf.Advertencia($"Muro {w.Id}: el vano en {v.T0:0.00}-{v.T1:0.00} m queda en parte sobre un pilar o el borde " +
+                                     "del muro; su jamba se puso en la cara del pilar/borde (revisa su posición)");
+            }
             var piezas = new List<PiezaDef>();
             foreach (var (t0, t1) in tramos)
             {
@@ -310,7 +319,10 @@ namespace Cad2Revit
                 T0 = v.T0, T1 = v.T1, ZInf = v.ZInf, Puerta = v.Puerta,
                 ZSup = Math.Min(v.ZSup, Math.Min(topeEn(v.T0), topeEn(v.T1)) - sol - conf.B),
             }).Where(v => v.ZSup - v.ZInf > 0.05).ToList();
-            int quitadas = piezas.RemoveAll(p => revisar.Any(v => Invade(p, v, a, ux, uy, conf.B)));
+            // (las piezas que encajonan el vano —jambas, dinteles, alféizares y soleras— se conservan siempre: si el vano
+            // pasa detrás de un pilar o del borde del muro, la jamba queda en el borde y lo cierra)
+            var marco = new HashSet<string> { "jamba", "dintel", "alfeizar", "solera_superior", "solera_inferior" };
+            int quitadas = piezas.RemoveAll(p => !marco.Contains(p.Rol) && revisar.Any(v => Invade(p, v, a, ux, uy, conf.B)));
             if (quitadas > 0)
                 _inf.Advertencia($"Muro {w.Id}: se quitaron {quitadas} pieza(s) que pasaban por un vano");
             var vanosLeidos = vanos.Count - obs.Vanos.Count;
