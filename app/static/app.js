@@ -492,7 +492,7 @@ async function cargarEstructura() {
   est.modelo = r.modelo;
   est.elecciones = el.elecciones || {};
   est.ed = { ejes: ed.ejes || {}, muros: ed.muros || [], quitar: ed.quitar || [], marcos: ed.marcos || [], editar: ed.editar || [],
-    buhardilla: !!ed.buhardilla };
+    buhardilla: !!ed.buhardilla, cotas: ed.cotas || {} };
   const tramos = est.modelo.tramos || [];
   if (!tramos.length && !est.modelo.muros.length && !est.modelo.ejes.length) {
     $("#est-contenido").classList.add("oculto");
@@ -768,12 +768,49 @@ function claveEje(nombre) {
   return nombre;
 }
 
+/** Cotas de ejes «1 6000 2 3650 5 …» (eje, distancia en mm al siguiente, eje…) <-> {eje: posición en m}. */
+function cotasATexto(c) {
+  const ord = Object.entries(c || {}).sort((a, b) => a[1] - b[1]);
+  return ord.map(([n, v], i) => i ? `${Math.round((v - ord[i - 1][1]) * 1000)} ${n}` : n).join(" ");
+}
+function textoACotas(t) {
+  const tok = t.trim().split(/[\s;,]+/).filter(Boolean);
+  if (!tok.length) return {};
+  const out = {}; let pos = 0, nombre = tok[0];
+  out[nombre] = 0;
+  for (let i = 1; i + 1 < tok.length; i += 2) {
+    const d = parseFloat(tok[i].replace(",", "."));
+    if (!isFinite(d)) throw new Error(`«${tok[i]}» no es una distancia (escribe eje, distancia en mm, eje…)`);
+    pos += d > 50 ? d / 1000 : d;
+    out[tok[i + 1]] = Math.round(pos * 10000) / 10000;
+  }
+  if (tok.length % 2 === 0) throw new Error("Falta el eje después de la última distancia");
+  return out;
+}
+function panelCotas() {
+  const c = est.ed.cotas || {};
+  const v = h("input", { value: cotasATexto(c.verticales), placeholder: "1 6000 2 3650 5 2350 6 3000 7 …", style: "width:100%" });
+  const hz = h("input", { value: cotasATexto(c.horizontales), placeholder: "A 1200 B 1250 C 1750 E …", style: "width:100%" });
+  return h("div", { style: "margin-top:14px;font-size:13px" },
+    h("strong", {}, "Cotas de ejes (medidas cerradas)"),
+    h("div", { class: "tenue" }, "Eje, distancia en mm al siguiente, eje… como en la planta del calculista. Los ejes quedan ",
+      "exactamente en sus cotas y todo el modelo (muros, puertas, ventanas, techo) se reajusta tramo a tramo entre ellos. ",
+      "Déjalo vacío para usar las medidas del plano."),
+    h("label", {}, "Ejes verticales (de izquierda a derecha)", v),
+    h("label", {}, "Ejes horizontales (de abajo hacia arriba)", hz),
+    h("button", { class: "pri", style: "margin-top:6px", disabled: est.ocupado, onclick: () => intentar(async () => {
+      est.ed.cotas = { verticales: textoACotas(v.value), horizontales: textoACotas(hz.value) };
+      await guardarEdiciones(Object.keys(est.ed.cotas.verticales).length || Object.keys(est.ed.cotas.horizontales).length
+        ? "Cotas de ejes aplicadas" : "Cotas de ejes quitadas");
+    }) }, "Aplicar cotas"));
+}
+
 async function guardarEdiciones(nota) {
   est.ocupado = true;
   $("#est-estado").textContent = "Recalculando…";
   try {
     const r = await api("PUT", P("/ediciones"), { ejes: est.ed.ejes, muros: est.ed.muros, quitar: est.ed.quitar, marcos: est.ed.marcos, editar: est.ed.editar,
-      buhardilla: !!est.ed.buhardilla });
+      buhardilla: !!est.ed.buhardilla, cotas: est.ed.cotas || {} });
     mostrarErroresEntradas(r.errores);
     const c = await api("POST", P("/corridas"), { notas: nota });
     await cargarCorridas(c.n);
@@ -1029,7 +1066,7 @@ function pintarDetalleEst() {
             } }, "Restaurar")))),
         h("button", { class: "sec", style: "margin-top:6px", onclick: () => {
           if (!confirm("¿Borrar todos tus ejes y muros dibujados y volver a lo que viene del plano?")) return;
-          est.ed = { ejes: {}, muros: [], quitar: [], marcos: [], editar: [] };
+          est.ed = { ejes: {}, muros: [], quitar: [], marcos: [], editar: [], cotas: est.ed.cotas || {} };
           guardarEdiciones("Ejes y muros: vuelven a los del plano");
         } }, "Deshacer todos mis cambios")) : null, notaEjes,
       h("label", { style: "display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px" },
@@ -1038,7 +1075,8 @@ function pintarDetalleEst() {
           guardarEdiciones(ev.target.checked ? "Nivel buhardilla: muros hasta la cubierta" : "Nivel buhardilla: libre");
         } }),
         h("span", {}, h("strong", {}, "Nivel buhardilla"), " — completar los muros del último piso hasta la cubierta (frontones), ",
-          "con su entramado siguiendo la pendiente. Por defecto queda libre: los muros llegan horizontales a su nivel.")));
+          "con su entramado siguiendo la pendiente. Por defecto queda libre: los muros llegan horizontales a su nivel.")),
+      panelCotas());
     return;
   }
   const niveles = Object.keys(t.niveles);

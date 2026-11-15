@@ -21,6 +21,7 @@ from . import aberturas as aberturas_mod
 from . import cortes as cortes_mod
 from . import vistas as vistas_mod
 from . import marcos as marcos_mod
+from . import cotas as cotas_mod
 from . import tramos as tramos_mod
 from .estructura import (asignar_tipo_muro, contorno_exterior, detectar_columnas, generar_fundaciones,
                          generar_vigas, marcar_estructurales)
@@ -356,10 +357,79 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
                 and ((math.dist(d["inicio"], qa) <= 0.2 and math.dist(d["fin"], qb) <= 0.2)
                      or (math.dist(d["inicio"], qb) <= 0.2 and math.dist(d["fin"], qa) <= 0.2)))
 
+    def separar(q, excluir_dibujados):
+        """Si la edición cubre solo una parte de un muro (p. ej. el plano unió dos tramos), el muro se corta y queda
+        como muro aparte la parte cubierta. Devuelve el muro (pieza) que calza con la edición, o None."""
+        qa, qb = q.get("inicio"), q.get("fin")
+        if not qa or not qb or len(qa) != 2 or len(qb) != 2:
+            return None
+        if "-M" not in str(q.get("id") or ""):
+            return None                           # solo muros del plano (los de tramos y los dibujados no se unen)
+        for d in list(modelo["muros"]):
+            if d["nivel"] != q.get("nivel") or d.get("buhardilla") or "-M" not in d["id"]:
+                continue
+            (x1, y1), (x2, y2) = d["inicio"], d["fin"]
+            L = math.hypot(x2 - x1, y2 - y1)
+            if L < 0.1:
+                continue
+            u = ((x2 - x1) / L, (y2 - y1) / L)
+            if any(abs((p[0] - x1) * u[1] - (p[1] - y1) * u[0]) > 0.05 for p in (qa, qb)):
+                continue
+            ta, tb = sorted(((p[0] - x1) * u[0] + (p[1] - y1) * u[1]) for p in (qa, qb))
+            if ta < -0.2 or tb > L + 0.2 or tb - ta < 0.1:
+                continue
+            ta, tb = max(ta, 0.0), min(tb, L)
+            P = lambda t: [round(x1 + u[0] * t, 4), round(y1 + u[1] * t, 4)]      # noqa: E731
+            piezas = [(0.0, ta), (ta, tb), (tb, L)]
+            nuevos = []
+            for k, (t0, t1) in enumerate(piezas):
+                if t1 - t0 < 0.05:
+                    continue
+                nuevos.append(dict(d, id=d["id"] if k == 1 else f"{d['id']}{'abc'[k]}", inicio=P(t0), fin=P(t1),
+                                   _t=(t0, t1)))
+            pieza = next(n for n in nuevos if n["id"] == d["id"])
+            i = modelo["muros"].index(d)
+            modelo["muros"][i:i + 1] = [{k: v for k, v in n.items() if k != "_t"} for n in nuevos]
+            for ab in modelo["aberturas"]:                 # cada abertura queda en la pieza donde está
+                if ab["muro"] != d["id"]:
+                    continue
+                t = (ab["centro"][0] - x1) * u[0] + (ab["centro"][1] - y1) * u[1]
+                dueno = next((n for n in nuevos if n["_t"][0] - 1e-6 <= t <= n["_t"][1] + 1e-6), None)
+                if dueno:
+                    ab["muro"] = dueno["id"]
+            return next(m for m in modelo["muros"] if m["id"] == pieza["id"])
+        return None
+
+    def contenidos(q):
+        """Tramos de muro del plano que caen enteros dentro de la edición (el plano los cortó en varios)."""
+        qa, qb = q.get("inicio"), q.get("fin")
+        if not qa or not qb or len(qa) != 2 or len(qb) != 2 or "-M" not in str(q.get("id") or ""):
+            return []
+        L = math.dist(qa, qb)
+        if L < 0.1:
+            return []
+        u = ((qb[0] - qa[0]) / L, (qb[1] - qa[1]) / L)
+        out = []
+        for d in modelo["muros"]:
+            if d["nivel"] != q.get("nivel") or "-M" not in d["id"] or d.get("buhardilla"):
+                continue
+            if any(abs((p[0] - qa[0]) * u[1] - (p[1] - qa[1]) * u[0]) > 0.05 for p in (d["inicio"], d["fin"])):
+                continue
+            ts = [(p[0] - qa[0]) * u[0] + (p[1] - qa[1]) * u[1] for p in (d["inicio"], d["fin"])]
+            if min(ts) >= -0.2 and max(ts) <= L + 0.2:
+                out.append(d)
+        return out if len(out) > 1 else []
+
     fuera = set()
     for i, q in enumerate(cfg.proyecto.get("muros_quitar") or [], 1):
         # los muros dibujados en la app se borran de su propia lista, no con «quitar»
         hallados = {d["id"] for d in modelo["muros"] if calza(d, q) and d.get("capa_cad") != "dibujado en la app"}
+        if not hallados:
+            hallados = {d["id"] for d in contenidos(q)}
+        if not hallados:
+            pieza = separar(q, True)
+            if pieza:
+                hallados = {pieza["id"]}
         if hallados:
             hechos_q.add(i)
         elif avisar and i not in hechos_q:
@@ -376,7 +446,11 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
         adv.append(f"Muros quitados en la app: {', '.join(sorted(fuera))}")
 
     for i, q in enumerate(cfg.proyecto.get("muros_editar") or [], 1):
-        hallados = [d for d in modelo["muros"] if calza(d, q)]
+        hallados = [d for d in modelo["muros"] if calza(d, q)] or contenidos(q)
+        if not hallados:
+            pieza = separar(q, False)
+            if pieza:
+                hallados = [pieza]
         if not hallados:
             if avisar and i not in hechos_e:
                 adv.append(f"Muro editado {i} ({q.get('nivel')}): ya no está en el modelo; no se aplica")
@@ -640,11 +714,15 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo, muros
     if techo_cad:
         # la planta de techo está dibujada en otro lugar: se lleva sobre la planta buscando el desplazamiento
         # con el que más calza su forma (no basta centrar: alas y accesos sobresalen distinto en cada una)
-        dx, dy = _calzar(techo_cad["contorno"], contorno)
-        cont = [[round(x + dx, 3), round(y + dy, 3)] for x, y in techo_cad["contorno"]]
-        cumbreras = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad["cumbreras"]]
+        # con cotas de ejes: se calza sobre la planta original y luego se reajusta igual que ella
+        reaj = modelo.get("_reajuste")
+        base = [list(reaj.inversa().p(q)) for q in contorno] if reaj else contorno
+        dx, dy = _calzar(techo_cad["contorno"], base)
+        R = (lambda q: reaj.p(q)) if reaj else (lambda q: (q[0], q[1]))          # noqa: E731
+        cont = [[round(v, 3) for v in R((x + dx, y + dy))] for x, y in techo_cad["contorno"]]
+        cumbreras = [(R((a[0] + dx, a[1] + dy)), R((b[0] + dx, b[1] + dy))) for a, b in techo_cad["cumbreras"]]
         limatones = techo_cad["limatones"]
-        lineas_techo = [((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy)) for a, b in techo_cad.get("lineas", [])]
+        lineas_techo = [(R((a[0] + dx, a[1] + dy)), R((b[0] + dx, b[1] + dy))) for a, b in techo_cad.get("lineas", [])]
     else:
         lineas_techo = []
     # cortes marcados en la planta: letra -> línea de corte
@@ -662,6 +740,14 @@ def _cubierta(contorno, techo_cad, vistas_altura, dib_planta, adv, modelo, muros
     # Los cortes mandan: la planta de techo se corre (a lo largo de cada corte) hasta que la cumbrera quede
     # donde el corte la mide respecto de las caras exteriores de los muros
     if techo_cad and cumbreras and muros_planta:
+        # los muros se miden ya alineados a los ejes (como quedarán en el modelo)
+        if modelo.get("ejes"):
+            from dataclasses import replace as _repl
+            alineados = []
+            for m_ in muros_planta:
+                a_, b_, ok = _alinear_a_ejes(list(m_.a), list(m_.b), modelo["ejes"])
+                alineados.append(_repl(m_, a=tuple(a_), b=tuple(b_)) if ok else m_)
+            muros_planta = alineados
         mov = _ajuste_por_cortes(vistas_altura, lineas, cumbreras, muros_planta, cont, contorno)
         if mov:
             mx, my, detalle = mov
@@ -794,6 +880,13 @@ def construir_modelo(cfg: Configuracion) -> dict:
     }
     cota = {n["nombre"]: n["cota"] for n in niveles}
 
+    # Cotas de ejes (grilla de medidas cerradas): todo el plano y las ediciones se reajustan tramo a tramo entre ejes
+    ejes_base_originales = [dict(e) for e in cfg.proyecto.get("ejes_base") or []]
+    reaj, ajuste_ejes = cotas_mod.preparar(cfg.proyecto, adv)
+    if reaj:
+        cfg.proyecto["ejes_usuario"] = cotas_mod.ejes_usuario_reajustados(cfg.proyecto, reaj, ajuste_ejes["actuales"])
+        modelo["_reajuste"] = reaj
+
     def espesor_tipo(nombre: str | None, grupos=("tipos_losa", "tipos_cubierta")) -> float:
         for g in grupos:
             for t in cfg.materialidades.get(g, []):
@@ -814,6 +907,11 @@ def construir_modelo(cfg: Configuracion) -> dict:
         sup = siguiente(nivel)
         pref = nivel
         dib = vistas_mod.recortar(leer(cfg.ruta(planta["archivo"]), unidades), vistas_mod.zonas_de(planta))
+        if reaj:
+            if idx == 0:
+                reaj.agrupar(dib)                 # las caras de cada muro se mueven juntas (no cambian espesores)
+                reaj.ediciones(cfg.proyecto)      # y las ediciones de la app, igual que el plano
+            dib = reaj.dibujo(dib)
 
         # 1) Aberturas/columnas (se clasifican antes para ayudar a unir muros)
         abert_ins, col_ins = clasificar_inserciones(dib.inserciones, cfg)
@@ -892,11 +990,11 @@ def construir_modelo(cfg: Configuracion) -> dict:
                     continue
                 ancho = d["ancho"] if es_dict else d.ancho
                 nuevo = _al_vidrio(c, m.direccion, ancho, m.espesor, dib.segmentos)
-                if nuevo:
+                if nuevo:                         # solo la posición: el ancho es el del rótulo
                     if es_dict:
-                        d["centro"], d["ancho"] = nuevo
+                        d["centro"] = nuevo[0]
                     else:
-                        d.centro, d.ancho = tuple(nuevo[0]), nuevo[1]
+                        d.centro = tuple(nuevo[0])
                     n_aj += 1
             # sin muro en el plano: quizás lo haya después (dibujado en la app o agregado por un tramo)
             modelo.setdefault("_huerfanas", []).extend(dict(
@@ -929,6 +1027,22 @@ def construir_modelo(cfg: Configuracion) -> dict:
             modelo["fundaciones"]["corridas"] += f["corridas"]
             modelo["fundaciones"]["aisladas"] += f["aisladas"]
 
+        # 8) Ejes (desde la primera planta)
+        if lod["ejes"] and idx == 0 and cfg.proyecto.get("ejes_base"):
+            # ejes fijados en el proyecto (al editar la estructuración): no cambian aunque cambien los muros
+            modelo["ejes"] += [dict(e, origen=e.get("origen") or "fijado",
+                                    **({"inicio": list(reaj.p_eje(e["inicio"])), "fin": list(reaj.p_eje(e["fin"]))} if reaj else {}))
+                               for e in cfg.proyecto["ejes_base"]]
+        elif lod["ejes"] and idx == 0 and (cfg.estructuracion.get("ejes") or {}).get("leer_del_cad", True):
+            ecfg = cfg.estructuracion.get("ejes") or {}
+            lineas = ejes_mod.desde_cad(dib.segmentos_en(cfg.capa("ejes")))
+            if lineas:
+                modelo["ejes"] += ejes_mod.nombrar(lineas, ecfg, "plano CAD")
+            elif muros and ecfg.get("generar_desde_muros", True):
+                modelo["ejes"] += ejes_mod.nombrar(ejes_mod.desde_muros(muros), ecfg, "desde muros")
+                adv.append(f"No se encontraron ejes en la capa de ejes del plano; se generaron {len(modelo['ejes'])} "
+                           "ejes automáticos por las líneas de muros (elige tu capa de ejes en Planos → Capas de tu plano)")
+
         # 6) Losas, cubierta y cielos
         contorno = _contorno(dib, muros, cfg)
         if contorno is None:
@@ -960,20 +1074,6 @@ def construir_modelo(cfg: Configuracion) -> dict:
             for t in dib.textos_en(cfg.capa("recintos")):
                 modelo["recintos"].append(dict(nivel=nivel, nombre=t.texto, punto=t.punto))
 
-        # 8) Ejes (desde la primera planta)
-        if lod["ejes"] and idx == 0 and cfg.proyecto.get("ejes_base"):
-            # ejes fijados en el proyecto (al editar la estructuración): no cambian aunque cambien los muros
-            modelo["ejes"] += [dict(e, origen=e.get("origen") or "fijado") for e in cfg.proyecto["ejes_base"]]
-        elif lod["ejes"] and idx == 0 and (cfg.estructuracion.get("ejes") or {}).get("leer_del_cad", True):
-            ecfg = cfg.estructuracion.get("ejes") or {}
-            lineas = ejes_mod.desde_cad(dib.segmentos_en(cfg.capa("ejes")))
-            if lineas:
-                modelo["ejes"] += ejes_mod.nombrar(lineas, ecfg, "plano CAD")
-            elif muros and ecfg.get("generar_desde_muros", True):
-                modelo["ejes"] += ejes_mod.nombrar(ejes_mod.desde_muros(muros), ecfg, "desde muros")
-                adv.append(f"No se encontraron ejes en la capa de ejes del plano; se generaron {len(modelo['ejes'])} "
-                           "ejes automáticos por las líneas de muros (elige tu capa de ejes en Planos → Capas de tu plano)")
-
         # 9) Entramado de madera: se genera al final, cuando ya se aplicaron las elecciones de los
         #    tramos (un tramo puede pasar a "tabique de madera")
         es_ultima = idx == len(plantas) - 1
@@ -998,10 +1098,13 @@ def construir_modelo(cfg: Configuracion) -> dict:
             modelo["muros"].append(d)
 
     # ejes antes de las ediciones de la app (para fijarlos en el proyecto)
-    modelo["ejes_generados"] = [dict(e) for e in modelo["ejes"]]
+    # (con cotas, los del proyecto tal como están guardados: el reajuste se aplica en cada corrida)
+    modelo["ejes_generados"] = ejes_base_originales if reaj else [dict(e) for e in modelo["ejes"]]
     # Ediciones hechas en la app: ejes (mover, extender, agregar, borrar) y muros dibujados
     if cfg.proyecto.get("ejes_usuario"):
         modelo["ejes"] = ejes_mod.editar(modelo["ejes"], cfg.proyecto["ejes_usuario"], adv)
+    if reaj:
+        modelo["ejes"] = cotas_mod.aplicar_a_ejes(modelo["ejes"], ajuste_ejes, adv)
     for i, w in enumerate(cfg.proyecto.get("muros_usuario") or [], 1):
         if w.get("nivel") not in orden:
             adv.append(f"Muro dibujado {i}: el nivel '{w.get('nivel')}' no existe; se omite")
@@ -1161,6 +1264,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     usados_mat |= {f["material"] for f in modelo["marcos"]}
     modelo["materiales"] = [m for m in modelo["materiales"] if m["nombre"] in usados_mat]
     modelo["material_estructural"] = cfg.estructuracion.get("material_estructural")
+    modelo.pop("_reajuste", None)
     return json.loads(json.dumps(modelo))   # tuplas -> listas: el modelo es JSON puro
 
 

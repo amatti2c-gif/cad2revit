@@ -834,14 +834,35 @@ class Ediciones(BaseModel):
     marcos: list[dict] | None = None                 # marcos_usuario (marcos dibujados en la app)
     editar: list[dict] | None = None                 # muros_editar (muros del plano con otro lego / carácter)
     buhardilla: bool | None = None                   # nivel buhardilla: completar los muros hasta la cubierta
+    cotas: dict | None = None                        # cotas_ejes: {verticales: {eje: m}, horizontales: {eje: m}}
+
+
+def _reajuste_de(d: Path):
+    """Reajuste de las cotas de ejes del proyecto (None si no tiene cotas)."""
+    from cad2revit import cotas as cotas_mod
+    py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    if not py.get("cotas_ejes"):
+        return None
+    try:
+        return cotas_mod.para_proyecto(cargar(d / "entradas" / "proyecto.yaml"))
+    except Exception:
+        return None
 
 
 @app.get("/api/proyectos/{pid}/ediciones")
 def leer_ediciones(pid: str):
-    py = _leer_yaml_seguro(_proyecto(pid) / "entradas" / "proyecto.yaml")
-    return {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or [],
-            "quitar": py.get("muros_quitar") or [], "marcos": py.get("marcos_usuario") or [],
-            "editar": py.get("muros_editar") or [], "buhardilla": bool(py.get("buhardilla"))}
+    d = _proyecto(pid)
+    py = _leer_yaml_seguro(d / "entradas" / "proyecto.yaml")
+    ed = {"ejes": py.get("ejes_usuario") or {}, "muros": py.get("muros_usuario") or [],
+          "quitar": py.get("muros_quitar") or [], "marcos": py.get("marcos_usuario") or [],
+          "editar": py.get("muros_editar") or [], "buhardilla": bool(py.get("buhardilla")),
+          "cotas": py.get("cotas_ejes") or {}}
+    # con cotas de ejes, la app trabaja sobre el modelo reajustado: las ediciones se muestran reajustadas
+    reaj = _reajuste_de(d)
+    if reaj:
+        from cad2revit import cotas as cotas_mod
+        ed = cotas_mod.convertir_ediciones(ed, reaj.p)
+    return ed
 
 
 @app.put("/api/proyectos/{pid}/ediciones")
@@ -851,7 +872,32 @@ def guardar_ediciones(pid: str, datos: Ediciones):
     _fijar_ejes(d)
     py = d / "entradas" / "proyecto.yaml"
     niveles = {n.get("nombre") for n in _leer_yaml_seguro(py).get("niveles") or []}
+    # con cotas de ejes, lo que llega está en el modelo reajustado: se guarda en las coordenadas del plano original
+    reaj = _reajuste_de(d)
+    if reaj:
+        from cad2revit import cotas as cotas_mod
+        conv = cotas_mod.convertir_ediciones({"muros": datos.muros, "quitar": datos.quitar, "marcos": datos.marcos,
+                                              "editar": datos.editar}, reaj.p_inv)
+        for k, campo in (("muros", "muros"), ("quitar", "quitar"), ("marcos", "marcos"), ("editar", "editar")):
+            if getattr(datos, campo) is not None:
+                setattr(datos, campo, conv[k])
+        if datos.ejes:
+            inv_x = lambda v: cotas_mod.Reajuste._f([(b, a) for a, b in reaj.px], v)       # noqa: E731
+            inv_y = lambda v: cotas_mod.Reajuste._f([(b, a) for a, b in reaj.py], v)       # noqa: E731
+            for c in datos.ejes.values():
+                if not c:
+                    continue
+                for k in ("inicio", "fin"):
+                    if isinstance(c.get(k), list) and len(c[k]) == 2:
+                        c[k] = [round(inv_x(c[k][0]), 4), round(inv_y(c[k][1]), 4)]
     texto = py.read_text(encoding="utf-8")
+    if datos.cotas is not None:
+        limpias = {}
+        for g in ("verticales", "horizontales"):
+            v = {str(k): round(float(x), 4) for k, x in ((datos.cotas or {}).get(g) or {}).items()}
+            if v:
+                limpias[g] = v
+        texto = _reemplazar_bloque(texto, "cotas_ejes", limpias)
     if datos.ejes is not None:
         for nombre, c in datos.ejes.items():
             if c is None:

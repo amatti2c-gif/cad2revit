@@ -328,7 +328,7 @@ def ventanas_en_vanos(muros: list[Muro], rotulos: list[dict], puntos_puerta: lis
         r, v = rotulos[i], vanos[j]
         rot_usados.add(i)
         vano_usado.add(j)
-        regla = {"categoria": "ventana", "ancho": round(v["largo"], 3)}
+        regla = {"categoria": "ventana", "ancho": r["ancho"]}           # el ancho del rótulo; el hueco da la posición
         if r["alto"]:
             regla["alto"] = r["alto"]
         if r["antepecho"] is not None:
@@ -355,7 +355,7 @@ def ventanas_en_vanos(muros: list[Muro], rotulos: list[dict], puntos_puerta: lis
         if any(math.dist(c, q) < (r["ancho"] + w) / 2 - 0.05 for q, w in ocupados):
             continue
         rot_usados.add(i)
-        regla = {"categoria": "ventana", "ancho": round(math.dist(sg.a, sg.b), 3)}
+        regla = {"categoria": "ventana", "ancho": r["ancho"]}           # el ancho del rótulo; el vidrio da la posición
         if r["alto"]:
             regla["alto"] = r["alto"]
         if r["antepecho"] is not None:

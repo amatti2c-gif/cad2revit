@@ -13,6 +13,7 @@ cambiar la propuesta por tramo (todos los pisos) o por tramo y piso:
 from __future__ import annotations
 
 import math
+import re
 
 from .dxf_reader import Segmento
 
@@ -235,11 +236,14 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
         sup = siguiente(nivel)
         muros = [m for m in modelo["muros"] if m["nivel"] == nivel]
         abs_n = [a for a in modelo["aberturas"] if a["muro"] in {m["id"] for m in muros}]
+        ejes_de_cotas = {e["nombre"] for e in modelo.get("ejes") or [] if e.get("origen") == "cotas"}
         nuevos = []
         resistentes = {"X": 0, "Y": 0}
         for tr in tramos:
             an = _analizar(tr, muros, abs_n)
             eleccion = elecciones.get(f"{tr['id']}@{nivel}") or elecciones.get(tr["id"]) or "auto"
+            if eleccion == "auto" and set(re.split(r"[:\-]", tr["id"])) & ejes_de_cotas:
+                eleccion = "ninguno"              # tramo de un eje creado por las cotas: sin estructura hasta que lo elijas
             final, tipo = separar(an["propuesta"] if eleccion == "auto" else eleccion)
             if final in ("muro", "tabique"):
                 tipo = _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias)

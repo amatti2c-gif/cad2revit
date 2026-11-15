@@ -491,7 +491,7 @@ def test_ediciones_api(cliente):
     cliente.put(f"/api/proyectos/{pid}/tramos", json={"elecciones": {"C:1-2": "tabique"}})
     assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["muros"]
     cliente.put(f"/api/proyectos/{pid}/ediciones", json={"ejes": {}, "muros": []})
-    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": [], "editar": [], "buhardilla": False}
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json() == {"ejes": {}, "muros": [], "quitar": [], "marcos": [], "editar": [], "buhardilla": False, "cotas": {}}
     assert cliente.put(f"/api/proyectos/{pid}/ediciones", json={"muros": [{"nivel": "N9", "inicio": [0, 0], "fin": [1, 0]}]}).status_code == 400
 
 
@@ -653,3 +653,43 @@ def test_aberturas_json(cliente):
         assert d < 0.01                                                       # sobre el eje de su muro
     cotas = [a["cota_nivel"] for a in b["aberturas"]]
     assert cotas == sorted(cotas)
+
+
+def test_cotas_de_ejes(cliente):
+    """Cotas cerradas: los ejes quedan en su cota exacta, los muros y aberturas los siguen tramo a tramo, y las
+    ediciones hechas sobre el modelo reajustado se guardan en las coordenadas del plano (ida y vuelta exacta)."""
+    pid = _crear(cliente)
+    c = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    m = cliente.get(f"/api/proyectos/{pid}/corridas/{c['n']}").json()["modelo"]
+    vert = sorted(((e["inicio"][0] + e["fin"][0]) / 2, e["nombre"]) for e in m["ejes"]
+                  if abs(e["inicio"][0] - e["fin"][0]) < 1e-6)
+    assert len(vert) >= 3
+    x0 = vert[0][0]
+    cotas = {n: round(x - x0, 3) for x, n in vert}
+    medio = vert[1][1]
+    cotas[medio] = round(cotas[medio] + 0.10, 3)                 # mover un eje 10 cm con las cotas
+    r = cliente.put(f"/api/proyectos/{pid}/ediciones", json={"cotas": {"verticales": cotas}})
+    assert r.status_code == 200, r.text
+    c2 = cliente.post(f"/api/proyectos/{pid}/corridas", json={}).json()
+    assert c2["ok"], c2
+    m2 = cliente.get(f"/api/proyectos/{pid}/corridas/{c2['n']}").json()["modelo"]
+    pos = {e["nombre"]: (e["inicio"][0] + e["fin"][0]) / 2 for e in m2["ejes"] if abs(e["inicio"][0] - e["fin"][0]) < 1e-6}
+    base = pos[vert[0][1]]
+    for n, v in cotas.items():
+        assert abs(pos[n] - base - v) < 1e-3, (n, pos[n] - base, v)
+    assert len(m2["aberturas"]) == len(m["aberturas"])
+    # muros sobre el eje movido: siguen sobre él
+    sobre = [w for w in m2["muros"] if abs(w["inicio"][0] - pos[medio]) < 1e-3 and abs(w["fin"][0] - pos[medio]) < 1e-3]
+    assert sobre
+    # ida y vuelta de una edición: lo que se lee (reajustado) y se vuelve a guardar no se corre
+    ed = cliente.get(f"/api/proyectos/{pid}/ediciones").json()
+    x = pos[medio]
+    ed["muros"] = [{"nivel": "N1", "inicio": [x, 1.0], "fin": [x, 2.0], "tipo": None, "estructural": False}]
+    assert cliente.put(f"/api/proyectos/{pid}/ediciones", json=ed).status_code == 200
+    for _ in range(2):
+        ed2 = cliente.get(f"/api/proyectos/{pid}/ediciones").json()
+        assert abs(ed2["muros"][0]["inicio"][0] - x) < 1e-3
+        assert cliente.put(f"/api/proyectos/{pid}/ediciones", json=ed2).status_code == 200
+    # quitar las cotas
+    cliente.put(f"/api/proyectos/{pid}/ediciones", json={"cotas": {}})
+    assert cliente.get(f"/api/proyectos/{pid}/ediciones").json()["cotas"] == {}
