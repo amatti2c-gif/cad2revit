@@ -234,17 +234,19 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
         out.append((ins, regla))
     # puertas dobles: dos hojas que se encuentran en la misma jamba central (bisagras opuestas en la misma línea)
     dobles, usadas = [], set()
+    # (las hojas pueden ser distintas, p. ej. hoja y media de 0,90 + 0,55: basta que dos extremos de los arcos se toquen)
     for i, (ia, ra) in enumerate(out):
-        if i in usadas or not ra.get("jamba"):
+        if i in usadas:
             continue
         for j in range(i + 1, len(out)):
             ib, rb = out[j]
-            if j in usadas or not rb.get("jamba"):
+            if j in usadas:
                 continue
-            ha, ja = ia.esquinas[0], ia.esquinas[1]
-            hb, jb = ib.esquinas[0], ib.esquinas[1]
-            if math.dist(ja, jb) > 0.06:
+            ha, hb = ia.esquinas[0], ib.esquinas[0]
+            toque = min(((ea, eb) for ea in ia.esquinas[1:] for eb in ib.esquinas[1:]), key=lambda x: math.dist(*x))
+            if math.dist(*toque) > 0.06:
                 continue
+            ja, jb = toque
             va, vb = (ha[0] - ja[0], ha[1] - ja[1]), (hb[0] - jb[0], hb[1] - jb[1])
             la, lb = math.hypot(*va) or 1.0, math.hypot(*vb) or 1.0
             if (va[0] * vb[0] + va[1] * vb[1]) / (la * lb) > -0.99:
