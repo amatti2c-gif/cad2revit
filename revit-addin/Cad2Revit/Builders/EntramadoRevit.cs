@@ -420,7 +420,12 @@ namespace Cad2Revit
                 bool pilar = e.Category?.Id == new ElementId(BuiltInCategory.OST_StructuralColumns);
                 if (pilar)
                 {
-                    if (z0 <= zBase + 0.05 && z1 >= zTope - 0.05) o.Pilares.Add((t0, t1));
+                    // pilar que corta el muro en tramos: parte abajo y llega al borde superior del muro en su posición
+                    // (en un frontón, los pilares de los extremos llegan al alero, no a la cumbrera) o a la viga que
+                    // lo remata (hasta 0,8 m bajo el borde)
+                    double arriba = perfil == null ? zTope
+                        : Enumerable.Range(0, 5).Select(k => perfil(t0 + (t1 - t0) * k / 4.0)).Min();
+                    if (z0 <= zBase + 0.30 && z1 >= Math.Min(zTope, arriba) - 0.80) o.Pilares.Add((t0, t1));
                     else o.Vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = Math.Max(z0, zBase), ZSup = Math.Min(z1, zTope), Puerta = z0 <= zBase + 0.01 });
                     continue;
                 }
