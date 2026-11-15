@@ -21,6 +21,14 @@ namespace Cad2Revit
                           "muros, aberturas, losas, estructura y recintos según el nivel de detalle elegido."
             };
             panel.AddItem(boton);
+            panel.AddItem(new PushButtonData("Cad2RevitEntramado", "Entramado\nen muros",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoEntramado).FullName)
+            {
+                ToolTip = "Genera el entramado de madera de cad2revit (pies derechos cada 40 cm, soleras, cadenetas, jambas, " +
+                          "dinteles y alféizares) en los muros seleccionados, o en todos los de tipo «marco plataforma». " +
+                          "Lee el largo, la altura, los encuentros y las puertas y ventanas de cada muro. Si el muro ya tenía " +
+                          "entramado generado así, se reemplaza."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -166,6 +174,69 @@ namespace Cad2Revit
                               "cad2revit la carga sola desde esa carpeta.",
                 ExpandedContent = string.Join("\n", guardadas) +
                                   (fallidas.Count > 0 ? "\n\nNo se pudieron guardar:\n" + string.Join("\n", fallidas) : ""),
+            }.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Entramado de madera de cad2revit en muros dibujados en Revit (p. ej. tipo «marco plataforma»).</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoEntramado : IExternalCommand
+    {
+        private class SoloMuros : Autodesk.Revit.UI.Selection.ISelectionFilter
+        {
+            public bool AllowElement(Element e) => e is Wall;
+            public bool AllowReference(Reference r, XYZ p) => false;
+        }
+
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+
+            var muros = uidoc.Selection.GetElementIds().Select(doc.GetElement).OfType<Wall>().ToList();
+            if (muros.Count == 0)
+            {
+                var deTipo = new FilteredElementCollector(doc).OfClass(typeof(Wall)).Cast<Wall>()
+                    .Where(w => w.WallType?.Name?.IndexOf("plataforma", System.StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                var tipos = string.Join(", ", deTipo.Select(w => w.WallType.Name).Distinct());
+                var td = new TaskDialog("cad2revit")
+                {
+                    MainInstruction = "¿En qué muros genero el entramado de madera?",
+                    MainContent = "Pies derechos cada 40 cm, soleras, cadenetas cada 40 cm, jambas, dinteles y alféizares, " +
+                                  "con piezas del espesor del núcleo de cada muro. Si un muro ya tenía este entramado, se reemplaza.",
+                    CommonButtons = TaskDialogCommonButtons.Cancel,
+                };
+                if (deTipo.Count > 0)
+                    td.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, $"Todos los muros «plataforma» ({deTipo.Count})", tipos);
+                td.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Elegir los muros en la vista",
+                                  "Selecciónalos y presiona Finalizar");
+                var r = td.Show();
+                if (r == TaskDialogResult.CommandLink1) muros = deTipo;
+                else if (r == TaskDialogResult.CommandLink2)
+                {
+                    try
+                    {
+                        muros = uidoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloMuros(),
+                                                            "Elige los muros para el entramado y presiona Finalizar")
+                                     .Select(x => doc.GetElement(x)).OfType<Wall>().ToList();
+                    }
+                    catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+                }
+                else return Result.Cancelled;
+            }
+            if (muros.Count == 0) { message = "No hay muros para el entramado."; return Result.Cancelled; }
+
+            var conf = new ConfEntramado { H = 0 };       // espesor de las piezas = núcleo estructural de cada muro
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).EntramadoEnMuros(muros, conf);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = informe.Errores.Count == 0 && informe.CantidadFaltantes == 0
+                    ? "Entramado creado" : "Entramado creado con observaciones (ver detalle)",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
         }
