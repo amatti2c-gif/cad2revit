@@ -209,7 +209,7 @@ namespace Cad2Revit
     /// <summary>Entramado de madera de cad2revit en muros dibujados en Revit (p. ej. tipo «marco plataforma»).</summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
-    public class ComandoEntramado : IExternalCommand
+    public partial class ComandoEntramado : IExternalCommand
     {
         private class SoloMuros : Autodesk.Revit.UI.Selection.ISelectionFilter
         {
@@ -223,6 +223,26 @@ namespace Cad2Revit
             var doc = uidoc?.Document;
             if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
 
+            // escuadría de las piezas
+            var dEsc = new TaskDialog("cad2revit")
+            {
+                MainInstruction = "¿Qué piezas uso para el entramado de madera?",
+                MainContent = "Pies derechos, soleras, cadenetas, jambas, dinteles y alféizares, todos con la misma escuadría.",
+                CommonButtons = TaskDialogCommonButtons.Cancel,
+            };
+            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "2x3", "50 x 76 mm (2\" x 3\")");
+            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "2x4", "50 x 102 mm (2\" x 4\")");
+            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Según el núcleo de cada muro",
+                                "2\" de cara y el espesor de la capa estructural del muro");
+            var conf = new ConfEntramado { H = 0 };
+            switch (dEsc.Show())
+            {
+                case TaskDialogResult.CommandLink1: conf.H = 0.0762; conf.B = 0.05; Escuadria(conf, "2x3"); break;
+                case TaskDialogResult.CommandLink2: conf.H = 0.1016; conf.B = 0.05; Escuadria(conf, "2x4"); break;
+                case TaskDialogResult.CommandLink3: break;
+                default: return Result.Cancelled;
+            }
+
             var muros = uidoc.Selection.GetElementIds().Select(doc.GetElement).OfType<Wall>().ToList();
             if (muros.Count == 0)
             {
@@ -232,8 +252,8 @@ namespace Cad2Revit
                 var td = new TaskDialog("cad2revit")
                 {
                     MainInstruction = "¿En qué muros genero el entramado de madera?",
-                    MainContent = "Pies derechos cada 40 cm, soleras, cadenetas cada 40 cm, jambas, dinteles y alféizares, " +
-                                  "con piezas del espesor del núcleo de cada muro. Si un muro ya tenía este entramado, se reemplaza.",
+                    MainContent = "Pies derechos cada 40 cm, soleras, cadenetas cada 40 cm, jambas, dinteles y alféizares. " +
+                                  "Si un muro ya tenía este entramado, se reemplaza.",
                     CommonButtons = TaskDialogCommonButtons.Cancel,
                 };
                 if (deTipo.Count > 0)
@@ -256,7 +276,6 @@ namespace Cad2Revit
             }
             if (muros.Count == 0) { message = "No hay muros para el entramado."; return Result.Cancelled; }
 
-            var conf = new ConfEntramado { H = 0 };       // espesor de las piezas = núcleo estructural de cada muro
             var informe = new Constructor(doc, new Modelo { Unidades = "m" }).EntramadoEnMuros(muros, conf);
             new TaskDialog("cad2revit")
             {
@@ -266,6 +285,15 @@ namespace Cad2Revit
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
+        }
+    }
+
+    public partial class ComandoEntramado
+    {
+        private static void Escuadria(ConfEntramado c, string tipo)
+        {
+            c.FamiliaVertical = new FamiliaTipoDef { Familia = c.FamiliaVertical?.Familia, Tipo = tipo };
+            c.FamiliaHorizontal = new FamiliaTipoDef { Familia = c.FamiliaHorizontal?.Familia, Tipo = tipo };
         }
     }
 

@@ -116,11 +116,14 @@ namespace Cad2Revit
                 RefuerzoVanos = confBase.RefuerzoVanos, Material = confBase.Material,
                 FamiliaVertical = confBase.FamiliaVertical, FamiliaHorizontal = confBase.FamiliaHorizontal,
             };
-            if (conf.H <= 0)
             {
                 var cs = w.WallType.GetCompoundStructure();
                 var est = cs?.GetLayers().Where(l => l.Function == MaterialFunctionAssignment.Structure).Sum(l => l.Width) ?? 0;
-                conf.H = est > 0 ? Mt(est) : Math.Min(Mt(w.Width), 0.14);
+                double nucleo = est > 0 ? Mt(est) : Mt(w.Width);
+                if (conf.H <= 0) conf.H = est > 0 ? Mt(est) : Math.Min(Mt(w.Width), 0.14);
+                else if (conf.H > nucleo + 0.005)
+                    _inf.Advertencia($"Muro {w.Id}: las piezas de {conf.H * 1000:0} mm son más gruesas que su capa estructural " +
+                                     $"({nucleo * 1000:0} mm); sobresalen de ella. Cambia el tipo de muro si corresponde");
             }
 
             // encuentros: cuánto recortar en cada extremo para terminar en la cara del muro vecino
