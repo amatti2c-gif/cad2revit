@@ -45,7 +45,7 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
             aberturas: list[dict], planos_techo: list | None = None) -> dict:
     """planos_techo: si el muro llega a un techo inclinado (en Revit se une al techo), el entramado lo sigue:
     pies derechos hasta la línea del techo, solera superior inclinada y cadenetas dentro del frontón."""
-    sec = conf.get("pie_derecho") or {"b": 0.050, "h": 0.076}
+    sec = conf.get("pie_derecho") or {"b": 0.050, "h": 0.075}
     b, h = float(sec["b"]), float(sec["h"])
     sep_v = float(conf.get("separacion_pies_derechos", 0.40))
     sep_h = float(conf.get("separacion_horizontales", 0.40))
