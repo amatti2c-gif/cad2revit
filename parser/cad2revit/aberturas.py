@@ -181,6 +181,7 @@ def _medida(rx, texto: str) -> float | None:
 
 
 RX_VANO_PUERTA = re.compile(r"(?i)(?:^|[\s\n])v(?:ano)?\s*[:=]\s*(\d+(?:[.,]\d+)?)")
+RX_HOJA_PUERTA = re.compile(r"(?i)(?:^|[\s\n])p(?:uerta)?\s*[:=]\s*(\d+(?:[.,]\d+)?)")
 
 
 def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, textos=None,
@@ -189,11 +190,13 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
     del rótulo cercano ("P:90 V:95": hoja 90, vano 95 cm), que es la medida real del hueco en el muro.
     Con los segmentos del dibujo se distingue la hoja (línea desde la bisagra) de la jamba (el otro extremo
     del arco, sobre el muro): así la puerta va en su muro y no en el tabique contra el que abre."""
+    # rótulo de la puerta ("P:90 V:95"): P es el ancho de la puerta (el que manda), V el del vano con marco
     rotulos = []
     for t in textos or []:
         v = _medida(RX_VANO_PUERTA, t.texto)
-        if v and 0.4 <= v <= 3.0:
-            rotulos.append((t.punto, v))
+        hp = _medida(RX_HOJA_PUERTA, t.texto)
+        if (v and 0.4 <= v <= 3.0) or (hp and 0.4 <= hp <= 3.0):
+            rotulos.append((t.punto, hp if hp and 0.4 <= hp <= 3.0 else None, v if v and 0.4 <= v <= 3.0 else None))
     out = []
     for a in arcos:
         if not (radio_min <= a.radio <= radio_max):
@@ -227,10 +230,14 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
             esquinas = [a.centro, a.p0, a.p1]
         ins = Insercion(nombre="puerta (arco)", capa=a.capa, punto=a.centro, rotacion=0.0, extremos=None,
                         esquinas=esquinas)
-        cerca = [(math.dist(p, a.centro), v) for p, v in rotulos
-                 if math.dist(p, a.centro) <= 2.0 and abs(v - a.radio) <= 0.25]
+        # el rótulo de esta puerta: el más cercano cuyo ancho de puerta (P) calce con el radio de la hoja dibujada
+        cerca = sorted((math.dist(p, a.centro), hp, v) for p, hp, v in rotulos
+                       if math.dist(p, a.centro) <= 2.0 and abs((hp if hp else v) - a.radio) <= (0.15 if hp else 0.25))
         if cerca:
-            regla["vano"] = min(cerca)[1]        # el hueco real (la hoja es un poco más angosta)
+            _, hp, v = cerca[0]
+            regla["vano"] = hp if hp else v      # ancho de la puerta según el rótulo (P); si no trae P, el vano V
+            regla["hoja"] = hp
+            regla["vano_rotulo"] = v
         out.append((ins, regla))
     # puertas dobles: dos hojas que se encuentran en la misma jamba central (bisagras opuestas en la misma línea)
     dobles, usadas = [], set()
@@ -251,7 +258,8 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
             la, lb = math.hypot(*va) or 1.0, math.hypot(*vb) or 1.0
             if (va[0] * vb[0] + va[1] * vb[1]) / (la * lb) > -0.99:
                 continue                          # no son opuestas en la misma línea
-            ancho = math.dist(ha, hb)
+            # ancho de la puerta doble: la suma de los anchos de sus dos puertas (rótulo P), o de bisagra a bisagra
+            ancho = (ra.get("vano") or math.dist(ha, ja)) + (rb.get("vano") or math.dist(hb, jb))
             ins = Insercion(nombre="puerta doble (arcos)", capa=ia.capa,
                             punto=((ha[0] + hb[0]) / 2, (ha[1] + hb[1]) / 2), rotacion=0.0, extremos=None,
                             esquinas=[ha, hb, ia.esquinas[2]])
