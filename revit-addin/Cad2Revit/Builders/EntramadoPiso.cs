@@ -14,7 +14,7 @@ namespace Cad2Revit
         public string Escuadria = "2x8";
         public double Separacion = 0.40;         // entre ejes de vigas
         public bool LuzCorta = true;             // las vigas salvan la luz corta del piso
-        public double Cadenetas = 1.20;          // separación de las líneas de cadenetas (0 = sin)
+        public double Cadenetas = 0.60;          // separación máxima de las líneas de cadenetas (0 = sin)
         public bool Perimetrales = true;         // vigas de borde en todo el contorno
         public string Material = "Pino radiata";
         public FamiliaTipoDef Familia = new() { Familia = "Dimension Lumber", Tipo = "2x8" };
@@ -166,11 +166,11 @@ namespace Cad2Revit
                         foreach (var (b0, b1) in t1)
                         {
                             double r0 = Math.Max(a0, b0), r1 = Math.Min(a1, b1);
-                            if (r1 - r0 < c.Cadenetas * 0.75) continue;
-                            int n = (int)Math.Floor((r1 - r0) / c.Cadenetas);
-                            for (int k = 1; k <= n; k++)
+                            // líneas repartidas en partes iguales, a no más de la separación pedida
+                            int partes = (int)Math.Ceiling((r1 - r0) / c.Cadenetas - 1e-6);
+                            for (int k = 1; k < partes; k++)
                             {
-                                double r = r0 + k * (r1 - r0) / (n + 1);
+                                double r = r0 + k * (r1 - r0) / partes;
                                 Pieza(Glo(s0 + B / 2, r), Glo(s1 - B / 2, r), "cadeneta");
                                 nCad++;
                             }
