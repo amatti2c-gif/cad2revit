@@ -120,12 +120,7 @@ namespace Cad2Revit
             var existentes = ElementosDeBorde(piso, zInf - c.H, zInf, 0.6)
                 .Select(pts => Casco(pts.Select(q => Loc((q.x, q.y))).ToList())).Where(h => h.Count >= 3).ToList();
             int bordesAjustados = 0;
-            if (existentes.Count > 0)
-            {
-                var ajustados = new List<List<(double s, double r)>>();
-                foreach (var l in lazosL) ajustados.Add(AjustarContorno(l, lazosL, existentes, ref bordesAjustados));
-                lazosL = ajustados;
-            }
+            existentes.Clear();          // el piso ya está dibujado por dentro de los perfiles: su contorno manda
             List<(double a, double b)> CortaPoligono(List<(double s, double r)> pol, bool porS, double v)
             {
                 // intervalos (en r si porS, en s si no) donde la recta s = v (o r = v) está dentro del polígono
@@ -202,7 +197,11 @@ namespace Cad2Revit
                             if (Enumerable.Range(-6, 13).Any(z => EnBorde(pm.s + nrm.s * lado * z * 0.1, pm.r + nrm.r * lado * z * 0.1))) cubiertos++;
                         }
                         if (cubiertos >= 3) { bordesExistentes++; continue; }
-                        double corte = Math.Abs(t.r) > Math.Cos(Math.PI / 18) ? B : 0;
+                        bool paralelaAVigas = Math.Abs(t.r) > Math.Cos(Math.PI / 18);
+                        if (paralelaAVigas && (Math.Abs(p.s - lazosL.SelectMany(x => x).Min(z => z.s)) < 0.02 ||
+                                               Math.Abs(p.s - lazosL.SelectMany(x => x).Max(z => z.s)) < 0.02))
+                            continue;                                      // los lados extremos: con el reparto (abajo)
+                        double corte = paralelaAVigas ? B : 0;
                         var a = (s: p.s + nrm.s * lado * B / 2 + t.s * corte, r: p.r + nrm.r * lado * B / 2 + t.r * corte);
                         var b = (s: q.s + nrm.s * lado * B / 2 - t.s * corte, r: q.r + nrm.r * lado * B / 2 - t.r * corte);
                         Pieza(Glo(a.s, a.r), Glo(b.s, b.r), "viga_borde");
@@ -223,14 +222,21 @@ namespace Cad2Revit
                 foreach (var (r0, r1) in tramos) Pieza(Glo(sv, r0), Glo(sv, r1), "viga");
                 lineas.Add((sv, B / 2, tramos));
             }
-            double sIni, sFin;
+            double sIni = 0, sFin;
             if (caraIni.HasValue) { sIni = caraIni.Value; lineas.Add((sIni, 0, Libres(sIni + 0.01))); }
-            else { sIni = sMin + B / 2; if (c.Perimetrales) lineas.Add((sIni, B / 2, Libres(sIni + 0.001))); else Viga(sIni + 0.001); }
+            void BordeExtremo(double sv, double sCorte)
+            {
+                var tramos = Libres(sCorte);
+                foreach (var (r0, r1) in tramos) Pieza(Glo(sv, r0), Glo(sv, r1), "viga_borde");
+                lineas.Add((sv, B / 2, tramos));
+            }
+            if (caraIni.HasValue) { }
+            else { sIni = sMin + B / 2; if (c.Perimetrales) BordeExtremo(sIni, sIni + 0.001); else Viga(sIni + 0.001); }
             sFin = caraFin ?? sMax - B / 2;
             double margenFin = caraFin.HasValue ? B / 2 : B;
             for (double sv = sIni + c.Separacion; sv < sFin - margenFin - 0.01; sv += c.Separacion) Viga(sv);
             if (caraFin.HasValue) lineas.Add((sFin, 0, Libres(sFin - 0.01)));
-            else if (c.Perimetrales) lineas.Add((sFin, B / 2, Libres(sFin - 0.001)));
+            else if (c.Perimetrales) BordeExtremo(sFin, sFin - 0.001);
             else Viga(sFin - 0.001);
             if (hulls.Count > 0)
                 _inf.Advertencia($"Piso {piso.Id}: el entramado se apoya en {hulls.Count} elemento(s) que ya existen" +
