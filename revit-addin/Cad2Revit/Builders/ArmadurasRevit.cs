@@ -148,8 +148,7 @@ namespace Cad2Revit
                     {
                         var tipo = TipoBarra(d);
                         var curva = new List<Curve> { Line.CreateBound(P(tIni, nn, z), P(tFin, nn, z)) };
-                        var r = Rebar.CreateFromCurves(_doc, RebarStyle.Standard, tipo, null, null, host, n, curva,
-                                                       RebarTerminationOrientation.Left, RebarTerminationOrientation.Left, true, true);
+                        var r = Barra(RebarStyle.Standard, tipo, host, n, curva, null);
                         r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} {rol}");
                     })) nLargas++;
                 }
@@ -167,13 +166,11 @@ namespace Cad2Revit
                         {
                             try
                             {
-                                r = Rebar.CreateFromCurves(_doc, RebarStyle.StirrupTie, tipo, ganchoEstribo, ganchoEstribo, host, u,
-                                                           curvas, RebarTerminationOrientation.Right, RebarTerminationOrientation.Right, true, true);
+                                r = Barra(RebarStyle.StirrupTie, tipo, host, u, curvas, ganchoEstribo);
                             }
                             catch { r = null; }                       // sin ganchos de 135° si no calzan
                         }
-                        r ??= Rebar.CreateFromCurves(_doc, RebarStyle.StirrupTie, tipo, null, null, host, u, curvas,
-                                                     RebarTerminationOrientation.Right, RebarTerminationOrientation.Right, true, true);
+                        r ??= Barra(RebarStyle.StirrupTie, tipo, host, u, curvas, null);
                         r.GetShapeDrivenAccessor().SetLayoutAsMaximumSpacing(s, tFin - tIni, true, true, true);
                         r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} {rol}");
                     })) nEstribos++;
@@ -188,6 +185,19 @@ namespace Cad2Revit
             _inf.Advertencia($"Recubrimientos: pedestal {a.RecubrimientoPedestalCm:0.#} cm, fundación {a.RecubrimientoFundacionCm:0.#} cm; " +
                              $"largo armado {Mt(tFin - tIni):0.00} m");
             return _inf;
+        }
+
+        private Rebar Barra(RebarStyle estilo, RebarBarType tipo, Element host, XYZ normal, IList<Curve> curvas, RebarHookType gancho)
+        {
+            using var term = new BarTerminationsData(_doc);
+            if (gancho != null)
+            {
+                term.HookTypeIdAtStart = gancho.Id;
+                term.HookTypeIdAtEnd = gancho.Id;
+                term.TerminationOrientationAtStart = RebarTerminationOrientation.Right;
+                term.TerminationOrientationAtEnd = RebarTerminationOrientation.Right;
+            }
+            return Rebar.CreateFromCurves(_doc, estilo, tipo, host, normal, curvas, term, true, true);
         }
 
         /// <summary>Tipo de barra con ese diámetro (pies); si no hay, se crea «φ{mm}».</summary>
