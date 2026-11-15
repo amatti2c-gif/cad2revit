@@ -114,13 +114,8 @@ namespace Cad2Revit
             // 3) cadenetas entre las vigas. No se toman en cuenta otros elementos del modelo ----
             const double Holgura = 0.0;
             var hulls = new List<List<(double s, double r)>>();
-            // el contorno se ajusta a los elementos que ya existen en sus bordes (vigas, muros, pilares): si el piso
-            // pasa por debajo de uno, su borde se corre a la cara interior del elemento; si queda corto (hasta 60 cm),
-            // se alarga hasta esa cara. Así las vigas de borde quedan contra ellos y no escondidas dentro.
-            var existentes = ElementosDeBorde(piso, zInf - c.H, zInf, 0.6)
-                .Select(pts => Casco(pts.Select(q => Loc((q.x, q.y))).ToList())).Where(h => h.Count >= 3).ToList();
+            // el contorno del piso manda (se dibuja por dentro de los perfiles): no se revisan otros elementos
             int bordesAjustados = 0;
-            existentes.Clear();          // el piso ya está dibujado por dentro de los perfiles: su contorno manda
             List<(double a, double b)> CortaPoligono(List<(double s, double r)> pol, bool porS, double v)
             {
                 // intervalos (en r si porS, en s si no) donde la recta s = v (o r = v) está dentro del polígono
