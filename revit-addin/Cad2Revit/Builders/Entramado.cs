@@ -75,10 +75,11 @@ namespace Cad2Revit
             if (mat != ElementId.InvalidElementId) U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, mat);
             if (comentario != null) fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(comentario);
             else Marcar(fi, $"entramado {muro} {p.Rol}");
+            return fi;
         }
 
-        private void ColocarHorizontal(PiezaDef p, FamilySymbol s, Level nivel, ElementId mat, string muro,
-                                       string comentario = null)
+        private FamilyInstance ColocarHorizontal(PiezaDef p, FamilySymbol s, Level nivel, ElementId mat, string muro,
+                                                 string comentario = null)
         {
             var fi = _doc.Create.NewFamilyInstance(Line.CreateBound(Punto(p.Inicio), Punto(p.Fin)), s, nivel, StructuralType.Beam);
             var zj = fi.get_Parameter(BuiltInParameter.Z_JUSTIFICATION);     // eje de la pieza = centro de la sección
@@ -88,6 +89,7 @@ namespace Cad2Revit
             if (mat != ElementId.InvalidElementId) U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, mat);
             if (comentario != null) fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(comentario);
             else Marcar(fi, $"entramado {muro} {p.Rol}");
+            return fi;
         }
 
         private static XYZ Punto(double[] p) => U.P3(p);

@@ -185,8 +185,37 @@ namespace Cad2Revit
             sh = ConMedidas(sh, $"{c.B * 1000:0}x{c.H * 1000:0}", (null, NombresAnchoMadera, c.B), (null, NombresAltoMadera, c.H));
             var mat = IdMaterial(c.Material);
             int hechas = 0;
+            var colocadas = new List<FamilyInstance>();
             foreach (var p in piezas)
-                if (Intentar($"piso {piso.Id} {p.Rol}", () => ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}"))) hechas++;
+                if (Intentar($"piso {piso.Id} {p.Rol}", () => colocadas.Add(ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}")))) hechas++;
+
+            // eje fuerte vertical: la altura de cada pieza debe ser H (no B); si la familia la dejó acostada, se gira 90°
+            _doc.Regenerate();
+            int giradas = 0, malas = 0;
+            foreach (var fi in colocadas)
+            {
+                var bb = fi.get_BoundingBox(null);
+                if (bb == null) continue;
+                double alto = Mt(bb.Max.Z - bb.Min.Z);
+                if (Math.Abs(alto - c.H) < 0.01) continue;
+                var giro = fi.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE);
+                if (giro != null && !giro.IsReadOnly)
+                {
+                    giro.Set(giro.AsDouble() + Math.PI / 2);
+                    giradas++;
+                }
+                else malas++;
+            }
+            if (giradas > 0)
+            {
+                _doc.Regenerate();
+                malas += colocadas.Count(fi => fi.get_BoundingBox(null) is BoundingBoxXYZ b2 && Math.Abs(Mt(b2.Max.Z - b2.Min.Z) - c.H) >= 0.01);
+                _inf.Advertencia($"Piso {piso.Id}: {giradas} pieza(s) se giraron 90° para dejar su eje fuerte vertical");
+            }
+            if (malas > 0)
+                _inf.Advertencia($"Piso {piso.Id}: {malas} pieza(s) no quedaron con la altura de {c.H * 1000:0} mm en vertical; revisa la familia");
+            else
+                _inf.Advertencia($"Piso {piso.Id}: comprobado, todas las piezas tienen su altura de {c.H * 1000:0} mm en vertical (eje fuerte)");
             _inf.Contar("Pisos con entramado", 1);
             _inf.Contar("Entramado de piso: piezas", hechas);
             _inf.Advertencia($"Piso {piso.Id}: {piezas.Count(p => p.Rol == "viga")} vigas {c.Escuadria} ({c.B * 1000:0}x{c.H * 1000:0}) " +
