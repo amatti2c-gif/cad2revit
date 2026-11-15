@@ -56,6 +56,13 @@ namespace Cad2Revit
                           "aguas): quita la unión de geometría que lo impide y enlaza el pilar a la viga, recortándolo con ella. " +
                           "En los pilares seleccionados o, si no hay selección, en todos."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitPlacaBase", "Placa\nbase",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoPlacaBase).FullName)
+            {
+                ToolTip = "Agrega bajo el pilar una placa base rectangular con 4 pernos de anclaje preinstalados, para embeber " +
+                          "en el hormigón: golilla cuadrada de 5 mm y tuerca por abajo en el extremo de cada perno. " +
+                          "En los pilares seleccionados (o los eliges en la vista). Si ya tenía una, se reemplaza."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -449,6 +456,102 @@ namespace Cad2Revit
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Placa base con 4 pernos de anclaje (golilla cuadrada y tuerca por abajo) en los pilares elegidos.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoPlacaBase : IExternalCommand
+    {
+        private class SoloPilares : Autodesk.Revit.UI.Selection.ISelectionFilter
+        {
+            public bool AllowElement(Element e) => EsPilar(e);
+            public bool AllowReference(Reference r, XYZ p) => false;
+        }
+
+        private static bool EsPilar(Element e) => e is FamilyInstance f && f.StructuralType == Autodesk.Revit.DB.Structure.StructuralType.Column &&
+            !(f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "").Contains("entramado");
+
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var pilares = uidoc.Selection.GetElementIds().Select(doc.GetElement).Where(EsPilar).Cast<FamilyInstance>().ToList();
+            if (pilares.Count == 0)
+            {
+                try
+                {
+                    pilares = uidoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloPilares(),
+                                                          "Elige los pilares para la placa base y presiona Finalizar")
+                                   .Select(x => doc.GetElement(x)).Cast<FamilyInstance>().ToList();
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (pilares.Count == 0) { message = "No elegiste pilares."; return Result.Cancelled; }
+            var conf = PedirMedidas(pilares.Count);
+            if (conf == null) return Result.Cancelled;
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).PlacasBase(pilares, conf);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = informe.Errores.Count == 0 ? "Placas base creadas" : "Placas base con observaciones (ver detalle)",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+
+        private static ConfPlacaBase PedirMedidas(int n)
+        {
+            var c = new ConfPlacaBase();
+            var campos = new (string texto, System.Func<double> leer, System.Action<double> poner)[]
+            {
+                ("Vuelo de la placa sobre el perfil, a cada lado", () => c.Vuelo, v => c.Vuelo = v),
+                ("Ancho de la placa (0 = perfil + 2 vuelos)", () => c.Ancho, v => c.Ancho = v),
+                ("Largo de la placa (0 = perfil + 2 vuelos)", () => c.Largo, v => c.Largo = v),
+                ("Espesor de la placa", () => c.Espesor, v => c.Espesor = v),
+                ("Diámetro de los pernos", () => c.DiametroPerno, v => c.DiametroPerno = v),
+                ("Largo total de los pernos", () => c.LargoPerno, v => c.LargoPerno = v),
+                ("Perno sobre la cara superior de la placa", () => c.Sobresale, v => c.Sobresale = v),
+                ("Centro del perno al borde de la placa", () => c.Borde, v => c.Borde = v),
+                ("Lado de la golilla cuadrada", () => c.LadoGolilla, v => c.LadoGolilla = v),
+                ("Espesor de la golilla", () => c.EspesorGolilla, v => c.EspesorGolilla = v),
+            };
+            using var f = new System.Windows.Forms.Form
+            {
+                Text = $"Placa base ({n} pilar{(n == 1 ? "" : "es")}) — medidas en mm", Width = 470, Height = 120 + 30 * campos.Length,
+                FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
+                StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
+            };
+            var cajas = new System.Collections.Generic.List<System.Windows.Forms.TextBox>();
+            for (int i = 0; i < campos.Length; i++)
+            {
+                f.Controls.Add(new System.Windows.Forms.Label { Text = campos[i].texto, Left = 12, Top = 15 + 30 * i, Width = 300 });
+                var caja = new System.Windows.Forms.TextBox { Left = 320, Top = 12 + 30 * i, Width = 110,
+                    Text = campos[i].leer().ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) };
+                cajas.Add(caja); f.Controls.Add(caja);
+            }
+            int yb = 20 + 30 * campos.Length;
+            var ok = new System.Windows.Forms.Button { Text = "Crear", Left = 240, Top = yb, Width = 90, DialogResult = System.Windows.Forms.DialogResult.OK };
+            var no = new System.Windows.Forms.Button { Text = "Cancelar", Left = 340, Top = yb, Width = 90, DialogResult = System.Windows.Forms.DialogResult.Cancel };
+            f.Controls.Add(ok); f.Controls.Add(no);
+            f.AcceptButton = ok; f.CancelButton = no;
+            while (f.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                bool bien = true;
+                for (int i = 0; i < campos.Length && bien; i++)
+                {
+                    if (double.TryParse(cajas[i].Text.Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float,
+                                        System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0)
+                        campos[i].poner(v);
+                    else { System.Windows.Forms.MessageBox.Show($"«{campos[i].texto}»: escribe un número en mm"); bien = false; }
+                }
+                if (bien && (c.Espesor <= 0 || c.DiametroPerno <= 0 || c.LargoPerno <= c.Sobresale + c.Espesor))
+                { System.Windows.Forms.MessageBox.Show("Revisa el espesor, el diámetro y el largo de los pernos"); bien = false; }
+                if (bien) return c;
+            }
+            return null;
         }
     }
 }
