@@ -1649,8 +1649,14 @@ def aberturas_ordenadas(m: dict, n: int | None = None) -> dict:
         return None
 
     out = []
-    for a in m.get("aberturas") or []:
-        w = muros.get(a["muro"])
+    # las que quedaron sin muro en la app (se eliminó en Estructuración) también van: en Revit se abren en el muro
+    # que haya en ese lugar; su recta es la del muro original
+    lista = [(a, muros.get(a["muro"])) for a in m.get("aberturas") or []]
+    for a in m.get("aberturas_sin_muro") or []:
+        if a.get("linea") and len(a["linea"]) == 2:
+            lista.append((a, {"id": None, "nivel": a.get("nivel"), "tipo": None,
+                              "inicio": a["linea"][0], "fin": a["linea"][1]}))
+    for a, w in lista:
         if not w:
             continue
         (x1, y1), (x2, y2) = w["inicio"], w["fin"]

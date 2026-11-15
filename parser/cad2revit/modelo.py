@@ -575,6 +575,9 @@ def _realojar(modelo: dict, adv: list) -> None:
             movidas += 1
         else:
             perdidas.append(a["id"])
+            # se conserva: en Revit el vano se abre en el muro que el usuario tenga en ese lugar
+            modelo.setdefault("aberturas_sin_muro", []).append(dict(
+                {k: v for k, v in a.items() if not k.startswith("_")}, nivel=nivel, linea=linea))
     if movidas:
         adv.append(f"{movidas} puertas/ventanas de muros eliminados en la app pasaron al muro que quedó en su lugar")
     if perdidas:
