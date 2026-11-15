@@ -158,7 +158,8 @@ namespace Cad2Revit
                     if (Intentar(rol, () =>
                     {
                         var tipo = TipoBarra(d);
-                        var q = new[] { P(tIni, nA, zA), P(tIni, nB, zA), P(tIni, nB, zB), P(tIni, nA, zB) };
+                        // empieza y termina en una esquina SUPERIOR (ahí van los ganchos), con el mismo sentido de giro
+                        var q = new[] { P(tIni, nA, zB), P(tIni, nA, zA), P(tIni, nB, zA), P(tIni, nB, zB) };
                         var curvas = new List<Curve>();
                         for (int i = 0; i < 4; i++) curvas.Add(Line.CreateBound(q[i], q[(i + 1) % 4]));
                         Rebar r = null;
@@ -194,8 +195,9 @@ namespace Cad2Revit
             {
                 term.HookTypeIdAtStart = gancho.Id;
                 term.HookTypeIdAtEnd = gancho.Id;
-                term.TerminationOrientationAtStart = RebarTerminationOrientation.Right;
-                term.TerminationOrientationAtEnd = RebarTerminationOrientation.Right;
+                // ganchos de 135° doblados hacia el interior del estribo (hacia el núcleo de hormigón)
+                term.TerminationOrientationAtStart = RebarTerminationOrientation.Left;
+                term.TerminationOrientationAtEnd = RebarTerminationOrientation.Left;
             }
             return Rebar.CreateFromCurves(_doc, estilo, tipo, host, normal, curvas, term, true, true);
         }
