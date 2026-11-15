@@ -256,7 +256,7 @@ namespace Cad2Revit
                     if (s1 - s0 <= 2 * conf.B + 0.02) continue;
                     double zb = zBase;
                     foreach (var (b0, b1, zs) in obs.Bases) if (tm >= b0 && tm <= b1) zb = Math.Max(zb, zs);
-                    var vanosAqui = zb > zBase ? vanos.Where(v => v.ZInf >= zb - 0.01).ToList() : vanos;
+                    var vanosAqui = zb > zBase ? VanosDesde(vanos, zb) : vanos;
                     piezas.AddRange(GeneradorEntramado.Generar(a, b, zb, zTope, s0, largo - s1, vanosAqui, conf, topeEn, quiebres));
                 }
             }
@@ -284,7 +284,7 @@ namespace Cad2Revit
                     }
                     return z;
                 };
-                var vanosArriba = vanos.Where(v => v.ZInf >= zSobre - 0.01).ToList();
+                var vanosArriba = VanosDesde(vanos, zSobre);
                 int antes = piezas.Count;
                 foreach (var (t0, t1) in tramos)
                 {
@@ -299,6 +299,20 @@ namespace Cad2Revit
                 _inf.Advertencia($"Muro {w.Id}: entramado ajustado a {obs.Pilares.Count} pilar(es), {obs.Vigas.Count} viga(s) en su parte alta " +
                                  $"y {obs.Vanos.Count} elemento(s) que lo atraviesan" +
                                  (obs.Ignorados.Count > 0 ? $"; no se consideraron: {string.Join(", ", obs.Ignorados)}" : ""));
+            // revisión final: ninguna pieza puede pasar por un vano (puerta, ventana o abertura)
+            // (un vano que llega al borde superior se revisa solo hasta bajo la solera superior y su dintel)
+            double sol = conf.Soleras ? conf.B : 0;
+            var revisar = vanos.Select(v => new VanoMuro
+            {
+                T0 = v.T0, T1 = v.T1, ZInf = v.ZInf, Puerta = v.Puerta,
+                ZSup = Math.Min(v.ZSup, Math.Min(topeEn(v.T0), topeEn(v.T1)) - sol - conf.B),
+            }).Where(v => v.ZSup - v.ZInf > 0.05).ToList();
+            int quitadas = piezas.RemoveAll(p => revisar.Any(v => Invade(p, v, a, ux, uy, conf.B)));
+            if (quitadas > 0)
+                _inf.Advertencia($"Muro {w.Id}: se quitaron {quitadas} pieza(s) que pasaban por un vano");
+            var vanosLeidos = vanos.Count - obs.Vanos.Count;
+            _inf.Advertencia($"Muro {w.Id}: {vanosLeidos} vano(s) leídos" + (vanosLeidos > 0 ? ": " + string.Join("; ",
+                vanos.Take(vanosLeidos).Select(v => $"{v.T0:0.00}-{v.T1:0.00} m, z {v.ZInf - zBase:0.00}-{v.ZSup - zBase:0.00} m")) : ""));
             if (piezas.Count == 0) { _inf.Advertencia($"Muro {w.Id}: muy corto para entramado"); return; }
 
             // familias de madera con la sección pedida (las mismas del entramado de la app)
@@ -330,6 +344,34 @@ namespace Cad2Revit
             _inf.Contar("Muros con entramado", 1);
             _inf.Contar("Entramado: piezas verticales", nv);
             _inf.Contar("Entramado: piezas horizontales", nh);
+        }
+
+        /// <summary>Vanos que llegan por encima de <paramref name="z"/>, recortados para partir en z (una puerta que
+        /// parte en el piso, bajo una viga de base, sigue siendo un vano en la zona sobre la viga).</summary>
+        private static List<VanoMuro> VanosDesde(List<VanoMuro> vanos, double z) =>
+            vanos.Where(v => v.ZSup > z + 0.05)
+                 .Select(v => new VanoMuro { T0 = v.T0, T1 = v.T1, ZInf = Math.Max(v.ZInf, z), ZSup = v.ZSup, Puerta = v.Puerta || v.ZInf <= z + 0.01 })
+                 .ToList();
+
+        /// <summary>¿La pieza (con su sección) entra en el vano?</summary>
+        private static bool Invade(PiezaDef p, VanoMuro v, double[] a, double ux, double uy, double b)
+        {
+            double T(double[] q) => (q[0] - a[0]) * ux + (q[1] - a[1]) * uy;
+            double ti = T(p.Inicio), tf = T(p.Fin);
+            double t0 = Math.Min(ti, tf), t1 = Math.Max(ti, tf);
+            double z0 = Math.Min(p.Inicio[2], p.Fin[2]), z1 = Math.Max(p.Inicio[2], p.Fin[2]);
+            const double e = 0.005;
+            if (t1 - t0 < 1e-4) { t0 -= b / 2; t1 += b / 2; }               // vertical: su ancho a lo largo del muro
+            else
+            {
+                // horizontal o inclinada: su recorrido sobre el vano, con su alto
+                double ta = Math.Max(t0, v.T0), tb = Math.Min(t1, v.T1);
+                if (tb - ta < e) return false;
+                double Zen(double t) => p.Inicio[2] + (p.Fin[2] - p.Inicio[2]) * (t - ti) / (tf - ti);
+                z0 = Math.Min(Zen(ta), Zen(tb)) - b / 2; z1 = Math.Max(Zen(ta), Zen(tb)) + b / 2;
+                t0 = ta; t1 = tb;
+            }
+            return t0 < v.T1 - e && t1 > v.T0 + e && z0 < v.ZSup - e && z1 > v.ZInf + e;
         }
 
         /// <summary>Pilares y vigas (estructurales) que atraviesan un muro, en sus coordenadas: t a lo largo del eje y z.</summary>
