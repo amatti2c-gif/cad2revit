@@ -987,6 +987,13 @@ def construir_modelo(cfg: Configuracion) -> dict:
             if hojas_muro:
                 muros = [m for m in muros if m not in hojas_muro]
                 adv.append(f"{nivel}: {len(hojas_muro)} hojas de puerta dibujadas no se toman como muros")
+        # puertas plegables (rótulo «PP P:80» y zigzag, sin arco)
+        pleg = aberturas_mod.puertas_plegables(dib.textos, dib.segmentos, muros,
+                                               [i.punto for i, r in abert_ins if r.get("categoria") == "puerta"])
+        if pleg:
+            abert_ins += pleg
+            puntos_vano += [i.punto for i, _ in pleg]
+            adv.append(f"{nivel}: {len(pleg)} puertas plegables leídas de sus rótulos (PP)")
         muros, encimados = quitar_encimados(muros)
         if encimados:
             adv.append(f"{nivel}: {len(encimados)} 'muros' quedaban dentro de otros más gruesos (vidrios, marcos o muebles "

@@ -393,3 +393,54 @@ def ventanas_en_vanos(muros: list[Muro], rotulos: list[dict], puntos_puerta: lis
 
 def dist_punto_recta(p: Punto, origen: Punto, u: Punto) -> float:
     return abs((p[0] - origen[0]) * u[1] - (p[1] - origen[1]) * u[0])
+
+
+def puertas_plegables(textos, segmentos, muros: list[Muro], ya: list[Punto]) -> list[tuple[Insercion, dict]]:
+    """Puertas plegables (rótulo «PP» con «P:80», sin V ni arco): el zigzag de sus hojas (segmentos cortos en
+    diagonal sobre el muro) da la posición; el ancho es el del rótulo (P)."""
+    out = []
+    for t in textos or []:
+        if not RX_HOJA_PUERTA.search(t.texto) or RX_VANO_PUERTA.search(t.texto):
+            continue
+        ancho = _medida(RX_HOJA_PUERTA, t.texto)
+        if not ancho or not 0.4 <= ancho <= 3.0:
+            continue
+        if any(math.dist(t.punto, q) < 1.2 for q in ya):
+            continue                                  # ya hay una puerta (de arco) ahí
+        # el muro frente al rótulo
+        mejor = None
+        for m in muros:
+            u = m.direccion
+            d = dist_punto_recta(t.punto, m.a, u)
+            tt = proyectar(t.punto, m.a, u)
+            if d <= 0.7 and -0.6 <= tt <= m.largo + 0.6 and (mejor is None or d < mejor[0]):
+                mejor = (d, m)
+        if mejor is None:
+            continue
+        m = mejor[1]
+        u = m.direccion
+        # zigzag: segmentos cortos en diagonal, dentro del espesor del muro, cerca del rótulo
+        ts = []
+        for sg in segmentos or []:
+            L = math.dist(sg.a, sg.b)
+            if not 0.08 <= L <= 0.4:
+                continue
+            ang = abs(((sg.b[0] - sg.a[0]) * u[0] + (sg.b[1] - sg.a[1]) * u[1]) / L)
+            if not 0.4 <= ang <= 0.9:
+                continue
+            t_rot = proyectar(t.punto, m.a, u)
+            if all(dist_punto_recta(q, m.a, u) <= m.espesor / 2 + 0.25 and abs(proyectar(q, m.a, u) - t_rot) <= 0.8 * ancho
+                   for q in (sg.a, sg.b)):
+                ts += [proyectar(sg.a, m.a, u), proyectar(sg.b, m.a, u)]
+        if ts and 0.5 * ancho <= max(ts) - min(ts) <= 1.5 * ancho:
+            tc = (min(ts) + max(ts)) / 2
+        else:
+            tc = proyectar(t.punto, m.a, u)
+        c = (round(m.a[0] + u[0] * tc, 4), round(m.a[1] + u[1] * tc, 4))
+        a_ = (c[0] - u[0] * ancho / 2, c[1] - u[1] * ancho / 2)
+        b_ = (c[0] + u[0] * ancho / 2, c[1] + u[1] * ancho / 2)
+        # como una puerta de arco con jamba: su muro va en la dirección del zigzag (de un borde al otro)
+        out.append((Insercion(nombre="puerta plegable (rótulo)", capa="rótulo", punto=c, rotacion=0.0, extremos=None,
+                              esquinas=[a_, b_, c]), {"categoria": "puerta", "ancho": ancho, "vano": ancho, "jamba": True}))
+        ya = ya + [c]
+    return out
