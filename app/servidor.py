@@ -1670,6 +1670,8 @@ def aberturas_ordenadas(m: dict, n: int | None = None) -> dict:
                 perp.append(((ex1 + ex2) / 2 if vertical_e else (ey1 + ey2) / 2, e["nombre"]))
         antes = max((q for q in perp if q[0] <= tc + 1e-6), default=None)
         despues = min((q for q in perp if q[0] >= tc - 1e-6), default=None)
+        if antes and despues and antes[1] == despues[1]:          # justo sobre un eje: basta una referencia
+            despues = None
         refs = [{"eje": q[1], "desde": r3(tc - q[0])} for q in (antes, despues) if q]
         out.append({
             "id": a["id"], "categoria": a["categoria"], "nivel": w["nivel"], "cota_nivel": r3(cota.get(w["nivel"], 0.0)),
