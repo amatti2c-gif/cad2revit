@@ -211,6 +211,39 @@ namespace Cad2Revit
             foreach (var (t0, t1) in tramos)
                 if (t1 - t0 > 2 * conf.B + 0.02)
                     piezas.AddRange(GeneradorEntramado.Generar(a, b, zBase, zTope, t0, largo - t1, vanos, conf, topeEn, quiebres));
+            // vigas con muro por encima (p. ej. la del alero en un frontón): sobre ellas se arma otra zona de entramado,
+            // con su solera inferior apoyada en la viga y hasta el borde superior del muro
+            for (int iv = 0; iv < obs.Vigas.Count; iv++)
+            {
+                var (vt0, vt1, _, _) = obs.Vigas[iv];
+                var (sup0, sup1) = obs.CaraSuperior[iv];
+                double zSobre = Math.Max(sup0, sup1);
+                bool sigue = Enumerable.Range(0, 11).Select(k => vt0 + (vt1 - vt0) * k / 10.0)
+                                       .Any(t => PerfilEn(t) - zSobre > 0.3);
+                if (!sigue) continue;
+                Func<double, double> topeArriba = t =>
+                {
+                    double z = PerfilEn(t);
+                    for (int j = 0; j < obs.Vigas.Count; j++)
+                    {
+                        var (t0j, t1j, z0j, z1j) = obs.Vigas[j];
+                        if (j == iv || t < t0j - 1e-6 || t > t1j + 1e-6) continue;
+                        double zj = t1j - t0j < 1e-6 ? z0j : z0j + (z1j - z0j) * (t - t0j) / (t1j - t0j);
+                        if (zj > zSobre + 0.05) z = Math.Min(z, zj);             // otra viga más arriba
+                    }
+                    return z;
+                };
+                var vanosArriba = vanos.Where(v => v.ZInf >= zSobre - 0.01).ToList();
+                int antes = piezas.Count;
+                foreach (var (t0, t1) in tramos)
+                {
+                    double a0 = Math.Max(t0, vt0), a1 = Math.Min(t1, vt1);
+                    if (a1 - a0 > 2 * conf.B + 0.02)
+                        piezas.AddRange(GeneradorEntramado.Generar(a, b, zSobre, zTope, a0, largo - a1, vanosArriba, conf, topeArriba, quiebres));
+                }
+                if (piezas.Count > antes)
+                    _inf.Advertencia($"Muro {w.Id}: entramado también sobre la viga (a {zSobre - zBase:0.00} m), hasta el borde superior del muro");
+            }
             if (obs.Pilares.Count + obs.Vigas.Count + obs.Vanos.Count > 0)
                 _inf.Advertencia($"Muro {w.Id}: entramado ajustado a {obs.Pilares.Count} pilar(es), {obs.Vigas.Count} viga(s) en su parte alta " +
                                  $"y {obs.Vanos.Count} elemento(s) que lo atraviesan" +
@@ -253,6 +286,7 @@ namespace Cad2Revit
         {
             public List<(double t0, double t1)> Pilares = new();                    // de toda la altura: cortan el muro en tramos
             public List<(double t0, double t1, double z0, double z1)> Vigas = new(); // en la parte alta: cara inferior en t0 y t1
+            public List<(double z0, double z1)> CaraSuperior = new();               // de cada viga, en t0 y t1
             public List<VanoMuro> Vanos = new();                                    // el resto: se rodea como un vano
             public List<string> Ignorados = new();
         }
@@ -309,7 +343,9 @@ namespace Cad2Revit
                         {
                             // cara inferior en cada extremo del tramo que ocupa en el muro
                             double Inferior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
+                            double Superior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z1).Max();
                             o.Vigas.Add((t0, t1, Inferior(t0), Inferior(t1)));
+                            o.CaraSuperior.Add((Superior(t0), Superior(t1)));
                             continue;
                         }
                     }
