@@ -74,9 +74,11 @@ namespace Cad2Revit
             }
             foreach (var f in new FilteredElementCollector(_doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>())
             {
+                var com = f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                bool deEntramado = com.StartsWith(MarcaEntramadoRevit) || com.StartsWith(Marca + "entramado");
                 if (f.StructuralType == StructuralType.Column && f.Location is LocationPoint lp)
                 {
-                    if (DistRecta(lp.Point, c.Linea) < TolEje) c.Pilares.Add(f);
+                    if (!deEntramado && DistRecta(lp.Point, c.Linea) < TolEje) c.Pilares.Add(f);   // el entramado se rehace aparte
                 }
                 else if ((f.StructuralType == StructuralType.Beam || f.StructuralType == StructuralType.Brace)
                          && f.Location is LocationCurve lc && lc.Curve is Line bl)
@@ -145,6 +147,15 @@ namespace Cad2Revit
                 grupo.Start();
                 Etapa($"Mover eje {g.Name}", () =>
                 {
+                    // pilares con «Se mueve con los ejes»: se desactiva mientras se mueve (si no, Revit mueve su base con el eje
+                    // y además se mueve el pilar: queda inclinado) y se restaura al final
+                    var conEjes = new List<FamilyInstance>();
+                    foreach (var p in c.Pilares)
+                    {
+                        var par = p.get_Parameter(BuiltInParameter.INSTANCE_MOVES_WITH_GRID_PARAM);
+                        if (par != null && !par.IsReadOnly && par.AsInteger() == 1) { par.Set(0); conEjes.Add(p); }
+                    }
+                    _doc.Regenerate();
                     var mover = new List<Element> { g };
                     mover.AddRange(c.MurosSobre); mover.AddRange(c.Pilares); mover.AddRange(c.VigasSobre);
                     foreach (var e in mover)
@@ -153,6 +164,8 @@ namespace Cad2Revit
                         Intentar($"mover {e.Id}", () => ElementTransformUtils.MoveElement(_doc, e.Id, mov));
                         if (e is Wall) afectados.Add(e.Id);
                     }
+                    _doc.Regenerate();
+                    foreach (var p in conEjes) p.get_Parameter(BuiltInParameter.INSTANCE_MOVES_WITH_GRID_PARAM)?.Set(1);
                     foreach (var (w, k) in c.ExtremosMuros)
                     {
                         if (w.Pinned) { bloqueados.Add($"Muro {w.Id}"); continue; }
