@@ -49,6 +49,13 @@ namespace Cad2Revit
                 ToolTip = "Muestra qué hay en cada eje (muros, vanos, pilares, vigas, entramados) y permite amarrar los elementos a " +
                           "los ejes con restricciones de Revit, para moverlos con la herramienta Mover."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitUnirPilares", "Unir pilares\na vigas",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoUnirPilares).FullName)
+            {
+                ToolTip = "Une cada pilar a la viga que llega a su parte superior (también las inclinadas de los marcos a dos " +
+                          "aguas): quita la unión de geometría que lo impide y enlaza el pilar a la viga, recortándolo con ella. " +
+                          "En los pilares seleccionados o, si no hay selección, en todos."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -382,6 +389,34 @@ namespace Cad2Revit
             new TaskDialog("cad2revit")
             {
                 MainInstruction = "Elementos amarrados a los ejes",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Une los pilares a las vigas que llegan a su parte superior (enlace de Revit, cortando el pilar).</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoUnirPilares : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var constructor = new Constructor(doc, new Modelo { Unidades = "m" });
+            bool EsPilar(Element e) => e is FamilyInstance f && f.StructuralType == Autodesk.Revit.DB.Structure.StructuralType.Column &&
+                !(f.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "").Contains("entramado");
+            var pilares = uidoc.Selection.GetElementIds().Select(doc.GetElement).Where(EsPilar).Cast<FamilyInstance>().ToList();
+            if (pilares.Count == 0)
+                pilares = new FilteredElementCollector(doc).OfClass(typeof(FamilyInstance)).Where(EsPilar).Cast<FamilyInstance>().ToList();
+            if (pilares.Count == 0) { message = "No hay pilares estructurales en el modelo."; return Result.Cancelled; }
+            var informe = constructor.UnirPilaresAVigas(pilares);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = "Pilares y vigas",
                 MainContent = informe.Resumen(),
                 ExpandedContent = informe.Detalle(),
             }.Show();
