@@ -474,7 +474,9 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
         u = ((qb[0] - qa[0]) / L, (qb[1] - qa[1]) / L)
         out = []
         for d in modelo["muros"]:
-            if d["nivel"] != q.get("nivel") or clase not in d["id"] or d.get("buhardilla"):
+            # un muro del plano quitado también se lleva los muros de tramo hechos en su lugar
+            if d["nivel"] != q.get("nivel") or d.get("buhardilla") or not (
+                    clase in d["id"] or (clase == "-M" and "-T" in d["id"])):
                 continue
             if any(abs((p[0] - qa[0]) * u[1] - (p[1] - qa[1]) * u[0]) > 0.05 for p in (d["inicio"], d["fin"])):
                 continue
