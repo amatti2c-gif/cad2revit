@@ -631,7 +631,7 @@ namespace Cad2Revit
             Etiqueta("Las vigas salvan la luz");
             var luz = new System.Windows.Forms.ComboBox { Left = 310, Top = y, Width = 130, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
             luz.Items.AddRange(new object[] { "corta", "larga" }); luz.SelectedIndex = 0; f.Controls.Add(luz); y += 32;
-            Etiqueta("Cadenetas a lo más cada (cm; 0 = sin)");
+            Etiqueta("Cadenetas cada (cm; 0 = sin)");
             var cad = new System.Windows.Forms.TextBox { Left = 310, Top = y, Width = 130, Text = "60" }; f.Controls.Add(cad); y += 32;
             var per = new System.Windows.Forms.CheckBox { Text = "Vigas de borde en todo el contorno", Left = 12, Top = y, Width = 400, Checked = true };
             f.Controls.Add(per); y += 36;
