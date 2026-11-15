@@ -375,6 +375,31 @@ def _centrar_en_vanos_de_ejes(modelo: dict, adv: list) -> None:
     if centradas:
         adv.append("Centradas entre sus dos ejes (llenan ese espacio): " + ", ".join(centradas))
 
+    # simetría: una ventana casi al centro de su muro (35 cm o menos, medido entre los ejes de sus extremos) queda
+    # centrada (p. ej. la ventana del frontón, al medio entre los ejes de borde)
+    simetricas = []
+    for a in modelo["aberturas"]:
+        w = muros.get(a["muro"])
+        if not w or a.get("categoria") != "ventana":
+            continue
+        horizontal = abs(w["fin"][0] - w["inicio"][0]) >= abs(w["fin"][1] - w["inicio"][1])
+        pos, k = (xs, 0) if horizontal else (ys, 1)
+        e0, e1 = sorted((w["inicio"][k], w["fin"][k]))
+        e0 = min(pos, key=lambda v: abs(v - e0), default=e0) if pos and min(abs(v - e0) for v in pos) <= 0.35 else e0
+        e1 = min(pos, key=lambda v: abs(v - e1), default=e1) if pos and min(abs(v - e1) for v in pos) <= 0.35 else e1
+        medio, t = (e0 + e1) / 2, a["centro"][k]
+        if e1 - e0 < a["ancho"] + 0.2 or abs(t - medio) > 0.35 or abs(t - medio) < 1e-4:
+            continue
+        otras = [o for o in modelo["aberturas"] if o is not a and o.get("muro") == a["muro"]]
+        if any(abs(o["centro"][k] - medio) < (o["ancho"] + a["ancho"]) / 2 for o in otras):
+            continue
+        c = list(a["centro"])
+        c[k] = round(medio, 4)
+        a["centro"] = c
+        simetricas.append(f"{a['id']} ({abs(t - medio):.2f} m)")
+    if simetricas:
+        adv.append("Centradas en su muro (simetría): " + ", ".join(simetricas))
+
 
 def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set, avisar: bool) -> None:
     """Aplica muros_quitar y muros_editar del proyecto. hechos_* recuerdan qué ediciones ya calzaron con un muro;
