@@ -375,6 +375,13 @@ def _centrar_en_vanos_de_ejes(modelo: dict, adv: list) -> None:
     if centradas:
         adv.append("Centradas entre sus dos ejes (llenan ese espacio): " + ", ".join(centradas))
 
+
+def _centrar_en_muro(modelo: dict, adv: list) -> None:
+    """Simetría: una ventana casi al centro de su muro queda centrada (después de unir muros para los vanos)."""
+    ejes = modelo.get("ejes") or []
+    xs = sorted((e["inicio"][0] + e["fin"][0]) / 2 for e in ejes if abs(e["inicio"][0] - e["fin"][0]) < 1e-6)
+    ys = sorted((e["inicio"][1] + e["fin"][1]) / 2 for e in ejes if abs(e["inicio"][1] - e["fin"][1]) < 1e-6)
+    muros = {w["id"]: w for w in modelo["muros"]}
     # simetría: una ventana casi al centro de su muro (35 cm o menos, medido entre los ejes de sus extremos) queda
     # centrada (p. ej. la ventana del frontón, al medio entre los ejes de borde)
     simetricas = []
@@ -1195,6 +1202,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     _muros_a_ejes(modelo, adv)
     _centrar_en_vanos_de_ejes(modelo, adv)
     _unir_para_vanos(modelo, adv)
+    _centrar_en_muro(modelo, adv)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo
     # inclinado se agrega un muro desde el nivel de cubierta hasta el techo (frontones), unido al techo en Revit
