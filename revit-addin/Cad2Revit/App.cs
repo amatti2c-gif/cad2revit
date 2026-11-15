@@ -74,8 +74,9 @@ namespace Cad2Revit
             panel.AddItem(new PushButtonData("Cad2RevitEntramadoPiso", "Entramado\nde piso",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoEntramadoPiso).FullName)
             {
-                ToolTip = "Entramado horizontal de madera bajo un piso: vigas de borde en el contorno, vigas a la separación " +
-                          "pedida salvando la luz corta y cadenetas entre ellas. En los pisos seleccionados (o los eliges)."
+                ToolTip = "Entramado horizontal de madera bajo un piso: vigas a la separación pedida salvando la luz corta y " +
+                          "cadenetas entre ellas, que parten y terminan en los elementos de borde que ya existen (vigas, " +
+                          "muros, pilares); vigas de borde nuevas solo donde no los hay. En los pisos seleccionados (o los eliges)."
             });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
@@ -624,8 +625,8 @@ namespace Cad2Revit
             System.Windows.Forms.Label Etiqueta(string t) { var l = new System.Windows.Forms.Label { Text = t, Left = 12, Top = y + 3, Width = 290 }; f.Controls.Add(l); return l; }
             Etiqueta("Escuadría de las vigas");
             var esc = new System.Windows.Forms.ComboBox { Left = 310, Top = y, Width = 130, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
-            esc.Items.AddRange(new object[] { "2x6 (50x150)", "2x8 (50x200)", "2x10 (50x250)" });
-            esc.SelectedIndex = 1; f.Controls.Add(esc); y += 32;
+            esc.Items.AddRange(new object[] { "2x3 (50x75)", "2x6 (50x150)", "2x8 (50x200)", "2x10 (50x250)" });
+            esc.SelectedIndex = 2; f.Controls.Add(esc); y += 32;
             Etiqueta("Separación entre vigas (cm)");
             var sep = new System.Windows.Forms.TextBox { Left = 310, Top = y, Width = 130, Text = "40" }; f.Controls.Add(sep); y += 32;
             Etiqueta("Las vigas salvan la luz");
@@ -644,7 +645,7 @@ namespace Cad2Revit
             {
                 var s = Num(sep.Text); var k = Num(cad.Text);
                 if (s == null || s < 10 || k == null) { System.Windows.Forms.MessageBox.Show("Revisa la separación (10 cm o más) y las cadenetas"); continue; }
-                var tipos = new[] { ("2x6", 0.15), ("2x8", 0.20), ("2x10", 0.25) };
+                var tipos = new[] { ("2x3", 0.075), ("2x6", 0.15), ("2x8", 0.20), ("2x10", 0.25) };
                 var (nombre, h) = tipos[esc.SelectedIndex];
                 c.Escuadria = nombre; c.B = 0.05; c.H = h;
                 c.Familia = new FamiliaTipoDef { Familia = c.Familia.Familia, Tipo = nombre };

@@ -100,22 +100,6 @@ namespace Cad2Revit
             (double x, double y) Glo(double s, double r) => (s * ue.x + r * ud.x, s * ue.y + r * ud.y);
             var lazosL = lazos.Select(l => l.Select(Loc).ToList()).ToList();
 
-            List<(double r0, double r1)> Cortes(double s)
-            {
-                var rs = new List<double>();
-                foreach (var l in lazosL)
-                    for (int i = 0; i < l.Count; i++)
-                    {
-                        var p = l[i]; var q = l[(i + 1) % l.Count];
-                        if ((p.s - s) * (q.s - s) < 0)
-                            rs.Add(p.r + (q.r - p.r) * (s - p.s) / (q.s - p.s));
-                    }
-                rs.Sort();
-                var tramos = new List<(double, double)>();
-                for (int i = 0; i + 1 < rs.Count; i += 2) tramos.Add((rs[i], rs[i + 1]));
-                return tramos;
-            }
-            bool Dentro(double s, double r) => Cortes(s).Any(t => r > t.r0 && r < t.r1);
 
             double B = c.B, zc = zInf - c.H / 2;                  // eje de las piezas: cara superior en la cara inferior del piso
             var piezas = new List<PiezaDef>();
@@ -125,58 +109,137 @@ namespace Cad2Revit
                 piezas.Add(new PiezaDef { Rol = rol, Inicio = new[] { a.x, a.y, zc }, Fin = new[] { b.x, b.y, zc }, Ancho = B, Profundidad = c.H });
             }
 
-            // vigas de borde: por dentro del contorno (y de los vanos), a B/2 de la arista
+            // ---- elementos de borde que ya existen (vigas, muros, pilares) a la altura del entramado ----
+            // las vigas y cadenetas parten y terminan en sus caras, aunque el piso sea más grande o más chico que el
+            // espacio entre ellos; donde los hay no se ponen vigas de borde nuevas
+            const double Holgura = 0.60;
+            var hulls = ElementosDeBorde(piso, zInf - c.H, zInf, Holgura)
+                .Select(pts => Casco(pts.Select(q => Loc((q.x, q.y))).ToList())).Where(h => h.Count >= 3).ToList();
+            List<(double a, double b)> CortaPoligono(List<(double s, double r)> pol, bool porS, double v)
+            {
+                // intervalos (en r si porS, en s si no) donde la recta s = v (o r = v) está dentro del polígono
+                var xs = new List<double>();
+                for (int k = 0; k < pol.Count; k++)
+                {
+                    var p = pol[k]; var q = pol[(k + 1) % pol.Count];
+                    double pv = porS ? p.s : p.r, qv = porS ? q.s : q.r, po = porS ? p.r : p.s, qo = porS ? q.r : q.s;
+                    if ((pv - v) * (qv - v) < 0) xs.Add(po + (qo - po) * (v - pv) / (qv - pv));
+                }
+                xs.Sort();
+                var res = new List<(double, double)>();
+                for (int k = 0; k + 1 < xs.Count; k += 2) res.Add((xs[k], xs[k + 1]));
+                return res;
+            }
+            List<(double r0, double r1)> Cortes(double sv)
+            {
+                // con vanos: pares sucesivos de cruces de todos los lazos
+                var xs = lazosL.SelectMany(l => CortaPoligono(l, true, sv).SelectMany(t => new[] { t.a, t.b })).OrderBy(x => x).ToList();
+                var tramos = new List<(double, double)>();
+                for (int k = 0; k + 1 < xs.Count; k += 2) tramos.Add((xs[k], xs[k + 1]));
+                return tramos;
+            }
+            bool Dentro(double sv, double rv) => Cortes(sv).Any(t => rv > t.r0 && rv < t.r1);
+            bool EnBorde(double sv, double rv) => hulls.Any(h => CortaPoligono(h, true, sv).Any(t => rv > t.a - 1e-6 && rv < t.b + 1e-6));
+
+            // tramo libre de una viga en la línea s: del piso (alargado hasta Holgura) menos los elementos de borde;
+            // cada extremo queda en la cara del elemento de borde o, si no hay, en el borde del piso (menos la viga de borde)
             double rec = c.Perimetrales ? B : 0;
+            List<(double r0, double r1)> Libres(double sv)
+            {
+                var res = new List<(double, double)>();
+                var ocup = hulls.SelectMany(h => CortaPoligono(h, true, sv)).OrderBy(t => t.a).ToList();
+                foreach (var (a, b) in Cortes(sv))
+                {
+                    double lo = a - Holgura, hi = b + Holgura;
+                    var libres = new List<(double x0, double x1, bool topeIni, bool topeFin)>();
+                    double x = lo; bool tope = false;
+                    foreach (var (o0, o1) in ocup)
+                    {
+                        if (o1 <= x) { if (o1 > lo) tope = true; continue; }
+                        if (o0 >= hi) break;
+                        if (o0 > x) libres.Add((x, o0, tope, true));
+                        x = Math.Max(x, o1); tope = true;
+                    }
+                    if (x < hi) libres.Add((x, hi, tope, false));
+                    foreach (var (x0, x1, t0, t1) in libres)
+                    {
+                        double r0 = t0 ? x0 : Math.Max(x0, a + rec), r1 = t1 ? x1 : Math.Min(x1, b - rec);
+                        if (Math.Min(r1, b) - Math.Max(r0, a) > 0.1 && r1 - r0 > 0.1) res.Add((r0, r1));
+                    }
+                }
+                return res;
+            }
+
+            // vigas de borde nuevas: solo donde el contorno del piso no tiene un elemento de borde que ya exista
+            int bordesExistentes = 0;
             if (c.Perimetrales)
                 foreach (var l in lazosL)
-                    for (int i = 0; i < l.Count; i++)
+                    for (int k = 0; k < l.Count; k++)
                     {
-                        var p = l[i]; var q = l[(i + 1) % l.Count];
+                        var p = l[k]; var q = l[(k + 1) % l.Count];
                         double len = Math.Sqrt(Math.Pow(q.s - p.s, 2) + Math.Pow(q.r - p.r, 2));
                         if (len < 0.05) continue;
                         (double s, double r) t = ((q.s - p.s) / len, (q.r - p.r) / len), nrm = (-t.r, t.s);
                         var mid = ((p.s + q.s) / 2, (p.r + q.r) / 2);
                         double lado = Dentro(mid.Item1 + nrm.s * B, mid.Item2 + nrm.r * B) ? 1 : -1;
-                        // las paralelas a las vigas se acortan en B en cada extremo (las otras corren de punta a punta)
+                        // ¿hay un elemento de borde a lo largo de esta arista (a menos de Holgura, hacia afuera o adentro)?
+                        int cubiertos = 0;
+                        for (int m = 1; m <= 5; m++)
+                        {
+                            double f = m / 6.0;
+                            var pm = (s: p.s + (q.s - p.s) * f, r: p.r + (q.r - p.r) * f);
+                            if (Enumerable.Range(-6, 13).Any(z => EnBorde(pm.s + nrm.s * lado * z * 0.1, pm.r + nrm.r * lado * z * 0.1))) cubiertos++;
+                        }
+                        if (cubiertos >= 3) { bordesExistentes++; continue; }
                         double corte = Math.Abs(t.r) > Math.Cos(Math.PI / 18) ? B : 0;
                         var a = (s: p.s + nrm.s * lado * B / 2 + t.s * corte, r: p.r + nrm.r * lado * B / 2 + t.r * corte);
                         var b = (s: q.s + nrm.s * lado * B / 2 - t.s * corte, r: q.r + nrm.r * lado * B / 2 - t.r * corte);
                         Pieza(Glo(a.s, a.r), Glo(b.s, b.r), "viga_borde");
                     }
 
-            // vigas: a la separación pedida desde el borde
+            // ---- reparto de las vigas: cada «Separacion» entre ejes, desde la cara del elemento de borde que ya existe
+            // (o desde el eje de la viga de borde nueva); el último espacio, lo que quede ----
             double sMin = lazosL.SelectMany(l => l).Min(p => p.s), sMax = lazosL.SelectMany(l => l).Max(p => p.s);
-            var lineas = new List<(double s, List<(double r0, double r1)> tramos)>();
-            // ejes cada «Separacion» desde el eje de la viga de borde (o de la primera viga); el último espacio, lo que quede
-            void Viga(double s)
+            double rMid = (lazosL.SelectMany(l => l).Min(p => p.r) + lazosL.SelectMany(l => l).Max(p => p.r)) / 2;
+            var enS = hulls.SelectMany(h => CortaPoligono(h, false, rMid)).ToList();
+            var caraIni = enS.Where(o => o.b > sMin - Holgura && o.b < sMin + Holgura).Select(o => (double?)o.b).Max();
+            var caraFin = enS.Where(o => o.a > sMax - Holgura && o.a < sMax + Holgura).Select(o => (double?)o.a).Min();
+            // líneas: (s, media pieza a cada lado, tramos)
+            var lineas = new List<(double s, double medio, List<(double r0, double r1)> tramos)>();
+            void Viga(double sv)
             {
-                var tramos = Cortes(s).Select(t => (t.r0 + rec, t.r1 - rec)).Where(t => t.Item2 - t.Item1 > 0.1).ToList();
-                foreach (var (r0, r1) in tramos) Pieza(Glo(s, r0), Glo(s, r1), "viga");
-                lineas.Add((s, tramos));
+                var tramos = Libres(sv);
+                foreach (var (r0, r1) in tramos) Pieza(Glo(sv, r0), Glo(sv, r1), "viga");
+                lineas.Add((sv, B / 2, tramos));
             }
-            double sIni = sMin + B / 2, sFin = sMax - B / 2;
-            if (c.Perimetrales) lineas.Add((sIni, Cortes(sIni + 0.001)));
-            else Viga(sIni + 0.001);
-            for (double s = sIni + c.Separacion; s < sFin - B - 0.01; s += c.Separacion) Viga(s);
-            if (c.Perimetrales) lineas.Add((sFin, Cortes(sFin - 0.001)));
+            double sIni, sFin;
+            if (caraIni.HasValue) { sIni = caraIni.Value; lineas.Add((sIni, 0, Libres(sIni + 0.01))); }
+            else { sIni = sMin + B / 2; if (c.Perimetrales) lineas.Add((sIni, B / 2, Libres(sIni + 0.001))); else Viga(sIni + 0.001); }
+            sFin = caraFin ?? sMax - B / 2;
+            double margenFin = caraFin.HasValue ? B / 2 : B;
+            for (double sv = sIni + c.Separacion; sv < sFin - margenFin - 0.01; sv += c.Separacion) Viga(sv);
+            if (caraFin.HasValue) lineas.Add((sFin, 0, Libres(sFin - 0.01)));
+            else if (c.Perimetrales) lineas.Add((sFin, B / 2, Libres(sFin - 0.001)));
             else Viga(sFin - 0.001);
+            if (hulls.Count > 0)
+                _inf.Advertencia($"Piso {piso.Id}: el entramado se apoya en {hulls.Count} elemento(s) que ya existen" +
+                                 (bordesExistentes > 0 ? $"; {bordesExistentes} borde(s) del piso ya tienen su elemento (sin viga de borde nueva)" : ""));
 
             // cadenetas: líneas a lo largo de la luz, entre vigas vecinas
             int nCad = 0;
             if (c.Cadenetas > 0)
                 for (int i = 0; i + 1 < lineas.Count; i++)
                 {
-                    var (s0, t0) = lineas[i]; var (s1, t1) = lineas[i + 1];
+                    var (s0, m0, t0) = lineas[i]; var (s1, m1, t1) = lineas[i + 1];
                     foreach (var (a0, a1) in t0)
                         foreach (var (b0, b1) in t1)
                         {
                             double r0 = Math.Max(a0, b0), r1 = Math.Min(a1, b1);
-                            // líneas cada «Cadenetas» desde el inicio de la luz; el último espacio queda con lo que sobre
-                            // desde el eje de la viga de borde (o desde el extremo de la viga)
-                            double rIni = r0 - (c.Perimetrales ? B / 2 : 0), rFin = r1 + (c.Perimetrales ? B / 2 : 0);
-                            for (double r = rIni + c.Cadenetas; r < rFin - B - 0.01; r += c.Cadenetas)
+                            // líneas cada «Cadenetas» desde la cara de apoyo (elemento de borde o viga de borde); el último
+                            // espacio queda con lo que sobre
+                            for (double r = r0 + c.Cadenetas; r < r1 - B / 2 - 0.01; r += c.Cadenetas)
                             {
-                                Pieza(Glo(s0 + B / 2, r), Glo(s1 - B / 2, r), "cadeneta");
+                                Pieza(Glo(s0 + m0, r), Glo(s1 - m1, r), "cadeneta");
                                 nCad++;
                             }
                         }
@@ -226,6 +289,44 @@ namespace Cad2Revit
             _inf.Advertencia($"Piso {piso.Id}: {piezas.Count(p => p.Rol == "viga")} vigas {c.Escuadria} ({c.B * 1000:0}x{c.H * 1000:0}) " +
                              $"a {c.Separacion * 100:0} cm, {piezas.Count(p => p.Rol == "viga_borde")} vigas de borde y {nCad} cadenetas; " +
                              $"cara superior a {zInf - Mt(nivel.Elevation):+0.000;-0.000} m del nivel {nivel.Name}");
+        }
+
+        /// <summary>Puntos (m) de los elementos que ya existen (vigas, muros, pilares) que cruzan la capa del entramado
+        /// bajo el piso o están a menos de «holgura» de su contorno. No cuenta el propio entramado de madera.</summary>
+        private List<List<(double x, double y)>> ElementosDeBorde(Floor piso, double z0, double z1, double holgura)
+        {
+            var res = new List<List<(double x, double y)>>();
+            var bb = piso.get_BoundingBox(null);
+            if (bb == null) return res;
+            double h = U.M(holgura);
+            var caja = new Outline(new XYZ(bb.Min.X - h, bb.Min.Y - h, U.M(z0) + U.M(0.005)), new XYZ(bb.Max.X + h, bb.Max.Y + h, U.M(z1) - U.M(0.005)));
+            var cats = new ElementMulticategoryFilter(new List<BuiltInCategory>
+                { BuiltInCategory.OST_StructuralFraming, BuiltInCategory.OST_Walls, BuiltInCategory.OST_StructuralColumns });
+            foreach (var e in new FilteredElementCollector(_doc).WhereElementIsNotElementType().WherePasses(cats)
+                         .WherePasses(new BoundingBoxIntersectsFilter(caja)))
+            {
+                if (e.Id == piso.Id) continue;
+                var com = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                if (com.StartsWith("cad2revit-entramado") || com.StartsWith(Marca + "entramado")) continue;
+                var pts = PuntosGeometria(e).Where(q => Mt(q.Z) > z0 - 0.3 && Mt(q.Z) < z1 + 0.3).ToList();
+                if (pts.Count == 0) pts = PuntosGeometria(e);
+                if (pts.Count >= 3) res.Add(pts.Select(q => (Mt(q.X), Mt(q.Y))).ToList());
+            }
+            return res;
+        }
+
+        /// <summary>Casco convexo (monotone chain) de puntos 2D.</summary>
+        private static List<(double s, double r)> Casco(List<(double s, double r)> pts)
+        {
+            var p = pts.Distinct().OrderBy(a => a.s).ThenBy(a => a.r).ToList();
+            if (p.Count < 3) return p;
+            double X((double s, double r) o, (double s, double r) a, (double s, double r) b) => (a.s - o.s) * (b.r - o.r) - (a.r - o.r) * (b.s - o.s);
+            var h = new List<(double s, double r)>();
+            foreach (var q in p) { while (h.Count >= 2 && X(h[^2], h[^1], q) <= 1e-12) h.RemoveAt(h.Count - 1); h.Add(q); }
+            int inf = h.Count + 1;
+            for (int i = p.Count - 2; i >= 0; i--) { var q = p[i]; while (h.Count >= inf && X(h[^2], h[^1], q) <= 1e-12) h.RemoveAt(h.Count - 1); h.Add(q); }
+            h.RemoveAt(h.Count - 1);
+            return h;
         }
     }
 }
