@@ -173,6 +173,8 @@ namespace Cad2Revit
 
             // vigas de borde nuevas: solo donde el contorno del piso no tiene un elemento de borde que ya exista
             int bordesExistentes = 0;
+            int ladosContorno = 0;
+            var ladosSinViga = new List<string>();
             if (c.Perimetrales)
                 foreach (var l in lazosL)
                     for (int k = 0; k < l.Count; k++)
@@ -193,13 +195,13 @@ namespace Cad2Revit
                         }
                         if (cubiertos >= 3) { bordesExistentes++; continue; }
                         bool paralelaAVigas = Math.Abs(t.r) > Math.Cos(Math.PI / 18);
-                        if (paralelaAVigas && (Math.Abs(p.s - lazosL.SelectMany(x => x).Min(z => z.s)) < 0.02 ||
-                                               Math.Abs(p.s - lazosL.SelectMany(x => x).Max(z => z.s)) < 0.02))
-                            continue;                                      // los lados extremos: con el reparto (abajo)
-                        double corte = paralelaAVigas ? B : 0;
+                        double corte = paralelaAVigas ? B : 0;            // entre las vigas de borde de los otros lados
                         var a = (s: p.s + nrm.s * lado * B / 2 + t.s * corte, r: p.r + nrm.r * lado * B / 2 + t.r * corte);
                         var b = (s: q.s + nrm.s * lado * B / 2 - t.s * corte, r: q.r + nrm.r * lado * B / 2 - t.r * corte);
+                        int antes = piezas.Count;
                         Pieza(Glo(a.s, a.r), Glo(b.s, b.r), "viga_borde");
+                        ladosContorno++;
+                        if (piezas.Count == antes) ladosSinViga.Add($"lado de {len:0.00} m (muy corto)");
                     }
 
             // ---- reparto de las vigas: cada «Separacion» entre ejes, desde la cara del elemento de borde que ya existe
@@ -219,12 +221,7 @@ namespace Cad2Revit
             }
             double sIni = 0, sFin;
             if (caraIni.HasValue) { sIni = caraIni.Value; lineas.Add((sIni, 0, Libres(sIni + 0.01))); }
-            void BordeExtremo(double sv, double sCorte)
-            {
-                var tramos = Libres(sCorte);
-                foreach (var (r0, r1) in tramos) Pieza(Glo(sv, r0), Glo(sv, r1), "viga_borde");
-                lineas.Add((sv, B / 2, tramos));
-            }
+            void BordeExtremo(double sv, double sCorte) => lineas.Add((sv, B / 2, Libres(sCorte)));   // su viga de borde ya está (contorno)
             if (caraIni.HasValue) { }
             else { sIni = sMin + B / 2; if (c.Perimetrales) BordeExtremo(sIni, sIni + 0.001); else Viga(sIni + 0.001); }
             sFin = caraFin ?? sMax - B / 2;
@@ -296,6 +293,9 @@ namespace Cad2Revit
                 _inf.Advertencia($"Piso {piso.Id}: {malas} pieza(s) no quedaron con la altura de {c.H * 1000:0} mm en vertical; revisa la familia");
             else
                 _inf.Advertencia($"Piso {piso.Id}: comprobado, todas las piezas tienen su altura de {c.H * 1000:0} mm en vertical (eje fuerte)");
+            if (c.Perimetrales)
+                _inf.Advertencia($"Piso {piso.Id}: contorno de {ladosContorno} lado(s), {piezas.Count(p => p.Rol == "viga_borde")} viga(s) de borde" +
+                                 (ladosSinViga.Count > 0 ? "; sin viga: " + string.Join(", ", ladosSinViga) : ""));
             if (bordesAjustados > 0)
                 _inf.Advertencia($"Piso {piso.Id}: {bordesAjustados} borde(s) se ajustaron a la cara de vigas o muros que ya existen");
             _inf.Contar("Pisos con entramado", 1);
