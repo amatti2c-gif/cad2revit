@@ -80,7 +80,8 @@ namespace Cad2Revit
                         if (pts.Count == 0) throw new Exception("el pilar no tiene geometría");
                         double zPie = pts.Min(q => q.Z);
                         var base0 = pts.Where(q => q.Z < zPie + U.M(0.30)).ToList();
-                        double X(XYZ q) => (q - lp.Point).DotProduct(ex), Y(XYZ q) => (q - lp.Point).DotProduct(ey);
+                        double X(XYZ q) => (q - lp.Point).DotProduct(ex);
+                        double Y(XYZ q) => (q - lp.Point).DotProduct(ey);
                         double x0 = base0.Min(X), x1 = base0.Max(X), y0 = base0.Min(Y), y1 = base0.Max(Y);
                         var centro = new XYZ(lp.Point.X, lp.Point.Y, zPie) + ex * ((x0 + x1) / 2) + ey * ((y0 + y1) / 2);
 
