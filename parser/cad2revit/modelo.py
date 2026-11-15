@@ -348,6 +348,34 @@ def _al_vidrio(c, u, ancho, espesor, segmentos):
     return ([mejor[1][0], mejor[1][1]], mejor[2]) if mejor else None
 
 
+def _centrar_en_vanos_de_ejes(modelo: dict, adv: list) -> None:
+    """Una puerta o ventana que casi llena el espacio entre dos ejes perpendiculares a su muro (diferencia de 10 cm o
+    menos) queda centrada exactamente entre ellos (p. ej. la puerta doble de 1,80 entre los ejes 3 y 4)."""
+    ejes = modelo.get("ejes") or []
+    xs = sorted((e["inicio"][0] + e["fin"][0]) / 2 for e in ejes if abs(e["inicio"][0] - e["fin"][0]) < 1e-6)
+    ys = sorted((e["inicio"][1] + e["fin"][1]) / 2 for e in ejes if abs(e["inicio"][1] - e["fin"][1]) < 1e-6)
+    muros = {w["id"]: w for w in modelo["muros"]}
+    centradas = []
+    for a in modelo["aberturas"]:
+        w = muros.get(a["muro"])
+        if not w:
+            continue
+        horizontal = abs(w["fin"][0] - w["inicio"][0]) >= abs(w["fin"][1] - w["inicio"][1])
+        pos, k = (xs, 0) if horizontal else (ys, 1)
+        t = a["centro"][k]
+        izq = max((v for v in pos if v <= t + 1e-6), default=None)
+        der = min((v for v in pos if v >= t - 1e-6), default=None)
+        if izq is None or der is None or der - izq < 0.3:
+            continue
+        if -0.02 <= (der - izq) - a["ancho"] <= 0.10 and abs(t - (izq + der) / 2) > 1e-4:
+            c = list(a["centro"])
+            c[k] = round((izq + der) / 2, 4)
+            a["centro"] = c
+            centradas.append(a["id"])
+    if centradas:
+        adv.append("Centradas entre sus dos ejes (llenan ese espacio): " + ", ".join(centradas))
+
+
 def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set, avisar: bool) -> None:
     """Aplica muros_quitar y muros_editar del proyecto. hechos_* recuerdan qué ediciones ya calzaron con un muro;
     con avisar=True (última pasada) se advierte de las que no calzaron con ninguno."""
@@ -1133,6 +1161,7 @@ def construir_modelo(cfg: Configuracion) -> dict:
     _ediciones_muros(modelo, cfg, adv, hechos_q, hechos_e, avisar=True)
     _realojar(modelo, adv)
     _muros_a_ejes(modelo, adv)
+    _centrar_en_vanos_de_ejes(modelo, adv)
     _unir_para_vanos(modelo, adv)
 
     # Nivel buhardilla (opcional, apagado por defecto): sobre cada muro del último piso que queda bajo el techo

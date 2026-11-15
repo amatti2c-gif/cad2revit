@@ -42,6 +42,14 @@ namespace Cad2Revit
         public double Ancho { get; set; }
         public double Alto { get; set; }
         public double Antepecho { get; set; }
+        /// <summary>Posición a lo largo del muro medida desde los ejes perpendiculares vecinos (m, con signo).</summary>
+        public List<ReferenciaEje> Referencias { get; set; } = new();
+    }
+
+    public class ReferenciaEje
+    {
+        public string Eje { get; set; }
+        public double Desde { get; set; }
     }
 
     public partial class Constructor
@@ -149,6 +157,40 @@ namespace Cad2Revit
                     }
                 }
                 catch { /* sin registro */ }
+
+                // ejes de Revit por nombre: cada abertura se ubica desde los ejes del modelo de Revit (donde estén),
+                // no desde coordenadas absolutas
+                var ejesRevit = new FilteredElementCollector(_doc).OfClass(typeof(Grid)).Cast<Grid>()
+                    .Where(g => g.Curve is Line).GroupBy(g => g.Name).ToDictionary(x => x.Key, x => (Line)x.First().Curve);
+                int desdeEjes = 0;
+                var sinEjes = new List<string>();
+                foreach (var a in archivo.Aberturas)
+                {
+                    var u = new XYZ(a.DireccionMuro?[0] ?? 1, a.DireccionMuro?[1] ?? 0, 0);
+                    var refe = (a.Referencias ?? new List<ReferenciaEje>()).OrderBy(r => Math.Abs(r.Desde))
+                        .FirstOrDefault(r => r.Eje != null && ejesRevit.TryGetValue(r.Eje, out var lr) &&
+                                             Math.Abs(lr.Direction.X * u.X + lr.Direction.Y * u.Y) < 0.1);
+                    if (refe == null) { sinEjes.Add(a.Id); continue; }
+                    var lref = ejesRevit[refe.Eje];
+                    // recta del muro: el eje de Revit donde va la abertura, o la posición del archivo
+                    XYZ p0; XYZ dir = u;
+                    if (a.Eje != null && ejesRevit.TryGetValue(a.Eje, out var lhost) &&
+                        Math.Abs(lhost.Direction.X * u.Y - lhost.Direction.Y * u.X) < 0.1)
+                        p0 = new XYZ(lhost.GetEndPoint(0).X, lhost.GetEndPoint(0).Y, 0);
+                    else
+                        p0 = new XYZ(U.M(a.Centro[0] - U.OrigenX), U.M(a.Centro[1] - U.OrigenY), 0);
+                    // cruce de la recta del muro con el eje de referencia, y desde ahí la distancia del archivo
+                    var q0 = new XYZ(lref.GetEndPoint(0).X, lref.GetEndPoint(0).Y, 0); var k = lref.Direction;
+                    double den = dir.X * k.Y - dir.Y * k.X;
+                    if (Math.Abs(den) < 1e-9) { sinEjes.Add(a.Id); continue; }
+                    double s_ = ((q0.X - p0.X) * k.Y - (q0.Y - p0.Y) * k.X) / den;
+                    var c = new XYZ(p0.X + dir.X * s_, p0.Y + dir.Y * s_, 0) + dir * U.M(refe.Desde);
+                    a.Centro = new[] { Mt(c.X) + U.OrigenX, Mt(c.Y) + U.OrigenY };
+                    desdeEjes++;
+                }
+                _inf.Contar("Vanos ubicados desde los ejes de Revit", desdeEjes);
+                if (sinEjes.Count > 0)
+                    _inf.Advertencia("Sin sus ejes en Revit (se usó la posición del archivo): " + string.Join(", ", sinEjes));
 
                 var nuevoRegistro = new List<VanoRegistrado>();
                 var tocados = new HashSet<ElementId>();

@@ -1659,11 +1659,24 @@ def aberturas_ordenadas(m: dict, n: int | None = None) -> dict:
         if (u[0] < -1e-9) or (abs(u[0]) < 1e-9 and u[1] < 0):
             u = (-u[0], -u[1])                       # dirección de izquierda a derecha / de abajo hacia arriba
         eje = eje_de(w)
+        # posición desde los ejes perpendiculares vecinos (a cada lado): Revit la ubica desde sus propios ejes
+        horizontal_m = abs(u[0]) >= abs(u[1])
+        tc = a["centro"][0] if horizontal_m else a["centro"][1]
+        perp = []
+        for e in m.get("ejes") or []:
+            (ex1, ey1), (ex2, ey2) = e["inicio"], e["fin"]
+            vertical_e = abs(ex2 - ex1) < abs(ey2 - ey1)
+            if vertical_e == horizontal_m:
+                perp.append(((ex1 + ex2) / 2 if vertical_e else (ey1 + ey2) / 2, e["nombre"]))
+        antes = max((q for q in perp if q[0] <= tc + 1e-6), default=None)
+        despues = min((q for q in perp if q[0] >= tc - 1e-6), default=None)
+        refs = [{"eje": q[1], "desde": r3(tc - q[0])} for q in (antes, despues) if q]
         out.append({
             "id": a["id"], "categoria": a["categoria"], "nivel": w["nivel"], "cota_nivel": r3(cota.get(w["nivel"], 0.0)),
             "eje": eje, "muro": w["id"], "tipo_muro": w.get("tipo"), "direccion_muro": [round(u[0], 6), round(u[1], 6)],
             "centro": [r3(a["centro"][0]), r3(a["centro"][1])],
             "ancho": r3(a["ancho"]), "alto": r3(a["alto"]), "antepecho": r3(a["antepecho"]),
+            "referencias": refs,
         })
     out.sort(key=lambda a: (cota.get(a["nivel"], 0.0), orden_eje.get(a["eje"], 10 ** 6), a["eje"] or "",
                             a["centro"][0] * a["direccion_muro"][0] + a["centro"][1] * a["direccion_muro"][1]))
