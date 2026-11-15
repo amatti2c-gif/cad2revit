@@ -64,6 +64,13 @@ namespace Cad2Revit
                           "y doble tuerca sobre la placa. " +
                           "En los pilares seleccionados (o los eliges en la vista). Si ya tenía una, se reemplaza."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitArmaduras", "Armaduras\nsobrecimiento",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoArmaduras).FullName)
+            {
+                ToolTip = "Carga la foto o imagen de un croquis de armaduras de pedestal y fundación; la app lo lee " +
+                          "(barras y estribos), lo revisas y eliges el muro (pedestal) y su zapata corrida (fundación) " +
+                          "para crear las armaduras."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
