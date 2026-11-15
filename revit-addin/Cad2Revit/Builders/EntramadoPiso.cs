@@ -10,14 +10,14 @@ namespace Cad2Revit
     public class ConfEntramadoPiso
     {
         public double B = 0.05;                  // ancho de la pieza
-        public double H = 0.20;                  // altura de la pieza (2x8)
-        public string Escuadria = "2x8";
+        public double H = 0.075;                 // altura de la pieza (2x3)
+        public string Escuadria = "2x3";
         public double Separacion = 0.40;         // entre ejes de vigas
         public bool LuzCorta = true;             // las vigas salvan la luz corta del piso
         public double Cadenetas = 0.60;          // separación de las líneas de cadenetas (0 = sin); el último espacio, lo que sobre
         public bool Perimetrales = true;         // vigas de borde en todo el contorno
         public string Material = "Pino radiata";
-        public FamiliaTipoDef Familia = new() { Familia = "Dimension Lumber", Tipo = "2x8" };
+        public FamiliaTipoDef Familia = new() { Familia = "Dimension Lumber", Tipo = "2x3" };
     }
 
     public partial class Constructor

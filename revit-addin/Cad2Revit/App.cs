@@ -626,7 +626,7 @@ namespace Cad2Revit
             Etiqueta("Escuadría de las vigas");
             var esc = new System.Windows.Forms.ComboBox { Left = 310, Top = y, Width = 130, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
             esc.Items.AddRange(new object[] { "2x3 (50x75)", "2x6 (50x150)", "2x8 (50x200)", "2x10 (50x250)" });
-            esc.SelectedIndex = 2; f.Controls.Add(esc); y += 32;
+            esc.SelectedIndex = 0; f.Controls.Add(esc); y += 32;
             Etiqueta("Separación entre vigas (cm)");
             var sep = new System.Windows.Forms.TextBox { Left = 310, Top = y, Width = 130, Text = "40" }; f.Controls.Add(sep); y += 32;
             Etiqueta("Las vigas salvan la luz");
