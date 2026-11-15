@@ -239,11 +239,28 @@ def proponer(modelo: dict, cfg, niveles_con_planta: list[str], siguiente, cota, 
         ejes_de_cotas = {e["nombre"] for e in modelo.get("ejes") or [] if e.get("origen") == "cotas"}
         nuevos = []
         resistentes = {"X": 0, "Y": 0}
+        # en cada eje, el tramo que sigue a cada cruce (para saltar los ejes creados por las cotas)
+        sig = {(t["eje"], t["entre"][0]): t["entre"][1] for t in tramos}
+        ant = {(t["eje"], t["entre"][1]): t["entre"][0] for t in tramos}
+
+        def original(tr):
+            """Tramo que existía antes de que un eje de las cotas lo dividiera (p. ej. 1:F-G para 1:F-J y 1:J-G)."""
+            e, (n1, n2) = tr["eje"], tr["entre"]
+            while n1 in ejes_de_cotas and (e, n1) in ant:
+                n1 = ant[(e, n1)]
+            while n2 in ejes_de_cotas and (e, n2) in sig:
+                n2 = sig[(e, n2)]
+            return f"{e}:{n1}-{n2}"
+
         for tr in tramos:
             an = _analizar(tr, muros, abs_n)
             eleccion = elecciones.get(f"{tr['id']}@{nivel}") or elecciones.get(tr["id"]) or "auto"
-            if eleccion == "auto" and set(re.split(r"[:\-]", tr["id"])) & ejes_de_cotas:
+            if eleccion == "auto" and tr["eje"] in ejes_de_cotas:
                 eleccion = "ninguno"              # tramo de un eje creado por las cotas: sin estructura hasta que lo elijas
+            elif eleccion == "auto" and set(tr["entre"]) & ejes_de_cotas:
+                # tramo dividido por un eje de las cotas: conserva lo elegido para el tramo original
+                o = original(tr)
+                eleccion = elecciones.get(f"{o}@{nivel}") or elecciones.get(o) or "auto"
             final, tipo = separar(an["propuesta"] if eleccion == "auto" else eleccion)
             if final in ("muro", "tabique"):
                 tipo = _aplicar_muro(modelo, cfg, tr, an, nivel, sup, final, tipo, advertencias)
