@@ -202,7 +202,7 @@ namespace Cad2Revit
                 return perfil[^1].z;
             }
             double zTope = perfil.Count >= 2 ? perfil.Max(x => x.z) : zBase + alto;
-            var obs = ObstaculosEnMuro(w, a, ux, uy, largo, zBase, zTope);
+            var obs = ObstaculosEnMuro(w, a, ux, uy, largo, zBase, zTope, PerfilEn);
             vanos.AddRange(obs.Vanos);
             // tope del entramado: bajo las vigas que corren dentro del muro en su parte alta (horizontales o inclinadas)
             Func<double, double> topeEn = t =>
@@ -329,7 +329,8 @@ namespace Cad2Revit
             public List<string> Ignorados = new();
         }
 
-        private Obstaculos ObstaculosEnMuro(Wall w, double[] a, double ux, double uy, double largo, double zBase, double zTope)
+        private Obstaculos ObstaculosEnMuro(Wall w, double[] a, double ux, double uy, double largo, double zBase, double zTope,
+                                            Func<double, double> perfil = null)
         {
             var o = new Obstaculos();
             double esp = Mt(w.Width), alto = zTope - zBase;
@@ -374,6 +375,18 @@ namespace Cad2Revit
                     {
                         double Inf(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
                         bool horizontal = Math.Abs(Inf(t0) - Inf(t1)) < 0.05;
+                        // viga inclinada que sigue el borde superior del muro (el par de un marco bajo el techo del
+                        // frontón): el entramado termina bajo ella, con solera superior inclinada
+                        double Sup(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z1).Max();
+                        bool sigueTecho = !horizontal && perfil != null &&
+                                          new[] { t0, (t0 + t1) / 2, t1 }.All(tt => Math.Abs(perfil(tt) - Sup(tt)) < 0.5 ||
+                                                                             (Sup(tt) <= perfil(tt) + 0.05 && perfil(tt) - Sup(tt) < 0.5));
+                        if (sigueTecho)
+                        {
+                            o.Vigas.Add((t0, t1, Inf(t0), Inf(t1)));
+                            o.CaraSuperior.Add((Sup(t0), Sup(t1)));
+                            continue;
+                        }
                         if (!horizontal && z0 < zBase + 0.3 * alto)
                         {
                             o.Ignorados.Add(nombre + " (diagonal)");      // arriostramiento de altura completa
