@@ -69,7 +69,7 @@ namespace Cad2Revit
                         _doc.Regenerate();
                         Separar();
                         ColumnAttachment.AddColumnAttachment(_doc, p, v0, 1, ColumnAttachmentCutStyle.CutColumn,
-                                                             ColumnAttachmentJustification.Minimum, 0.0);
+                                                             ColumnAttachmentJustification.Maximum, 0.0);
                         _doc.Regenerate();
                         Separar();
                     }, false);
