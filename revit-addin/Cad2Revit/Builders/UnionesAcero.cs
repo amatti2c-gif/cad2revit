@@ -50,15 +50,16 @@ namespace Cad2Revit
                         if (dz < dm) { dm = dz; mejor = v; }
                     }
                     if (mejor == null) { sinViga.Add(p.Id.ToString()); continue; }
-                    try
-                    {
-                        if (ColumnAttachment.GetColumnAttachment(p, 1) is ColumnAttachment existente && existente.TargetId == mejor.Id)
-                        { yaEstaban++; continue; }
-                    }
-                    catch { /* sin enlace previo */ }
                     var v0 = mejor;
                     bool ok = Intentar($"pilar {p.Id} + viga {v0.Id}", () =>
                     {
+                        // un enlace anterior (también uno hecho a mano) se rehace con el ajuste correcto
+                        try
+                        {
+                            if (ColumnAttachment.GetColumnAttachment(p, 1) != null)
+                                ColumnAttachment.RemoveColumnAttachment(p, 1);
+                        }
+                        catch { /* sin enlace previo */ }
                         // Revit vuelve a unir pilar y viga al regenerar: separar, enlazar y volver a separar
                         void Separar()
                         {
