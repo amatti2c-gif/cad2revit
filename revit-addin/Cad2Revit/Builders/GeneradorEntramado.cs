@@ -8,7 +8,7 @@ namespace Cad2Revit
     public class ConfEntramado
     {
         public double B = 0.05;                 // cara vista de la pieza (a lo largo del muro), m
-        public double H = 0.076;                // espesor de la pieza (en el espesor del muro), m; 0 = el del núcleo del muro
+        public double H = 0.075;                // espesor de la pieza (en el espesor del muro), m; 0 = el del núcleo del muro
         public double SeparacionPies = 0.40;
         public double SeparacionHorizontales = 0.40;
         public bool Soleras = true;

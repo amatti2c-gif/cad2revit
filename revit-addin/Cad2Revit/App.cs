@@ -230,15 +230,15 @@ namespace Cad2Revit
                 MainContent = "Pies derechos, soleras, cadenetas, jambas, dinteles y alféizares, todos con la misma escuadría.",
                 CommonButtons = TaskDialogCommonButtons.Cancel,
             };
-            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "2x3", "50 x 76 mm (2\" x 3\")");
-            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "2x4", "50 x 102 mm (2\" x 4\")");
+            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "2x3", "50 x 75 mm");
+            dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "2x4", "50 x 100 mm");
             dEsc.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Según el núcleo de cada muro",
                                 "2\" de cara y el espesor de la capa estructural del muro");
             var conf = new ConfEntramado { H = 0 };
             switch (dEsc.Show())
             {
-                case TaskDialogResult.CommandLink1: conf.H = 0.0762; conf.B = 0.05; Escuadria(conf, "2x3"); break;
-                case TaskDialogResult.CommandLink2: conf.H = 0.1016; conf.B = 0.05; Escuadria(conf, "2x4"); break;
+                case TaskDialogResult.CommandLink1: conf.H = 0.075; conf.B = 0.05; Escuadria(conf, "2x3"); break;
+                case TaskDialogResult.CommandLink2: conf.H = 0.10; conf.B = 0.05; Escuadria(conf, "2x4"); break;
                 case TaskDialogResult.CommandLink3: break;
                 default: return Result.Cancelled;
             }
