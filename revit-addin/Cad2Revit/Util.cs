@@ -127,9 +127,37 @@ namespace Cad2Revit
                 }
                 // Solo se eliminan elementos "colgantes" (puertas, ventanas, columnas, vigas, zapatas,
                 // vanos); nunca muros, losas o niveles, que sostienen al resto del modelo.
-                var ids = f.GetFailingElementIds()
-                           .Where(id => fa.GetDocument().GetElement(id) is FamilyInstance || fa.GetDocument().GetElement(id) is Opening)
-                           .ToList();
+                // uniones de geometría que Revit no puede mantener: se separan los elementos (nunca se borran)
+                bool resuelta = false;
+                bool deUnion = texto.IndexOf("joined", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                               texto.IndexOf("unid", StringComparison.OrdinalIgnoreCase) >= 0;
+                foreach (var tipo in new[] { FailureResolutionType.DetachElements, FailureResolutionType.Default })
+                {
+                    if (!f.HasResolutionOfType(tipo) || (tipo == FailureResolutionType.Default && !deUnion)) continue;
+                    f.SetCurrentResolutionType(tipo);
+                    fa.ResolveFailure(f);
+                    _informe.Advertencia("Revit: " + texto.Trim() + " (se separaron los elementos; no se borró nada)");
+                    modificado = resuelta = true;
+                    break;
+                }
+                if (resuelta) continue;
+                // solo se borran elementos creados por cad2revit; los tuyos nunca (si no hay otra salida, se deshace)
+                var doc = fa.GetDocument();
+                bool Propio(ElementId id)
+                {
+                    var el = doc.GetElement(id);
+                    if (!(el is FamilyInstance || el is Opening)) return false;
+                    if (_origen.ContainsKey(id)) return true;
+                    var com = el.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                    return com.StartsWith("cad2revit");
+                }
+                var ajenos = f.GetFailingElementIds().Where(id => !Propio(id) && (doc.GetElement(id) is FamilyInstance || doc.GetElement(id) is Opening)).ToList();
+                var ids = f.GetFailingElementIds().Where(Propio).ToList();
+                if (ajenos.Count > 0)
+                {
+                    NoResueltas.Add(texto.Trim() + $" (elementos {string.Join(", ", ajenos)}; no se borran elementos que no creó cad2revit)");
+                    continue;
+                }
                 if (ids.Count > 0)
                 {
                     foreach (var id in ids)

@@ -59,14 +59,28 @@ namespace Cad2Revit
                     var v0 = mejor;
                     bool ok = Intentar($"pilar {p.Id} + viga {v0.Id}", () =>
                     {
-                        if (JoinGeometryUtils.AreElementsJoined(_doc, p, v0))
-                            JoinGeometryUtils.UnjoinGeometry(_doc, p, v0);
+                        // Revit vuelve a unir pilar y viga al regenerar: separar, enlazar y volver a separar
+                        void Separar()
+                        {
+                            if (JoinGeometryUtils.AreElementsJoined(_doc, p, v0))
+                                JoinGeometryUtils.UnjoinGeometry(_doc, p, v0);
+                        }
+                        Separar();
+                        _doc.Regenerate();
+                        Separar();
                         ColumnAttachment.AddColumnAttachment(_doc, p, v0, 1, ColumnAttachmentCutStyle.CutColumn,
                                                              ColumnAttachmentJustification.Minimum, 0.0);
+                        _doc.Regenerate();
+                        Separar();
                     }, false);
                     if (ok) unidos++; else fallidos.Add($"pilar {p.Id} con viga {v0.Id}: {_ultimoFallo}");
                 }
             });
+            // comprobar al final: Revit puede quitar el enlace al confirmar
+            var hechos = pilares.Where(p => { try { return ColumnAttachment.GetColumnAttachment(p, 1) != null; } catch { return false; } }).ToList();
+            if (hechos.Count - yaEstaban < unidos)
+                _inf.Advertencia($"Revit quitó {unidos - (hechos.Count - yaEstaban)} enlace(s) al confirmar; esos pilares quedaron sin unir");
+            unidos = Math.Max(0, Math.Min(unidos, hechos.Count - yaEstaban));
             _inf.Contar("Pilares unidos a su viga", unidos);
             if (yaEstaban > 0) _inf.Contar("Pilares que ya estaban unidos", yaEstaban);
             if (sinViga.Count > 0) _inf.Advertencia("Sin viga en su parte superior (no se tocaron): pilares " + string.Join(", ", sinViga.Take(30)));
