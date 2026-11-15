@@ -27,7 +27,7 @@ namespace Cad2Revit
         /// <summary>
         /// Entramado de piso bajo un piso (Floor) de Revit: vigas de borde en el contorno (y en los vanos), vigas a la
         /// separación pedida salvando la luz corta (o la larga) y líneas de cadenetas entre ellas. Las piezas quedan con su
-        /// cara superior en la cara inferior del piso. Si el piso ya tenía este entramado, se reemplaza.
+        /// cara superior en la cara superior del piso (al mismo nivel que él). Si el piso ya tenía este entramado, se reemplaza.
         /// </summary>
         public Informe EntramadoDePisos(IList<Floor> pisos, ConfEntramadoPiso c)
         {
@@ -79,7 +79,8 @@ namespace Cad2Revit
             }
             Buscar(piso.get_Geometry(new Options { ComputeReferences = false, DetailLevel = ViewDetailLevel.Fine }));
             if (cara == null) throw new Exception("no se encontró la cara inferior del piso");
-            double zInf = Mt(cara.Origin.Z);
+            // el entramado va al mismo nivel que el piso: su cara superior en la cara superior del piso
+            double zInf = Mt(piso.get_BoundingBox(null)?.Max.Z ?? cara.Origin.Z);
             var lazos = cara.GetEdgesAsCurveLoops()
                 .Select(l => l.SelectMany(cv => cv.Tessellate().Take(cv.Tessellate().Count - 1)).Select(q => (x: Mt(q.X), y: Mt(q.Y))).ToList())
                 .Where(l => l.Count >= 3).ToList();
@@ -101,7 +102,7 @@ namespace Cad2Revit
             var lazosL = lazos.Select(l => l.Select(Loc).ToList()).ToList();
 
 
-            double B = c.B, zc = zInf - c.H / 2;                  // eje de las piezas: cara superior en la cara inferior del piso
+            double B = c.B, zc = zInf - c.H / 2;                  // eje de las piezas: cara superior en la cara superior del piso
             var piezas = new List<PiezaDef>();
             void Pieza((double x, double y) a, (double x, double y) b, string rol)
             {
