@@ -489,8 +489,7 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
     for i, q in enumerate(cfg.proyecto.get("muros_quitar") or [], 1):
         # los muros dibujados en la app se borran de su propia lista, no con «quitar»
         hallados = {d["id"] for d in modelo["muros"] if calza(d, q) and d.get("capa_cad") != "dibujado en la app"}
-        if not hallados:
-            hallados = {d["id"] for d in contenidos(q)}
+        hallados |= {d["id"] for d in contenidos(q)}
         if not hallados:
             pieza = separar(q, True)
             if pieza:
