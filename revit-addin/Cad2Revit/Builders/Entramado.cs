@@ -75,7 +75,6 @@ namespace Cad2Revit
             if (mat != ElementId.InvalidElementId) U.Fijar(fi, BuiltInParameter.STRUCTURAL_MATERIAL_PARAM, mat);
             if (comentario != null) fi.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set(comentario);
             else Marcar(fi, $"entramado {muro} {p.Rol}");
-            return fi;
         }
 
         private FamilyInstance ColocarHorizontal(PiezaDef p, FamilySymbol s, Level nivel, ElementId mat, string muro,
