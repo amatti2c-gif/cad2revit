@@ -449,11 +449,18 @@ namespace Cad2Revit
                     bool paralela = horiz > 1e-6 && Math.Abs(dir.X / horiz * uy - dir.Y / horiz * ux) < 0.1;
                     if (paralela)
                     {
-                        double Inf(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
+                        // eje de la viga en (t, z) y su sección por encima/debajo del eje: caras inferior y superior en
+                        // cualquier t (las aristas rectas solo dan puntos en sus extremos)
+                        XYZ e0 = ln.GetEndPoint(0), e1 = ln.GetEndPoint(1);
+                        double te0 = (Mt(e0.X) - a[0]) * ux + (Mt(e0.Y) - a[1]) * uy, te1 = (Mt(e1.X) - a[0]) * ux + (Mt(e1.Y) - a[1]) * uy;
+                        double Eje(double tt) => Math.Abs(te1 - te0) < 1e-6 ? Mt(Math.Max(e0.Z, e1.Z))
+                                                 : Mt(e0.Z) + (Mt(e1.Z) - Mt(e0.Z)) * (tt - te0) / (te1 - te0);
+                        double bajo = loc.Min(x => x.z - Eje(x.t)), sobre = loc.Max(x => x.z - Eje(x.t));
+                        double Inf(double tt) => Eje(tt) + bajo;
                         bool horizontal = Math.Abs(Inf(t0) - Inf(t1)) < 0.05;
                         // viga inclinada que sigue el borde superior del muro (el par de un marco bajo el techo del
                         // frontón): el entramado termina bajo ella, con solera superior inclinada
-                        double Sup(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z1).Max();
+                        double Sup(double tt) => Eje(tt) + sobre;
                         bool sigueTecho = !horizontal && perfil != null &&
                                           new[] { t0, (t0 + t1) / 2, t1 }.All(tt => Math.Abs(perfil(tt) - Sup(tt)) < 0.5 ||
                                                                              (Sup(tt) <= perfil(tt) + 0.05 && perfil(tt) - Sup(tt) < 0.5));
@@ -476,8 +483,8 @@ namespace Cad2Revit
                         if (horizontal || z0 >= zBase + 0.5 * alto)
                         {
                             // cara inferior en cada extremo del tramo que ocupa en el muro
-                            double Inferior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
-                            double Superior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z1).Max();
+                            double Inferior(double tt) => Inf(tt);
+                            double Superior(double tt) => Sup(tt);
                             o.Vigas.Add((t0, t1, Inferior(t0), Inferior(t1)));
                             o.CaraSuperior.Add((Superior(t0), Superior(t1)));
                             continue;
