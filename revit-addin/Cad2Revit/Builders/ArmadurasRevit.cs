@@ -149,7 +149,7 @@ namespace Cad2Revit
                         var tipo = TipoBarra(d);
                         var curva = new List<Curve> { Line.CreateBound(P(tIni, nn, z), P(tFin, nn, z)) };
                         var r = Rebar.CreateFromCurves(_doc, RebarStyle.Standard, tipo, null, null, host, n, curva,
-                                                       RebarHookOrientation.Left, RebarHookOrientation.Left, true, true);
+                                                       RebarTerminationOrientation.Left, RebarTerminationOrientation.Left, true, true);
                         r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} {rol}");
                     })) nLargas++;
                 }
@@ -168,12 +168,12 @@ namespace Cad2Revit
                             try
                             {
                                 r = Rebar.CreateFromCurves(_doc, RebarStyle.StirrupTie, tipo, ganchoEstribo, ganchoEstribo, host, u,
-                                                           curvas, RebarHookOrientation.Right, RebarHookOrientation.Right, true, true);
+                                                           curvas, RebarTerminationOrientation.Right, RebarTerminationOrientation.Right, true, true);
                             }
                             catch { r = null; }                       // sin ganchos de 135° si no calzan
                         }
                         r ??= Rebar.CreateFromCurves(_doc, RebarStyle.StirrupTie, tipo, null, null, host, u, curvas,
-                                                     RebarHookOrientation.Right, RebarHookOrientation.Right, true, true);
+                                                     RebarTerminationOrientation.Right, RebarTerminationOrientation.Right, true, true);
                         r.GetShapeDrivenAccessor().SetLayoutAsMaximumSpacing(s, tFin - tIni, true, true, true);
                         r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} {rol}");
                     })) nEstribos++;
