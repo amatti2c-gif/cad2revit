@@ -140,7 +140,21 @@ namespace Cad2Revit
 
             // vanos: puertas, ventanas y aberturas alojadas en el muro
             var vanos = new List<VanoMuro>();
-            foreach (var id in w.FindInserts(true, false, true, true))
+            // los vanos del propio muro y los de muros paralelos superpuestos con él (p. ej. el muro importado y tu
+            // muro de marco plataforma en el mismo lugar): el entramado no debe pasar por ninguno
+            var insertos = new HashSet<ElementId>(w.FindInserts(true, false, true, true));
+            foreach (var o in todos)
+            {
+                if (o.Id == w.Id || !(o.Location is LocationCurve olc2) || !(olc2.Curve is Line ol2)) continue;
+                if (Math.Abs(ol2.Direction.X * uy - ol2.Direction.Y * ux) > 0.02) continue;
+                double dPerp(XYZ q) => Math.Abs((Mt(q.X) - a[0]) * uy - (Mt(q.Y) - a[1]) * ux);
+                if (dPerp(ol2.GetEndPoint(0)) > (Mt(o.Width) + Mt(w.Width)) / 2) continue;
+                double ta = (Mt(ol2.GetEndPoint(0).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(0).Y) - a[1]) * uy;
+                double tb = (Mt(ol2.GetEndPoint(1).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(1).Y) - a[1]) * uy;
+                if (Math.Max(ta, tb) < 0 || Math.Min(ta, tb) > largo) continue;
+                foreach (var id2 in o.FindInserts(true, false, true, true)) insertos.Add(id2);
+            }
+            foreach (var id in insertos)
             {
                 var e = _doc.GetElement(id);
                 double t0, t1, z0, z1;
