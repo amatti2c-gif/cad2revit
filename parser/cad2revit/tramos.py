@@ -58,6 +58,10 @@ def tramos_de_ejes(ejes: list[dict]) -> list[dict]:
         for o in ejes:
             if o is g:
                 continue
+            # un eje creado por las cotas no divide los tramos de los demás ejes (sus elecciones y ediciones siguen
+            # valiendo); solo tiene sus propios tramos
+            if o.get("origen") == "cotas" and g.get("origen") != "cotas":
+                continue
             r = _interseccion(a, b, o["inicio"], o["fin"])
             if r is None:
                 continue
