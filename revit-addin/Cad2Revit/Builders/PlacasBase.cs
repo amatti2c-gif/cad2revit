@@ -101,6 +101,12 @@ namespace Cad2Revit
                         double zSup = mm(c.Sobresale), zInf = zSup - mm(c.LargoPerno);
                         double hTuerca = 0.8 * d, sTuerca = 1.5 * d, g = mm(c.EspesorGolilla), lg = mm(c.LadoGolilla);
                         double zTuerca = zInf + U.M(0.005);
+                        // golilla plana (ISO 7089: diámetro exterior ≈ 1,9 d, espesor ≈ 0,18 d, mín. 2 mm)
+                        double dGolilla = 1.875 * d, eGolilla = Math.Max(0.18 * d, U.M(0.002));
+                        double necesario = eGolilla + 2 * hTuerca + U.M(0.003);
+                        if (mm(c.Sobresale) < necesario)
+                            _inf.Advertencia($"Pilar {p.Id}: el perno sobresale {c.Sobresale:0} mm y la golilla con doble tuerca " +
+                                             $"necesita {Mt(necesario) * 1000:0} mm; aumenta «Perno sobre la cara superior de la placa»");
                         var anclajes = new List<GeometryObject>();
                         foreach (var (sx, sy) in new[] { (-1, -1), (1, -1), (1, 1), (-1, 1) })
                         {
@@ -108,6 +114,10 @@ namespace Cad2Revit
                             anclajes.Add(Cilindro(q, d / 2, zInf, zSup, opciones));
                             anclajes.Add(Hexagono(q, ex, sTuerca / 2, zTuerca, zTuerca + hTuerca, opciones));
                             anclajes.Add(Caja(q, ex, ey, lg, lg, zTuerca + hTuerca, zTuerca + hTuerca + g, opciones));
+                            // arriba, sobre la placa: golilla plana y doble tuerca (tuerca y contratuerca)
+                            anclajes.Add(Anillo(q, dGolilla / 2, d / 2 + U.M(0.001), 0, eGolilla, opciones));
+                            anclajes.Add(Hexagono(q, ex, sTuerca / 2, eGolilla, eGolilla + hTuerca, opciones));
+                            anclajes.Add(Hexagono(q, ex, sTuerca / 2, eGolilla + hTuerca, eGolilla + 2 * hTuerca, opciones));
                         }
 
                         string nombre = $"Placa base {Mt(ax) * 1000:0}x{Mt(ay) * 1000:0}x{c.Espesor:0}";
@@ -117,7 +127,7 @@ namespace Cad2Revit
                         dsP.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} placa");
                         var dsA = DirectShape.CreateElement(_doc, catPerno);
                         dsA.SetShape(anclajes);
-                        try { dsA.Name = $"4 pernos Ø{c.DiametroPerno:0} L={c.LargoPerno:0}, golilla {c.LadoGolilla:0}x{c.LadoGolilla:0}x{c.EspesorGolilla:0} y tuerca"; } catch { }
+                        try { dsA.Name = $"4 pernos Ø{c.DiametroPerno:0} L={c.LargoPerno:0}, golilla {c.LadoGolilla:0}x{c.LadoGolilla:0}x{c.EspesorGolilla:0} y tuerca abajo; golilla plana y doble tuerca arriba"; } catch { }
                         dsA.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.Set($"{marca} pernos");
                         hechas++;
                         _inf.Advertencia($"Pilar {p.Id}: {nombre} mm, pernos a {c.Borde:0} mm del borde, " +
@@ -147,6 +157,21 @@ namespace Cad2Revit
             loop.Append(Arc.Create(b, r, 0, Math.PI, XYZ.BasisX, XYZ.BasisY));
             loop.Append(Arc.Create(b, r, Math.PI, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
             return GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { loop }, XYZ.BasisZ, z1 - z0, o);
+        }
+
+        private static Solid Anillo(XYZ c, double rExt, double rInt, double z0, double z1, SolidOptions o)
+        {
+            var b = new XYZ(c.X, c.Y, c.Z + z0);
+            CurveLoop Circulo(double r)
+            {
+                var l = new CurveLoop();
+                l.Append(Arc.Create(b, r, 0, Math.PI, XYZ.BasisX, XYZ.BasisY));
+                l.Append(Arc.Create(b, r, Math.PI, 2 * Math.PI, XYZ.BasisX, XYZ.BasisY));
+                return l;
+            }
+            var interior = Circulo(rInt);
+            interior.Flip();
+            return GeometryCreationUtilities.CreateExtrusionGeometry(new List<CurveLoop> { Circulo(rExt), interior }, XYZ.BasisZ, z1 - z0, o);
         }
 
         private static Solid Hexagono(XYZ c, XYZ ex, double apotema, double z0, double z1, SolidOptions o)

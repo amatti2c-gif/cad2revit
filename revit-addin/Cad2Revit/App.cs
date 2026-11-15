@@ -60,7 +60,8 @@ namespace Cad2Revit
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoPlacaBase).FullName)
             {
                 ToolTip = "Agrega bajo el pilar una placa base rectangular con 4 pernos de anclaje preinstalados, para embeber " +
-                          "en el hormigón: golilla cuadrada de 5 mm y tuerca por abajo en el extremo de cada perno. " +
+                          "en el hormigón: golilla cuadrada de 5 mm y tuerca por abajo en el extremo de cada perno, y golilla plana " +
+                          "y doble tuerca sobre la placa. " +
                           "En los pilares seleccionados (o los eliges en la vista). Si ya tenía una, se reemplaza."
             });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
