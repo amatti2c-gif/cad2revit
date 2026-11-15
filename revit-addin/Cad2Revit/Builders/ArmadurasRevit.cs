@@ -81,35 +81,61 @@ namespace Cad2Revit
             XYZ P(double t, double nn, double z) => o + u * t + n * nn + XYZ.BasisZ * z;
 
             // ---- posiciones (n, z) de las barras longitudinales ----
+            // Cada barra queda POR DENTRO del estribo que la abraza: en los tramos rectos, tocando la cara interior del
+            // estribo; en las esquinas, dentro de la vuelta (tocando el doblez, cuyo radio interior es la mitad del
+            // diámetro de doblado del estribo).
+            double RadioInterior(double dE)
+            {
+                var t = BuscarTipoBarra(dE);
+                return (t != null && t.StirrupTieBendDiameter > 0 ? t.StirrupTieBendDiameter : 4 * dE) / 2;
+            }
+            double Esquina(double dL, double rIn) => rIn > dL / 2 ? rIn - (rIn - dL / 2) / Math.Sqrt(2) : dL / 2;
+            double rEp = RadioInterior(dEp), rEf = RadioInterior(dEf);
+            // caras interiores de los estribos
+            double pI0 = ped.n0 + cp + dEp, pI1 = ped.n1 - cp - dEp, pZ1 = zp - cp - dEp;
+            double pZ0 = a.Pedestal.EstriboHastaFondoFundacion ? zb + cf + dEf + dEp : zt - cf - dEf;
+            double fI0 = fun.n0 + cf + dEf, fI1 = fun.n1 - cf - dEf, fZ0 = zb + cf + dEf, fZ1 = zt - cf - dEf;
+
             var largas = new List<(double nn, double z, double d, string rol)>();
-            double npI = ped.n0 + cp + dEp + dLp / 2, npD = ped.n1 - cp - dEp - dLp / 2;
-            double zFunSup = zt - cf - dEf - dLf / 2, zFunInf = zb + cf + dEf + dLf / 2;
-            double zPedSup = zp - cp - dEp - dLp / 2;
+            double eP = Esquina(dLp, rEp);
+            double zPedSup = pZ1 - eP, zFunSup = fZ1 - dLf / 2;
             int k = Math.Max(1, a.Pedestal.BarrasPorCara);
             for (int i = 0; i < k; i++)
             {
                 double z = zPedSup - i * (zPedSup - zFunSup) / k;      // parejas hasta la capa superior de la fundación
-                largas.Add((npI, z, dLp, "pedestal"));
-                largas.Add((npD, z, dLp, "pedestal"));
+                double off = i == 0 ? eP : dLp / 2;                     // la de arriba, en la vuelta del estribo
+                largas.Add((pI0 + off, z, dLp, "pedestal"));
+                largas.Add((pI1 - off, z, dLp, "pedestal"));
             }
-            double nfI = fun.n0 + cf + dEf + dLf / 2, nfD = fun.n1 - cf - dEf - dLf / 2;
-            List<double> Capa(int m)
+            double eF = Esquina(dLf, rEf), ePf = Esquina(dLf, rEp);
+            bool bajoPedestal = pI0 > fI0 + 2 * dLf && pI1 < fI1 - 2 * dLf;
+            List<(double nn, double z)> Capa(int m, bool superior)
             {
-                var xs = new List<double>();
+                double zRecta = superior ? fZ1 - dLf / 2 : fZ0 + dLf / 2;
+                double zEsq = superior ? fZ1 - eF : fZ0 + eF;
+                var xs = new List<(double nn, double z)>();
                 if (m <= 0) return xs;
-                if (m == 1) return new List<double> { (nfI + nfD) / 2 };
-                xs.Add(nfI); xs.Add(nfD);
-                if (m >= 4 && npI > nfI + dLf && npD < nfD - dLf) { xs.Add(npI); xs.Add(npD); }  // bajo las caras del pedestal
+                if (m == 1) return new List<(double, double)> { ((fI0 + fI1) / 2, zRecta) };
+                xs.Add((fI0 + eF, zEsq)); xs.Add((fI1 - eF, zEsq));                    // esquinas del estribo de la fundación
+                if (m >= 4 && bajoPedestal)
+                {
+                    if (superior)                                                        // dentro de las ramas del estribo del pedestal
+                    { xs.Add((pI0 + dLf / 2, zRecta)); xs.Add((pI1 - dLf / 2, zRecta)); }
+                    else if (a.Pedestal.EstriboHastaFondoFundacion)                     // en las vueltas inferiores del estribo del pedestal
+                    { xs.Add((pI0 + ePf, pZ0 + ePf)); xs.Add((pI1 - ePf, pZ0 + ePf)); }
+                    else
+                    { xs.Add((pI0 + dLf / 2, zRecta)); xs.Add((pI1 - dLf / 2, zRecta)); }
+                }
                 while (xs.Count < m)
                 {
-                    var orden = xs.OrderBy(x => x).ToList();
-                    int g = Enumerable.Range(0, orden.Count - 1).OrderByDescending(j => orden[j + 1] - orden[j]).First();
-                    xs.Add((orden[g] + orden[g + 1]) / 2);                 // en el hueco más grande
+                    var orden = xs.OrderBy(x => x.nn).ToList();
+                    int g = Enumerable.Range(0, orden.Count - 1).OrderByDescending(j2 => orden[j2 + 1].nn - orden[j2].nn).First();
+                    xs.Add(((orden[g].nn + orden[g + 1].nn) / 2, zRecta));                // en el hueco más grande
                 }
-                return xs.OrderBy(x => x).ToList();
+                return xs.OrderBy(x => x.nn).ToList();
             }
-            foreach (var x in Capa(a.Fundacion.BarrasSuperiores)) largas.Add((x, zFunSup, dLf, "fundación superior"));
-            foreach (var x in Capa(a.Fundacion.BarrasInferiores)) largas.Add((x, zFunInf, dLf, "fundación inferior"));
+            foreach (var (x, z) in Capa(a.Fundacion.BarrasSuperiores, true)) largas.Add((x, z, dLf, "fundación superior"));
+            foreach (var (x, z) in Capa(a.Fundacion.BarrasInferiores, false)) largas.Add((x, z, dLf, "fundación inferior"));
 
             // ---- estribos (rectángulos en el plano n-z) ----
             var estribos = new List<(double nA, double nB, double zA, double zB, double d, double s, string rol, Element host)>();
@@ -202,15 +228,20 @@ namespace Cad2Revit
             return Rebar.CreateFromCurves(_doc, estilo, tipo, host, normal, curvas, term, true, true);
         }
 
+        private RebarBarType BuscarTipoBarra(double d)
+        {
+            var tipos = new FilteredElementCollector(_doc).OfClass(typeof(RebarBarType)).Cast<RebarBarType>().ToList();
+            string nombre = $"φ{Mt(d) * 1000:0}";
+            return tipos.FirstOrDefault(x => Math.Abs(x.BarNominalDiameter - d) < U.M(0.0002))
+                   ?? tipos.FirstOrDefault(x => x.Name == nombre);
+        }
+
         /// <summary>Tipo de barra con ese diámetro (pies); si no hay, se crea «φ{mm}».</summary>
         private RebarBarType TipoBarra(double d)
         {
-            var tipos = new FilteredElementCollector(_doc).OfClass(typeof(RebarBarType)).Cast<RebarBarType>().ToList();
-            var t = tipos.FirstOrDefault(x => Math.Abs(x.BarNominalDiameter - d) < U.M(0.0002));
+            var t = BuscarTipoBarra(d);
             if (t != null) return t;
             string nombre = $"φ{Mt(d) * 1000:0}";
-            t = tipos.FirstOrDefault(x => x.Name == nombre);
-            if (t != null) return t;
             t = RebarBarType.Create(_doc);
             t.BarNominalDiameter = d;
             t.BarModelDiameter = d;
