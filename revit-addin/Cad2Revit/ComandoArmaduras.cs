@@ -41,25 +41,53 @@ namespace Cad2Revit
             var doc = uidoc?.Document;
             if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
 
-            // 1. imagen del croquis (o un armaduras.json ya revisado)
-            string ruta;
-            using (var dlg = new WF.OpenFileDialog
+            // 1. cómo se llenan las armaduras
+            var modo = new TaskDialog("cad2revit")
             {
-                Title = "Croquis de armaduras de pedestal y fundación",
-                Filter = "Imagen o lectura (*.jpg;*.jpeg;*.png;*.webp;*.json)|*.jpg;*.jpeg;*.png;*.webp;*.json",
-            })
+                MainInstruction = "Armaduras de pedestal y fundación",
+                MainContent = "Llena las barras y estribos del croquis en un formulario (prellenado con valores típicos: " +
+                              "2 φ12 por cara en el pedestal, 4 + 4 φ12 en la fundación, E φ8@20).",
+                CommonButtons = TaskDialogCommonButtons.Cancel,
+            };
+            modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Llenar a mano viendo el croquis",
+                                "Eliges la foto o imagen del croquis y la ves al lado del formulario");
+            modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Llenar a mano sin imagen");
+            modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Abrir una lectura guardada (.armaduras.json)",
+                                "La que se guardó junto a la imagen la vez anterior");
+            modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink4, "Leer el croquis con la app (IA, de pago)",
+                                "Requiere la clave de la API de Claude configurada en la app");
+            var eleccion = modo.Show();
+            if (eleccion != TaskDialogResult.CommandLink1 && eleccion != TaskDialogResult.CommandLink2 &&
+                eleccion != TaskDialogResult.CommandLink3 && eleccion != TaskDialogResult.CommandLink4)
+                return Result.Cancelled;
+
+            string ruta = null;
+            if (eleccion != TaskDialogResult.CommandLink2)
             {
+                bool json = eleccion == TaskDialogResult.CommandLink3;
+                using var dlg = new WF.OpenFileDialog
+                {
+                    Title = json ? "Lectura de armaduras guardada" : "Croquis de armaduras de pedestal y fundación",
+                    Filter = json ? "Lectura de armaduras (*.json)|*.json" : "Imagen (*.jpg;*.jpeg;*.png;*.webp;*.bmp)|*.jpg;*.jpeg;*.png;*.webp;*.bmp",
+                };
                 if (dlg.ShowDialog() != WF.DialogResult.OK) return Result.Cancelled;
                 ruta = dlg.FileName;
             }
 
-            // 2. lectura con la app
+            // 2. valores de partida
             LecturaArmaduras lectura;
             try
             {
-                lectura = ruta.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-                    ? JsonSerializer.Deserialize<LecturaArmaduras>(File.ReadAllText(ruta), Json)
-                    : LeerConApp(ruta);
+                if (eleccion == TaskDialogResult.CommandLink3)
+                    lectura = JsonSerializer.Deserialize<LecturaArmaduras>(File.ReadAllText(ruta), Json);
+                else if (eleccion == TaskDialogResult.CommandLink4)
+                    lectura = LeerConApp(ruta);
+                else
+                    lectura = new LecturaArmaduras
+                    {
+                        TotalBarrasLongitudinales = 0,
+                        Observaciones = "Valores típicos de partida: corrígelos según el croquis.",
+                    };
                 if (lectura == null) return Result.Cancelled;
             }
             catch (Exception ex)
@@ -70,8 +98,11 @@ namespace Cad2Revit
 
             // 3. revisión
             if (!Revisar(lectura, ruta)) return Result.Cancelled;
-            try { File.WriteAllText(Path.ChangeExtension(ruta, ".armaduras.json"), JsonSerializer.Serialize(lectura, Json)); }
-            catch { /* carpeta de solo lectura: no importa */ }
+            if (ruta != null && !ruta.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                try { File.WriteAllText(Path.ChangeExtension(ruta, ".armaduras.json"), JsonSerializer.Serialize(lectura, Json)); }
+                catch { /* carpeta de solo lectura: no importa */ }
+            }
 
             // 4. elementos
             Wall muro; Element fundacion;
@@ -176,11 +207,11 @@ namespace Cad2Revit
         {
             using var f = new WF.Form
             {
-                Text = "Armaduras leídas del croquis — revisa y corrige", Width = 1000, Height = 640,
+                Text = "Armaduras de pedestal y fundación — revisa y corrige", Width = 1000, Height = 640,
                 FormBorderStyle = WF.FormBorderStyle.FixedDialog, StartPosition = WF.FormStartPosition.CenterScreen,
                 MinimizeBox = false, MaximizeBox = false,
             };
-            if (!imagen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            if (imagen != null && !imagen.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {

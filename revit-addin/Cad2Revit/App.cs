@@ -67,9 +67,9 @@ namespace Cad2Revit
             panel.AddItem(new PushButtonData("Cad2RevitArmaduras", "Armaduras\nsobrecimiento",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoArmaduras).FullName)
             {
-                ToolTip = "Carga la foto o imagen de un croquis de armaduras de pedestal y fundación; la app lo lee " +
-                          "(barras y estribos), lo revisas y eliges el muro (pedestal) y su zapata corrida (fundación) " +
-                          "para crear las armaduras."
+                ToolTip = "Armaduras de pedestal y fundación: llenas las barras y estribos del croquis en un formulario " +
+                          "(con la imagen al lado) y eliges el muro (pedestal) y su zapata corrida (fundación) para " +
+                          "crearlas. Opcional: leer el croquis con la app (IA, de pago)."
             });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
