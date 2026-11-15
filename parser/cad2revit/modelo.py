@@ -423,12 +423,15 @@ def _realojar(modelo: dict, adv: list) -> None:
                 continue
             dx, dy = a["centro"][0] - x1, a["centro"][1] - y1
             t, d = dx * ux + dy * uy, abs(dx * uy - dy * ux)
-            if d > 0.45 or not (-0.05 <= t <= L + 0.05):
+            # una puerta puede quedar en el hueco junto al extremo del muro (se une o se alarga después)
+            holgura = a["ancho"] / 2 + 0.3 if a["categoria"] == "puerta" else 0.05
+            if d > 0.45 or not (-holgura <= t <= L + holgura):
                 continue
             holgura = min(t, L - t) - a["ancho"] / 2           # que el vano quepa en el muro
             nota = (otra_dir, holgura < -0.05, d)
             if mejor is None or nota < mejor[0]:
-                tc = min(max(t, 0.0), L)        # sin correrla: si no cabe, se une con el muro vecino (_unir_para_vanos)
+                # sin correrla: si no cabe, se une con el muro vecino o se alarga (_unir_para_vanos)
+                tc = t if a["categoria"] == "puerta" else min(max(t, 0.0), L)
                 mejor = (nota, w, (round(x1 + ux * tc, 4), round(y1 + uy * tc, 4)))
         if mejor:
             _, w, c = mejor

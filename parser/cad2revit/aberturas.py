@@ -87,9 +87,9 @@ def asignar_a_muros(items: list[tuple[Insercion, dict]], muros: list[Muro], cfg,
                     if abs(u[0] * dy / le - u[1] * dx / le) > 0.1:
                         continue
                     tol = m.espesor / 2 + 0.15
+                    th, te = proyectar(h, m.a, u), proyectar(e, m.a, u)
                     if dist_punto_recta(h, m.a, u) <= tol and dist_punto_recta(e, m.a, u) <= tol \
-                            and -1.3 <= proyectar(h, m.a, u) <= m.largo + 1.3 \
-                            and -1.3 <= proyectar(e, m.a, u) <= m.largo + 1.3 \
+                            and min(th, te) <= m.largo + 0.3 and max(th, te) >= -0.3 \
                             and (muro is None or dist_punto_recta(h, m.a, u) < dist_punto_recta(h, muro.a, muro.direccion)):
                         muro = m
         if muro is None and regla.get("jamba") and sin_muro is not None:
@@ -232,7 +232,31 @@ def puertas_de_arcos(arcos, radio_min: float = 0.5, radio_max: float = 1.3, text
         if cerca:
             regla["vano"] = min(cerca)[1]        # el hueco real (la hoja es un poco más angosta)
         out.append((ins, regla))
-    return out
+    # puertas dobles: dos hojas que se encuentran en la misma jamba central (bisagras opuestas en la misma línea)
+    dobles, usadas = [], set()
+    for i, (ia, ra) in enumerate(out):
+        if i in usadas or not ra.get("jamba"):
+            continue
+        for j in range(i + 1, len(out)):
+            ib, rb = out[j]
+            if j in usadas or not rb.get("jamba"):
+                continue
+            ha, ja = ia.esquinas[0], ia.esquinas[1]
+            hb, jb = ib.esquinas[0], ib.esquinas[1]
+            if math.dist(ja, jb) > 0.06:
+                continue
+            va, vb = (ha[0] - ja[0], ha[1] - ja[1]), (hb[0] - jb[0], hb[1] - jb[1])
+            la, lb = math.hypot(*va) or 1.0, math.hypot(*vb) or 1.0
+            if (va[0] * vb[0] + va[1] * vb[1]) / (la * lb) > -0.99:
+                continue                          # no son opuestas en la misma línea
+            ancho = math.dist(ha, hb)
+            ins = Insercion(nombre="puerta doble (arcos)", capa=ia.capa,
+                            punto=((ha[0] + hb[0]) / 2, (ha[1] + hb[1]) / 2), rotacion=0.0, extremos=None,
+                            esquinas=[ha, hb, ia.esquinas[2]])
+            dobles.append((ins, {"categoria": "puerta", "jamba": True, "vano": round(ancho, 3), "doble": True}))
+            usadas |= {i, j}
+            break
+    return [x for k, x in enumerate(out) if k not in usadas] + dobles
 
 
 def rotulos_ventana(textos) -> list[dict]:
