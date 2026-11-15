@@ -146,6 +146,17 @@ una versión sin sincronización, la primera vez hay que «Reconstruir» (una so
 El modelo se traslada para que la esquina del edificio quede cerca del origen de Revit (los planos suelen
 venir en coordenadas de terreno); el desplazamiento se guarda en el archivo y se reutiliza.
 
+### Otros botones de la pestaña cad2revit
+
+| Botón | Lee | Qué hace |
+|---|---|---|
+| **Construir modelo** | `modelo.json` o `ejes-niveles.json` | Modelo completo (con «Actualizar» o «Reconstruir»). Con `ejes-niveles.json` solo crea o ajusta niveles y ejes, sin tocar nada más. |
+| **Entramado en muros** | los muros de Revit | Entramado de madera de cad2revit (pies derechos y cadenetas cada 40 cm, soleras, jambas, dinteles y alféizares) en los muros seleccionados o en todos los de tipo «plataforma». Lee largo, altura, encuentros y vanos reales; volver a generarlo reemplaza el anterior. |
+| **Puertas y ventanas** | `aberturas.json` | Abre en tus muros de Revit el vano exacto (ancho, alto, antepecho) de cada puerta y ventana de la app. Al recargar sincroniza solo lo que creó el botón y rehace el entramado de los muros que lo tenían. |
+| **Guardar familias** | el proyecto abierto | Guarda sus familias estructurales para que cad2revit las cargue solo en otros proyectos. |
+
+Los tres archivos se descargan en la app, en **Resultado**, junto a cada corrida.
+
 ## 4. Aplicación web (trabajar e iterar desde el navegador)
 
 La app permite hacer todo el ciclo sin usar la terminal:
