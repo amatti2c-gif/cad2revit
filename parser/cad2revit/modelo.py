@@ -461,9 +461,12 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
         return None
 
     def contenidos(q):
-        """Tramos de muro del plano que caen enteros dentro de la edición (el plano los cortó en varios)."""
+        """Tramos de muro que caen enteros dentro de la edición (el plano los cortó en varios, o un eje nuevo de las
+        cotas dividió el tramo en dos)."""
         qa, qb = q.get("inicio"), q.get("fin")
-        if not qa or not qb or len(qa) != 2 or len(qb) != 2 or "-M" not in str(q.get("id") or ""):
+        qid = str(q.get("id") or "")
+        clase = "-M" if "-M" in qid else "-T" if "-T" in qid else None      # muros del plano o de tramos
+        if not qa or not qb or len(qa) != 2 or len(qb) != 2 or clase is None:
             return []
         L = math.dist(qa, qb)
         if L < 0.1:
@@ -471,7 +474,7 @@ def _ediciones_muros(modelo: dict, cfg, adv: list, hechos_q: set, hechos_e: set,
         u = ((qb[0] - qa[0]) / L, (qb[1] - qa[1]) / L)
         out = []
         for d in modelo["muros"]:
-            if d["nivel"] != q.get("nivel") or "-M" not in d["id"] or d.get("buhardilla"):
+            if d["nivel"] != q.get("nivel") or clase not in d["id"] or d.get("buhardilla"):
                 continue
             if any(abs((p[0] - qa[0]) * u[1] - (p[1] - qa[1]) * u[0]) > 0.05 for p in (d["inicio"], d["fin"])):
                 continue
