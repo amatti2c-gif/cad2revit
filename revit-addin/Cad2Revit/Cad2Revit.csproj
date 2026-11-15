@@ -12,6 +12,8 @@
     <TargetFramework Condition="'$(RevitVersion)' &gt;= '2025' And '$(RevitVersion)' &lt; '2027'">net8.0-windows</TargetFramework>
     <TargetFramework Condition="'$(RevitVersion)' &lt; '2025'">net48</TargetFramework>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- ventana para escribir la distancia en «Mover eje» -->
+    <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AssemblyName>Cad2Revit</AssemblyName>

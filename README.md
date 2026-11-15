@@ -153,6 +153,8 @@ venir en coordenadas de terreno); el desplazamiento se guarda en el archivo y se
 | **Construir modelo** | `modelo.json` o `ejes-niveles.json` | Modelo completo (con «Actualizar» o «Reconstruir»). Con `ejes-niveles.json` solo crea o ajusta niveles y ejes, sin tocar nada más. |
 | **Entramado en muros** | los muros de Revit | Entramado de madera de cad2revit (pies derechos y cadenetas cada 40 cm, soleras, jambas, dinteles y alféizares) en los muros seleccionados o en todos los de tipo «plataforma». Lee largo, altura, encuentros y vanos reales; volver a generarlo reemplaza el anterior. |
 | **Puertas y ventanas** | `aberturas.json` | Abre en tus muros de Revit el vano exacto (ancho, alto, antepecho) de cada puerta y ventana de la app. Al recargar sincroniza solo lo que creó el botón y rehace el entramado de los muros que lo tenían. |
+| **Mover eje** | un eje del modelo | Mueve el eje la distancia que escribas (positiva: a la derecha o hacia arriba) y con él los muros (con sus vanos), pilares y vigas que están sobre él; alarga o acorta los muros y vigas que llegan a él y rehace el entramado de los muros afectados. Antes muestra qué se va a mover. |
+| **Revisar ejes** | los ejes del modelo | Qué hay en cada eje (muros, vanos, pilares, vigas, entramados) y, si quieres, amarra los elementos a los ejes con restricciones de Revit para moverlos con la herramienta Mover. |
 | **Guardar familias** | el proyecto abierto | Guarda sus familias estructurales para que cad2revit las cargue solo en otros proyectos. |
 
 Los tres archivos se descargan en la app, en **Resultado**, junto a cada corrida.

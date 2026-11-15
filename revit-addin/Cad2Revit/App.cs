@@ -36,6 +36,19 @@ namespace Cad2Revit
                           "de cada puerta y ventana (ancho, alto y antepecho). Al volver a cargarlo sincroniza: ajusta lo que " +
                           "cambió y borra lo que ya no está, solo en lo que creó este botón. Rehace el entramado de los muros que lo tenían."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitMoverEje", "Mover\neje",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoMoverEje).FullName)
+            {
+                ToolTip = "Eliges un eje y la distancia: mueve el eje con los muros (y sus vanos), pilares y vigas que están sobre él, " +
+                          "alarga o acorta los muros y vigas que llegan a él y rehace el entramado de los muros afectados. " +
+                          "Antes muestra qué se va a mover."
+            });
+            panel.AddItem(new PushButtonData("Cad2RevitRevisarEjes", "Revisar\nejes",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoRevisarEjes).FullName)
+            {
+                ToolTip = "Muestra qué hay en cada eje (muros, vanos, pilares, vigas, entramados) y permite amarrar los elementos a " +
+                          "los ejes con restricciones de Revit, para moverlos con la herramienta Mover."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -271,6 +284,104 @@ namespace Cad2Revit
             {
                 MainInstruction = informe.Errores.Count == 0 && informe.Advertencias.Count == 0
                     ? "Vanos de puertas y ventanas listos" : "Vanos listos, con observaciones (ver detalle)",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Mueve un eje y todo lo que está sobre él o llega a él.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoMoverEje : IExternalCommand
+    {
+        private class SoloEjes : Autodesk.Revit.UI.Selection.ISelectionFilter
+        {
+            public bool AllowElement(Element e) => e is Grid;
+            public bool AllowReference(Reference r, XYZ p) => false;
+        }
+
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var eje = uidoc.Selection.GetElementIds().Select(doc.GetElement).OfType<Grid>().FirstOrDefault();
+            if (eje == null)
+            {
+                try { eje = doc.GetElement(uidoc.Selection.PickObject(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloEjes(), "Elige el eje a mover")) as Grid; }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (eje == null) return Result.Cancelled;
+            var constructor = new Constructor(doc, new Modelo { Unidades = "m" });
+            var c = constructor.ContenidoDe(eje);
+            var vertical = c.Linea != null && System.Math.Abs(c.Linea.Direction.Y) > System.Math.Abs(c.Linea.Direction.X);
+            var metros = PedirDistancia($"Mover el eje {eje.Name}",
+                Constructor.Resumen(c) + "\n\nDistancia en metros (" + (vertical ? "positiva hacia la derecha, negativa hacia la izquierda"
+                                                                                  : "positiva hacia arriba, negativa hacia abajo") + "):");
+            if (metros == null || System.Math.Abs(metros.Value) < 1e-6) return Result.Cancelled;
+            var informe = constructor.MoverEje(eje, metros.Value);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = informe.Errores.Count == 0 ? $"Eje {eje.Name} movido {metros.Value:+0.000;-0.000} m" : "Eje movido con observaciones",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+
+        private static double? PedirDistancia(string titulo, string texto)
+        {
+            using var f = new System.Windows.Forms.Form
+            {
+                Text = titulo, Width = 520, Height = 300, FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
+                StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
+            };
+            var lbl = new System.Windows.Forms.Label { Text = texto, Left = 12, Top = 12, Width = 480, Height = 150 };
+            var caja = new System.Windows.Forms.TextBox { Left = 12, Top = 170, Width = 160, Text = "0.00" };
+            var ok = new System.Windows.Forms.Button { Text = "Mover", Left = 300, Top = 210, Width = 90, DialogResult = System.Windows.Forms.DialogResult.OK };
+            var no = new System.Windows.Forms.Button { Text = "Cancelar", Left = 400, Top = 210, Width = 90, DialogResult = System.Windows.Forms.DialogResult.Cancel };
+            f.Controls.AddRange(new System.Windows.Forms.Control[] { lbl, caja, ok, no });
+            f.AcceptButton = ok; f.CancelButton = no;
+            while (f.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                if (double.TryParse(caja.Text.Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture, out var v))
+                    return v;
+                System.Windows.Forms.MessageBox.Show("Escribe un número en metros, por ejemplo 0.30 o -1,25");
+            }
+            return null;
+        }
+    }
+
+    /// <summary>Qué hay en cada eje y, si se quiere, amarrar los elementos a los ejes con restricciones de Revit.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoRevisarEjes : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var constructor = new Constructor(doc, new Modelo { Unidades = "m" });
+            var reporte = constructor.ReporteEjes();
+            var td = new TaskDialog("cad2revit")
+            {
+                MainInstruction = "Qué hay en cada eje",
+                MainContent = "Elementos sobre cada eje (a menos de 2 cm) y los que llegan a él. Abre el detalle para ver la lista.",
+                ExpandedContent = reporte,
+                CommonButtons = TaskDialogCommonButtons.Close,
+            };
+            td.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Amarrar los elementos a los ejes",
+                "Pilares: «se mueven con los ejes». Muros y vigas sobre un eje: candado de alineación (en esta vista de planta). " +
+                "Después, al mover un eje con la herramienta Mover de Revit, lo amarrado lo sigue.");
+            if (td.Show() != TaskDialogResult.CommandLink1) return Result.Succeeded;
+            var informe = constructor.VincularAEjes(uidoc.ActiveView);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = "Elementos amarrados a los ejes",
                 MainContent = informe.Resumen(),
                 ExpandedContent = informe.Detalle(),
             }.Show();
