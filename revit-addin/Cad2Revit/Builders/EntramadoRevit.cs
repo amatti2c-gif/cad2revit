@@ -163,7 +163,40 @@ namespace Cad2Revit
                 vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = z0, ZSup = z1, Puerta = puerta });
             }
 
-            var piezas = GeneradorEntramado.Generar(a, b, zBase, zBase + alto, r0, r1, vanos, conf);
+            // pilares y vigas existentes que atraviesan el muro: el entramado no se superpone con ellos y se apoya en ellos
+            var obs = ObstaculosEnMuro(w, a, ux, uy, largo, zBase, zBase + alto);
+            double zTope = zBase + alto;
+            vanos.AddRange(obs.Vanos);
+            // tope del entramado: bajo las vigas que corren dentro del muro en su parte alta (horizontales o inclinadas)
+            Func<double, double> topeEn = t =>
+            {
+                double z = zTope;
+                foreach (var (t0, t1, z0, z1) in obs.Vigas)
+                    if (t >= t0 - 1e-6 && t <= t1 + 1e-6)
+                        z = Math.Min(z, t1 - t0 < 1e-6 ? z0 : z0 + (z1 - z0) * (t - t0) / (t1 - t0));
+                return z;
+            };
+            // en los extremos de cada viga el tope cambia de golpe: quiebres a ambos lados (escalón, no rampa)
+            var quiebres = obs.Vigas.SelectMany(v => new[] { v.t0 - 0.001, v.t0, v.t1, v.t1 + 0.001 }).ToList();
+            // tramos entre pilares: cada uno se arma por separado y sus soleras y pies derechos extremos llegan a la cara
+            // del pilar (sin superponerse)
+            var tramos = new List<(double s0, double s1)>();
+            double inicio = r0;
+            foreach (var (c0, c1) in obs.Pilares.OrderBy(x => x.t0))
+            {
+                if (c1 <= inicio) continue;
+                if (c0 > inicio) tramos.Add((inicio, Math.Min(c0, largo - r1)));
+                inicio = Math.Max(inicio, c1);
+            }
+            if (inicio < largo - r1) tramos.Add((inicio, largo - r1));
+            var piezas = new List<PiezaDef>();
+            foreach (var (t0, t1) in tramos)
+                if (t1 - t0 > 2 * conf.B + 0.02)
+                    piezas.AddRange(GeneradorEntramado.Generar(a, b, zBase, zTope, t0, largo - t1, vanos, conf, topeEn, quiebres));
+            if (obs.Pilares.Count + obs.Vigas.Count + obs.Vanos.Count > 0)
+                _inf.Advertencia($"Muro {w.Id}: entramado ajustado a {obs.Pilares.Count} pilar(es), {obs.Vigas.Count} viga(s) en su parte alta " +
+                                 $"y {obs.Vanos.Count} elemento(s) que lo atraviesan" +
+                                 (obs.Ignorados.Count > 0 ? $"; no se consideraron: {string.Join(", ", obs.Ignorados)}" : ""));
             if (piezas.Count == 0) { _inf.Advertencia($"Muro {w.Id}: muy corto para entramado"); return; }
 
             // familias de madera con la sección pedida (las mismas del entramado de la app)
@@ -195,6 +228,101 @@ namespace Cad2Revit
             _inf.Contar("Muros con entramado", 1);
             _inf.Contar("Entramado: piezas verticales", nv);
             _inf.Contar("Entramado: piezas horizontales", nh);
+        }
+
+        /// <summary>Pilares y vigas (estructurales) que atraviesan un muro, en sus coordenadas: t a lo largo del eje y z.</summary>
+        private class Obstaculos
+        {
+            public List<(double t0, double t1)> Pilares = new();                    // de toda la altura: cortan el muro en tramos
+            public List<(double t0, double t1, double z0, double z1)> Vigas = new(); // en la parte alta: cara inferior en t0 y t1
+            public List<VanoMuro> Vanos = new();                                    // el resto: se rodea como un vano
+            public List<string> Ignorados = new();
+        }
+
+        private Obstaculos ObstaculosEnMuro(Wall w, double[] a, double ux, double uy, double largo, double zBase, double zTope)
+        {
+            var o = new Obstaculos();
+            double esp = Mt(w.Width), alto = zTope - zBase;
+            var caja = w.get_BoundingBox(null);
+            if (caja == null) return o;
+            var filtroCaja = new BoundingBoxIntersectsFilter(new Outline(caja.Min - new XYZ(0.1, 0.1, 0.1), caja.Max + new XYZ(0.1, 0.1, 0.1)));
+            var cats = new ElementMulticategoryFilter(new List<BuiltInCategory>
+                { BuiltInCategory.OST_StructuralColumns, BuiltInCategory.OST_StructuralFraming });
+            var candidatos = new FilteredElementCollector(_doc).WhereElementIsNotElementType().WherePasses(cats).WherePasses(filtroCaja)
+                .Where(e =>
+                {
+                    var c = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                    return !c.StartsWith(MarcaEntramadoRevit) && !c.StartsWith(Marca + "entramado");   // no el propio entramado
+                }).ToList();
+            foreach (var e in candidatos)
+            {
+                var pts = PuntosGeometria(e);
+                if (pts.Count == 0) continue;
+                var loc = pts.Select(q => (t: (Mt(q.X) - a[0]) * ux + (Mt(q.Y) - a[1]) * uy,
+                                          d: (Mt(q.X) - a[0]) * uy - (Mt(q.Y) - a[1]) * ux, z: Mt(q.Z))).ToList();
+                double t0 = loc.Min(x => x.t), t1 = loc.Max(x => x.t), d0 = loc.Min(x => x.d), d1 = loc.Max(x => x.d);
+                double z0 = loc.Min(x => x.z), z1 = loc.Max(x => x.z);
+                // ¿atraviesa el muro? (dentro de su espesor, de su largo y de su altura)
+                if (d1 < -esp / 2 + 0.005 || d0 > esp / 2 - 0.005 || t1 < 0.01 || t0 > largo - 0.01 || z1 < zBase + 0.01 || z0 > zTope - 0.01)
+                    continue;
+                t0 = Math.Max(0, t0); t1 = Math.Min(largo, t1);
+                string nombre = $"{e.Category?.Name} {e.Id}";
+                bool pilar = e.Category?.Id == new ElementId(BuiltInCategory.OST_StructuralColumns);
+                if (pilar)
+                {
+                    if (z0 <= zBase + 0.05 && z1 >= zTope - 0.05) o.Pilares.Add((t0, t1));
+                    else o.Vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = Math.Max(z0, zBase), ZSup = Math.Min(z1, zTope), Puerta = z0 <= zBase + 0.01 });
+                    continue;
+                }
+                // viga: ¿corre dentro del muro (paralela) o lo cruza?
+                if (e.Location is LocationCurve lc && lc.Curve is Line ln)
+                {
+                    var dir = ln.Direction;
+                    double horiz = Math.Sqrt(dir.X * dir.X + dir.Y * dir.Y);
+                    bool paralela = horiz > 1e-6 && Math.Abs(dir.X / horiz * uy - dir.Y / horiz * ux) < 0.1;
+                    if (paralela)
+                    {
+                        if (z0 < zBase + 0.3 * alto)
+                        {
+                            o.Ignorados.Add(nombre + " (diagonal)");      // arriostramiento de altura completa
+                            continue;
+                        }
+                        if (z0 >= zBase + 0.5 * alto)
+                        {
+                            // cara inferior en cada extremo del tramo que ocupa en el muro
+                            double Inferior(double tt) => loc.Where(x => Math.Abs(x.t - tt) < 0.05).Select(x => x.z).DefaultIfEmpty(z0).Min();
+                            o.Vigas.Add((t0, t1, Inferior(t0), Inferior(t1)));
+                            continue;
+                        }
+                    }
+                }
+                o.Vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = Math.Max(z0, zBase), ZSup = Math.Min(z1, zTope), Puerta = z0 <= zBase + 0.01 });
+            }
+            return o;
+        }
+
+        /// <summary>Puntos de la geometría (aristas de los sólidos) de un elemento, en coordenadas del modelo.</summary>
+        private static List<XYZ> PuntosGeometria(Element e)
+        {
+            var pts = new List<XYZ>();
+            void Recorrer(GeometryElement ge)
+            {
+                if (ge == null) return;
+                foreach (var g in ge)
+                {
+                    if (g is Solid sd && sd.Volume > 1e-9)
+                        foreach (Edge ed in sd.Edges) pts.AddRange(ed.Tessellate());
+                    else if (g is GeometryInstance gi) Recorrer(gi.GetInstanceGeometry());
+                }
+            }
+            try { Recorrer(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine, ComputeReferences = false })); }
+            catch { /* sin geometría */ }
+            if (pts.Count == 0 && e.get_BoundingBox(null) is BoundingBoxXYZ bb)
+            {
+                pts.Add(bb.Min); pts.Add(bb.Max);
+                pts.Add(new XYZ(bb.Min.X, bb.Max.Y, bb.Min.Z)); pts.Add(new XYZ(bb.Max.X, bb.Min.Y, bb.Max.Z));
+            }
+            return pts;
         }
     }
 }

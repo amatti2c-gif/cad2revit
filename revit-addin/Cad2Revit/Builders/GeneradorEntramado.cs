@@ -35,8 +35,11 @@ namespace Cad2Revit
 
         private struct Vertical { public double T, Z0, Z1; public string Rol; }
 
+        /// <param name="tope">altura superior del entramado en cada t (bajo una viga o un techo inclinado); null = zTope</param>
+        /// <param name="quiebres">t donde cambia la pendiente de <paramref name="tope"/> (para la solera superior)</param>
         public static List<PiezaDef> Generar(double[] a, double[] b, double zBase, double zTope, double recorte0,
-                                             double recorte1, List<VanoMuro> aberturas, ConfEntramado c)
+                                             double recorte1, List<VanoMuro> aberturas, ConfEntramado c,
+                                             Func<double, double> tope = null, IEnumerable<double> quiebres = null)
         {
             var piezas = new List<PiezaDef>();
             double largo = Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[1] - a[1], 2));
@@ -46,6 +49,11 @@ namespace Cad2Revit
             double s0 = recorte0, s1 = largo - recorte1;
             if (s1 - s0 < 2 * bb) return piezas;
             double sol = c.Soleras ? bb : 0;
+            double Tope(double t) => tope == null ? zTope : tope(Math.Min(Math.Max(t, s0), s1));
+            var qs = new List<double> { s0, s1 };
+            if (quiebres != null) qs.AddRange(quiebres.Where(t => t > s0 + 1e-6 && t < s1 - 1e-6));
+            qs = qs.Distinct().OrderBy(t => t).ToList();
+            double ZtEn(double t) => Tope(t) - sol;                  // cara inferior de la solera superior
 
             double[] P(double t, double z) => new[] { a[0] + ux * t, a[1] + uy * t, z };
             void Horizontal(double t0, double t1, double z, string rol)
@@ -59,11 +67,11 @@ namespace Cad2Revit
             {
                 double t0 = Math.Max(s0 + bb, v.T0), t1 = Math.Min(s1 - bb, v.T1);
                 if (t1 - t0 < 0.05) continue;
-                double zs = Math.Min(zTope - sol - bb, v.ZSup);
+                double zs = Math.Min(Math.Min(Tope(t0), Tope(t1)) - sol - bb, v.ZSup);
                 vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = v.ZInf, ZSup = zs, Puerta = v.Puerta || v.ZInf - zBase < 0.01 });
             }
 
-            double zb = zBase + sol, zt = zTope - sol;
+            double zb = zBase + sol, zt = qs.Max(ZtEn);
 
             if (c.Soleras)
             {
@@ -74,16 +82,20 @@ namespace Cad2Revit
                     t = v.T1;
                 }
                 Horizontal(t, s1, zBase + bb / 2, "solera_inferior");
-                Horizontal(s0, s1, zTope - bb / 2, "solera_superior");
+                // solera superior: un tramo por cada pendiente (horizontal bajo una viga o losa; inclinada bajo un techo)
+                for (int i = 0; i + 1 < qs.Count; i++)
+                    if (qs[i + 1] - qs[i] > 0.02)
+                        piezas.Add(new PiezaDef { Rol = "solera_superior", Inicio = P(qs[i], Tope(qs[i]) - bb / 2),
+                                                  Fin = P(qs[i + 1], Tope(qs[i + 1]) - bb / 2), Ancho = bb, Profundidad = hh });
             }
 
             var verticales = new List<Vertical>
             {
-                new() { T = s0 + bb / 2, Z0 = zb, Z1 = zt, Rol = "pie_derecho" },
-                new() { T = s1 - bb / 2, Z0 = zb, Z1 = zt, Rol = "pie_derecho" },
+                new() { T = s0 + bb / 2, Z0 = zb, Z1 = ZtEn(s0 + bb / 2), Rol = "pie_derecho" },
+                new() { T = s1 - bb / 2, Z0 = zb, Z1 = ZtEn(s1 - bb / 2), Rol = "pie_derecho" },
             };
             for (double t = s0 + c.SeparacionPies; t < s1 - bb / 2 - bb; t += c.SeparacionPies)
-                verticales.Add(new Vertical { T = t, Z0 = zb, Z1 = zt, Rol = "pie_derecho" });
+                verticales.Add(new Vertical { T = t, Z0 = zb, Z1 = ZtEn(t), Rol = "pie_derecho" });
 
             if (c.RefuerzoVanos)
             {
@@ -97,12 +109,12 @@ namespace Cad2Revit
                         if (v.T0 - Tol < x.T && x.T < v.T1 + Tol)
                         {
                             if (!v.Puerta) nuevos.Add(new Vertical { T = x.T, Z0 = zb, Z1 = v.ZInf - bb, Rol = "pie_derecho_corto" });
-                            nuevos.Add(new Vertical { T = x.T, Z0 = v.ZSup + bb, Z1 = zt, Rol = "pie_derecho_corto" });
+                            nuevos.Add(new Vertical { T = x.T, Z0 = v.ZSup + bb, Z1 = ZtEn(x.T), Rol = "pie_derecho_corto" });
                             continue;
                         }
                         nuevos.Add(x);
                     }
-                    nuevos.AddRange(jambas.Select(j => new Vertical { T = j, Z0 = zb, Z1 = zt, Rol = "jamba" }));
+                    nuevos.AddRange(jambas.Select(j => new Vertical { T = j, Z0 = zb, Z1 = ZtEn(j), Rol = "jamba" }));
                     verticales = nuevos;
                     Horizontal(v.T0, v.T1, v.ZSup + bb / 2, "dintel");
                     if (!v.Puerta) Horizontal(v.T0, v.T1, v.ZInf - bb / 2, "alfeizar");
