@@ -11,7 +11,7 @@ namespace Cad2Revit
         private bool EsPiezaEntramado(Element e)
         {
             var c = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
-            return c.StartsWith(MarcaEntramadoRevit) || c.StartsWith(Marca + "entramado");
+            return c.StartsWith("cad2revit-entramado") || c.StartsWith(Marca + "entramado");
         }
 
         /// <summary>

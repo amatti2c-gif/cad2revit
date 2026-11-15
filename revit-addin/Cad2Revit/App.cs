@@ -71,6 +71,12 @@ namespace Cad2Revit
                           "(con la imagen al lado) y eliges el muro (pedestal) y su zapata corrida (fundación) para " +
                           "crearlas. Opcional: leer el croquis con la app (IA, de pago)."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitEntramadoPiso", "Entramado\nde piso",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoEntramadoPiso).FullName)
+            {
+                ToolTip = "Entramado horizontal de madera bajo un piso: vigas de borde en el contorno, vigas a la separación " +
+                          "pedida salvando la luz corta y cadenetas entre ellas. En los pisos seleccionados (o los eliges)."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -559,6 +565,91 @@ namespace Cad2Revit
                 if (bien && (c.Espesor <= 0 || c.DiametroPerno <= 0 || c.LargoPerno <= c.Sobresale + c.Espesor))
                 { System.Windows.Forms.MessageBox.Show("Revisa el espesor, el diámetro y el largo de los pernos"); bien = false; }
                 if (bien) return c;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>Entramado horizontal de madera bajo los pisos elegidos.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoEntramadoPiso : IExternalCommand
+    {
+        private class SoloPisos : Autodesk.Revit.UI.Selection.ISelectionFilter
+        {
+            public bool AllowElement(Element e) => e is Floor;
+            public bool AllowReference(Reference r, XYZ p) => false;
+        }
+
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var pisos = uidoc.Selection.GetElementIds().Select(doc.GetElement).OfType<Floor>().ToList();
+            if (pisos.Count == 0)
+            {
+                try
+                {
+                    pisos = uidoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloPisos(),
+                                                        "Elige los pisos para el entramado y presiona Finalizar")
+                                 .Select(x => doc.GetElement(x)).OfType<Floor>().ToList();
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (pisos.Count == 0) { message = "No elegiste pisos."; return Result.Cancelled; }
+            var conf = Pedir(pisos.Count);
+            if (conf == null) return Result.Cancelled;
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).EntramadoDePisos(pisos, conf);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = informe.Errores.Count == 0 && informe.CantidadFaltantes == 0
+                    ? "Entramado de piso creado" : "Entramado de piso con observaciones (ver detalle)",
+                MainContent = informe.Resumen(),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+
+        private static ConfEntramadoPiso Pedir(int n)
+        {
+            var c = new ConfEntramadoPiso();
+            using var f = new System.Windows.Forms.Form
+            {
+                Text = $"Entramado de piso ({n} piso{(n == 1 ? "" : "s")})", Width = 470, Height = 290,
+                FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
+                StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
+            };
+            int y = 15;
+            System.Windows.Forms.Label Etiqueta(string t) { var l = new System.Windows.Forms.Label { Text = t, Left = 12, Top = y + 3, Width = 290 }; f.Controls.Add(l); return l; }
+            Etiqueta("Escuadría de las vigas");
+            var esc = new System.Windows.Forms.ComboBox { Left = 310, Top = y, Width = 130, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
+            esc.Items.AddRange(new object[] { "2x6 (50x150)", "2x8 (50x200)", "2x10 (50x250)" });
+            esc.SelectedIndex = 1; f.Controls.Add(esc); y += 32;
+            Etiqueta("Separación entre vigas (cm)");
+            var sep = new System.Windows.Forms.TextBox { Left = 310, Top = y, Width = 130, Text = "40" }; f.Controls.Add(sep); y += 32;
+            Etiqueta("Las vigas salvan la luz");
+            var luz = new System.Windows.Forms.ComboBox { Left = 310, Top = y, Width = 130, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
+            luz.Items.AddRange(new object[] { "corta", "larga" }); luz.SelectedIndex = 0; f.Controls.Add(luz); y += 32;
+            Etiqueta("Cadenetas cada (cm; 0 = sin)");
+            var cad = new System.Windows.Forms.TextBox { Left = 310, Top = y, Width = 130, Text = "120" }; f.Controls.Add(cad); y += 32;
+            var per = new System.Windows.Forms.CheckBox { Text = "Vigas de borde en todo el contorno", Left = 12, Top = y, Width = 400, Checked = true };
+            f.Controls.Add(per); y += 36;
+            var ok = new System.Windows.Forms.Button { Text = "Crear", Left = 240, Top = y, Width = 90, DialogResult = System.Windows.Forms.DialogResult.OK };
+            var no = new System.Windows.Forms.Button { Text = "Cancelar", Left = 340, Top = y, Width = 90, DialogResult = System.Windows.Forms.DialogResult.Cancel };
+            f.Controls.Add(ok); f.Controls.Add(no); f.AcceptButton = ok; f.CancelButton = no;
+            double? Num(string t) => double.TryParse(t.Trim().Replace(',', '.'), System.Globalization.NumberStyles.Float,
+                                                     System.Globalization.CultureInfo.InvariantCulture, out var v) && v >= 0 ? v : (double?)null;
+            while (f.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+            {
+                var s = Num(sep.Text); var k = Num(cad.Text);
+                if (s == null || s < 10 || k == null) { System.Windows.Forms.MessageBox.Show("Revisa la separación (10 cm o más) y las cadenetas"); continue; }
+                var tipos = new[] { ("2x6", 0.15), ("2x8", 0.20), ("2x10", 0.25) };
+                var (nombre, h) = tipos[esc.SelectedIndex];
+                c.Escuadria = nombre; c.B = 0.05; c.H = h;
+                c.Familia = new FamiliaTipoDef { Familia = c.Familia.Familia, Tipo = nombre };
+                c.Separacion = s.Value / 100; c.Cadenetas = k.Value / 100; c.LuzCorta = luz.SelectedIndex == 0; c.Perimetrales = per.Checked;
+                return c;
             }
             return null;
         }

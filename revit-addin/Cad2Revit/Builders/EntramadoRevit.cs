@@ -414,7 +414,7 @@ namespace Cad2Revit
                 .Where(e =>
                 {
                     var c = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
-                    return !c.StartsWith(MarcaEntramadoRevit) && !c.StartsWith(Marca + "entramado");   // no el propio entramado
+                    return !c.StartsWith("cad2revit-entramado") && !c.StartsWith(Marca + "entramado");   // ni muros ni pisos de madera
                 }).ToList();
             foreach (var e in candidatos)
             {
