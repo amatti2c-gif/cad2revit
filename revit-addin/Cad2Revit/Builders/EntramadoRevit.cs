@@ -142,65 +142,7 @@ namespace Cad2Revit
             double r0 = Recorte(a), r1 = Recorte(b);
 
             // vanos: puertas, ventanas y aberturas alojadas en el muro
-            var vanos = new List<VanoMuro>();
-            // los vanos del propio muro y los de muros paralelos superpuestos con él (p. ej. el muro importado y tu
-            // muro de marco plataforma en el mismo lugar): el entramado no debe pasar por ninguno
-            var insertos = new HashSet<ElementId>(w.FindInserts(true, false, true, true));
-            foreach (var o in todos)
-            {
-                if (o.Id == w.Id || !(o.Location is LocationCurve olc2) || !(olc2.Curve is Line ol2)) continue;
-                if (Math.Abs(ol2.Direction.X * uy - ol2.Direction.Y * ux) > 0.02) continue;
-                double dPerp(XYZ q) => Math.Abs((Mt(q.X) - a[0]) * uy - (Mt(q.Y) - a[1]) * ux);
-                if (dPerp(ol2.GetEndPoint(0)) > (Mt(o.Width) + Mt(w.Width)) / 2) continue;
-                double ta = (Mt(ol2.GetEndPoint(0).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(0).Y) - a[1]) * uy;
-                double tb = (Mt(ol2.GetEndPoint(1).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(1).Y) - a[1]) * uy;
-                if (Math.Max(ta, tb) < 0 || Math.Min(ta, tb) > largo) continue;
-                foreach (var id2 in o.FindInserts(true, false, true, true)) insertos.Add(id2);
-            }
-            foreach (var id in insertos)
-            {
-                var e = _doc.GetElement(id);
-                double t0, t1, z0, z1;
-                bool puerta = false;
-                if (e is Opening op && op.BoundaryRect != null && op.BoundaryRect.Count >= 2)
-                {
-                    var q0 = op.BoundaryRect[0]; var q1 = op.BoundaryRect[1];
-                    double ta = (Mt(q0.X) - a[0]) * ux + (Mt(q0.Y) - a[1]) * uy, tb = (Mt(q1.X) - a[0]) * ux + (Mt(q1.Y) - a[1]) * uy;
-                    t0 = Math.Min(ta, tb); t1 = Math.Max(ta, tb);
-                    z0 = Mt(Math.Min(q0.Z, q1.Z)); z1 = Mt(Math.Max(q0.Z, q1.Z));
-                }
-                else if (e is FamilyInstance fi && fi.Location is LocationPoint lp)
-                {
-                    puerta = fi.Category?.Id == new ElementId(BuiltInCategory.OST_Doors);
-                    double tc = (Mt(lp.Point.X) - a[0]) * ux + (Mt(lp.Point.Y) - a[1]) * uy;
-                    double Par(BuiltInParameter bip, params string[] nombres)
-                    {
-                        var p = fi.get_Parameter(bip) ?? fi.Symbol.get_Parameter(bip);
-                        if (p == null || p.StorageType != StorageType.Double || p.AsDouble() <= 0)
-                            p = nombres.Select(n => fi.LookupParameter(n) ?? fi.Symbol.LookupParameter(n))
-                                       .FirstOrDefault(x => x != null && x.StorageType == StorageType.Double && x.AsDouble() > 0);
-                        return p != null ? Mt(p.AsDouble()) : 0;
-                    }
-                    double ancho = Par(BuiltInParameter.FAMILY_ROUGH_WIDTH_PARAM, "Rough Width", "Ancho aproximado");
-                    if (ancho <= 0) ancho = Par(BuiltInParameter.FAMILY_WIDTH_PARAM, "Width", "Ancho", "Anchura");
-                    double altoV = Par(BuiltInParameter.FAMILY_ROUGH_HEIGHT_PARAM, "Rough Height", "Altura aproximada");
-                    if (altoV <= 0) altoV = Par(BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height", "Altura");
-                    double antepecho = puerta ? 0 : Mt(fi.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.AsDouble() ?? 0);
-                    if (ancho <= 0 || altoV <= 0)
-                    {
-                        var bbx = fi.get_BoundingBox(null);
-                        if (bbx == null) continue;
-                        var ts = new[] { bbx.Min, bbx.Max, new XYZ(bbx.Min.X, bbx.Max.Y, 0), new XYZ(bbx.Max.X, bbx.Min.Y, 0) }
-                            .Select(q => (Mt(q.X) - a[0]) * ux + (Mt(q.Y) - a[1]) * uy).ToList();
-                        ancho = ancho > 0 ? ancho : ts.Max() - ts.Min();
-                        if (altoV <= 0) { antepecho = Mt(bbx.Min.Z) - zBase; altoV = Mt(bbx.Max.Z - bbx.Min.Z); }
-                    }
-                    t0 = tc - ancho / 2; t1 = tc + ancho / 2;
-                    z0 = zBase + antepecho; z1 = z0 + altoV;
-                }
-                else continue;
-                vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = z0, ZSup = z1, Puerta = puerta });
-            }
+            var vanos = VanosDelMuro(w, a, ux, uy, largo, zBase, todos);
 
             // pilares y vigas existentes que atraviesan el muro: el entramado no se superpone con ellos y se apoya en ellos
             // borde superior real del muro (frontón, muro unido al techo o con perfil editado): envolvente superior
@@ -387,6 +329,72 @@ namespace Cad2Revit
                 t0 = ta; t1 = tb;
             }
             return t0 < v.T1 - e && t1 > v.T0 + e && z0 < v.ZSup - e && z1 > v.ZInf + e;
+        }
+
+        /// <summary>Puertas, ventanas y aberturas del muro (y de muros paralelos superpuestos), en sus coordenadas:
+        /// t (m) desde el punto a a lo largo de (ux, uy) y z absolutas (m).</summary>
+        private List<VanoMuro> VanosDelMuro(Wall w, double[] a, double ux, double uy, double largo, double zBase, List<Wall> todos)
+        {
+            var vanos = new List<VanoMuro>();
+            // los vanos del propio muro y los de muros paralelos superpuestos con él (p. ej. el muro importado y tu
+            // muro de marco plataforma en el mismo lugar): el entramado no debe pasar por ninguno
+            var insertos = new HashSet<ElementId>(w.FindInserts(true, false, true, true));
+            foreach (var o in todos)
+            {
+                if (o.Id == w.Id || !(o.Location is LocationCurve olc2) || !(olc2.Curve is Line ol2)) continue;
+                if (Math.Abs(ol2.Direction.X * uy - ol2.Direction.Y * ux) > 0.02) continue;
+                double dPerp(XYZ q) => Math.Abs((Mt(q.X) - a[0]) * uy - (Mt(q.Y) - a[1]) * ux);
+                if (dPerp(ol2.GetEndPoint(0)) > (Mt(o.Width) + Mt(w.Width)) / 2) continue;
+                double ta = (Mt(ol2.GetEndPoint(0).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(0).Y) - a[1]) * uy;
+                double tb = (Mt(ol2.GetEndPoint(1).X) - a[0]) * ux + (Mt(ol2.GetEndPoint(1).Y) - a[1]) * uy;
+                if (Math.Max(ta, tb) < 0 || Math.Min(ta, tb) > largo) continue;
+                foreach (var id2 in o.FindInserts(true, false, true, true)) insertos.Add(id2);
+            }
+            foreach (var id in insertos)
+            {
+                var e = _doc.GetElement(id);
+                double t0, t1, z0, z1;
+                bool puerta = false;
+                if (e is Opening op && op.BoundaryRect != null && op.BoundaryRect.Count >= 2)
+                {
+                    var q0 = op.BoundaryRect[0]; var q1 = op.BoundaryRect[1];
+                    double ta = (Mt(q0.X) - a[0]) * ux + (Mt(q0.Y) - a[1]) * uy, tb = (Mt(q1.X) - a[0]) * ux + (Mt(q1.Y) - a[1]) * uy;
+                    t0 = Math.Min(ta, tb); t1 = Math.Max(ta, tb);
+                    z0 = Mt(Math.Min(q0.Z, q1.Z)); z1 = Mt(Math.Max(q0.Z, q1.Z));
+                }
+                else if (e is FamilyInstance fi && fi.Location is LocationPoint lp)
+                {
+                    puerta = fi.Category?.Id == new ElementId(BuiltInCategory.OST_Doors);
+                    double tc = (Mt(lp.Point.X) - a[0]) * ux + (Mt(lp.Point.Y) - a[1]) * uy;
+                    double Par(BuiltInParameter bip, params string[] nombres)
+                    {
+                        var p = fi.get_Parameter(bip) ?? fi.Symbol.get_Parameter(bip);
+                        if (p == null || p.StorageType != StorageType.Double || p.AsDouble() <= 0)
+                            p = nombres.Select(n => fi.LookupParameter(n) ?? fi.Symbol.LookupParameter(n))
+                                       .FirstOrDefault(x => x != null && x.StorageType == StorageType.Double && x.AsDouble() > 0);
+                        return p != null ? Mt(p.AsDouble()) : 0;
+                    }
+                    double ancho = Par(BuiltInParameter.FAMILY_ROUGH_WIDTH_PARAM, "Rough Width", "Ancho aproximado");
+                    if (ancho <= 0) ancho = Par(BuiltInParameter.FAMILY_WIDTH_PARAM, "Width", "Ancho", "Anchura");
+                    double altoV = Par(BuiltInParameter.FAMILY_ROUGH_HEIGHT_PARAM, "Rough Height", "Altura aproximada");
+                    if (altoV <= 0) altoV = Par(BuiltInParameter.FAMILY_HEIGHT_PARAM, "Height", "Altura");
+                    double antepecho = puerta ? 0 : Mt(fi.get_Parameter(BuiltInParameter.INSTANCE_SILL_HEIGHT_PARAM)?.AsDouble() ?? 0);
+                    if (ancho <= 0 || altoV <= 0)
+                    {
+                        var bbx = fi.get_BoundingBox(null);
+                        if (bbx == null) continue;
+                        var ts = new[] { bbx.Min, bbx.Max, new XYZ(bbx.Min.X, bbx.Max.Y, 0), new XYZ(bbx.Max.X, bbx.Min.Y, 0) }
+                            .Select(q => (Mt(q.X) - a[0]) * ux + (Mt(q.Y) - a[1]) * uy).ToList();
+                        ancho = ancho > 0 ? ancho : ts.Max() - ts.Min();
+                        if (altoV <= 0) { antepecho = Mt(bbx.Min.Z) - zBase; altoV = Mt(bbx.Max.Z - bbx.Min.Z); }
+                    }
+                    t0 = tc - ancho / 2; t1 = tc + ancho / 2;
+                    z0 = zBase + antepecho; z1 = z0 + altoV;
+                }
+                else continue;
+                vanos.Add(new VanoMuro { T0 = t0, T1 = t1, ZInf = z0, ZSup = z1, Puerta = puerta });
+            }
+            return vanos;
         }
 
         /// <summary>Pilares y vigas (estructurales) que atraviesan un muro, en sus coordenadas: t a lo largo del eje y z.</summary>

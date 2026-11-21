@@ -79,6 +79,13 @@ namespace Cad2Revit
                           "ellas a la separación pedida (luz corta) y cadenetas entre las vigas. Queda unido al piso. " +
                           "En los pisos seleccionados (o los eliges)."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitEjeSap", "Eje a\nSAP2000",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoEjeSap).FullName)
+            {
+                ToolTip = "Eliges un eje y se exporta lo que hay sobre él (pilares y vigas de acero con sus secciones, muros " +
+                          "con su borde superior y vanos) a un archivo .sap.json, para armar en SAP2000 un modelo 2D del eje " +
+                          "con sap2000-toolkit (muros de marco plataforma como shell con su rigidez lateral)."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {
@@ -654,6 +661,56 @@ namespace Cad2Revit
                 return c;
             }
             return null;
+        }
+    }
+
+    /// <summary>Exporta un eje del modelo a .sap.json para sap2000-toolkit.</summary>
+    [Transaction(TransactionMode.Manual)]
+    [Regeneration(RegenerationOption.Manual)]
+    public class ComandoEjeSap : IExternalCommand
+    {
+        private class SoloEjes : Autodesk.Revit.UI.Selection.ISelectionFilter
+        {
+            public bool AllowElement(Element e) => e is Grid;
+            public bool AllowReference(Reference r, XYZ p) => false;
+        }
+
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var eje = uidoc.Selection.GetElementIds().Select(doc.GetElement).OfType<Grid>().FirstOrDefault();
+            if (eje == null)
+            {
+                try
+                {
+                    eje = doc.GetElement(uidoc.Selection.PickObject(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloEjes(),
+                                                                    "Elige el eje que quieres llevar a SAP2000")) as Grid;
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (eje == null) return Result.Cancelled;
+            string ruta;
+            using (var dlg = new System.Windows.Forms.SaveFileDialog
+            {
+                Title = $"Guardar el eje {eje.Name} para SAP2000",
+                Filter = "Eje para sap2000-toolkit (*.sap.json)|*.sap.json",
+                FileName = $"eje-{U.NombreSeguro(eje.Name)}.sap.json",
+            })
+            {
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return Result.Cancelled;
+                ruta = dlg.FileName;
+            }
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ExportarEjeSap(eje, ruta);
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = $"Eje {eje.Name} exportado para SAP2000",
+                MainContent = informe.Resumen() + "\n\nEn la PC con SAP2000: python -m sap2000_toolkit.eje_revit \"" + ruta + "\" --sap" +
+                              "\n(o --s2k salida.s2k para importar en SAP2000 con Archivo → Importar).",
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
         }
     }
 }
