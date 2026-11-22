@@ -223,3 +223,22 @@ def test_pandeo_en_el_plano_entre_elementos_que_llegan_y_fuera_del_plano_largo_c
     assert abs(p1["L_plano"] - 1.5) < 1e-6 and abs(p1["L_fuera"] - 3.0) < 1e-6 and p1["arriostramientos_plano"] == 1
     t1 = next(a for a in r["acero"] if a["origen"] == "t1")
     assert abs(t1["L_plano"] - t1["L"]) < 1e-6
+
+
+def test_muro_solidario_con_el_pilar_lleva_el_volcamiento_al_pilar():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    pc = ParametrosCargas(modos=6)
+    sol = mallar(EJE)                                                      # por defecto: unido al pilar
+    hd = mallar(EJE, opciones={"muros": {"f": {"anclaje": "hold_down"}}})
+    # la esquina del muro junto al pilar no es la base del pilar ni tiene apoyo vertical
+    assert "x" in sol.apoyos.values() and list(hd.apoyos.values()).count("x") < list(sol.apoyos.values()).count("x")
+    base_p1 = [a for f, a, b, _ in sol.barras if sol.origen[f] == "p1" and sol.nudos[a] == (0.0, 0.0)][0]
+    assert sol.apoyos[base_p1] == "rotula"
+    assert sum(1 for n, (x, z) in sol.nudos.items() if (x, z) == (0.0, 0.0)) == 2
+    r_sol = analizar(sol, cargas_eje(sol, pc), pc)
+    r_hd = analizar(hd, cargas_eje(hd, pc), pc)
+    pu = lambda r: next(a["Pu"] for a in r["acero"] if a["origen"] == "p1")        # noqa: E731
+    # el pilar toma el par del volcamiento del muro (antes, con toda la base del muro apoyada, Pu ≈ 0,32 tonf)
+    assert pu(r_sol) > 0.6 and pu(r_hd) > 0

@@ -109,7 +109,7 @@ def shell_equivalente(L: float, H: float, t: float, p: ParametrosMuroMadera) -> 
 class ModeloEje:
     nombre: str
     nudos: dict = field(default_factory=dict)          # nombre → (x, z)
-    apoyos: dict = field(default_factory=dict)         # nombre → "rotula" | "empotrado"
+    apoyos: dict = field(default_factory=dict)         # nombre → "rotula" | "empotrado" | "x" (solo horizontal)
     barras: list = field(default_factory=list)         # (nombre, ni, nj, seccion)
     areas: list = field(default_factory=list)          # (nombre, [n1..n4], seccion_area)
     materiales: dict = field(default_factory=dict)     # nombre → {tipo, E, nu, gamma}
@@ -344,11 +344,27 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
             return nombre
 
         nudos_muro = set()
+        # bordes del muro unidos a un pilar (anclaje «pilar»): la esquina inferior del muro es un nudo propio, sin apoyo
+        # vertical, y el volcamiento baja por el pilar (muro solidario con el pilar, como el par de bordes del Manual)
+        bordes_seg = sorted({round(x_, 4) for s_ in segmentos for x_ in s_})
+        bordes_pilar = [xb for xb in bordes_seg if pmw.anclaje == "pilar" and not sobre_viga
+                        and any(abs(xb - xp) <= 0.05 for xp in xs_pilar)]
+        esquinas = set()
+
+        def nudo_muro(x, zz):
+            if abs(zz - z0) < 1e-6 and any(abs(x - xb) <= 0.05 for xb in bordes_pilar):
+                k = (round(x, 3), round(zz, 3), f"muro {w.get('id')}")
+                if k not in claves:
+                    claves[k] = f"N{len(claves) + 1}"
+                    mod.nudos[claves[k]] = (round(x, 4), round(zz, 4))
+                esquinas.add(claves[k])
+                return claves[k]
+            return nudo(x, zz)
 
         def area(pts, xm):
             ns = []
             for x, zz in pts:
-                n = nudo(x, zz)
+                n = nudo_muro(x, zz)
                 if n not in ns:
                     ns.append(n)
             if len(ns) < 3:
@@ -394,10 +410,15 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                 else:
                     area(poli, xm)
         if not sobre_viga:
-            # apoyos solo en los nudos de la base que pertenecen al muro (no en el vano de una puerta)
+            # apoyos solo en los nudos de la base que pertenecen al muro (no en el vano de una puerta): en toda la base se
+            # restringe el deslizamiento (conectores antideslizamiento); el apoyo vertical va en los bordes de cada
+            # segmento que no están unidos a un pilar (hold-down y PPDD de borde). En los bordes unidos a un pilar el
+            # vertical lo da el pilar, y en el interior de la base el volcamiento queda como el par de los bordes
             for n in nudos_muro:
-                if abs(mod.nudos[n][1] - z0) < 1e-6:
-                    mod.apoyos.setdefault(n, "rotula")
+                x_, z_ = mod.nudos[n]
+                if abs(z_ - z0) < 1e-6:
+                    borde = n not in esquinas and any(abs(x_ - xb) <= 0.05 for xb in bordes_seg)
+                    mod.apoyos.setdefault(n, "rotula" if borde else "x")
 
     # ---- barras: partidas en todos los nudos que caen sobre ellas ----
     def barra(x0, z0, x1, z1, sec, rol="viga", origen=None):
@@ -499,7 +520,7 @@ def escribir_s2k(mod: ModeloEje, ruta: str, cargas=None) -> None:
           [{"Joint": n, "CoordSys": "GLOBAL", "CoordType": "Cartesian", "XorR": x, "Y": 0, "Z": z, "SpecialJt": "No"}
            for n, (x, z) in mod.nudos.items()])
     tabla("JOINT RESTRAINT ASSIGNMENTS",
-          [{"Joint": n, "U1": "Yes", "U2": "Yes", "U3": "Yes", "R1": "Yes" if t == "empotrado" else "No",
+          [{"Joint": n, "U1": "Yes", "U2": "Yes", "U3": "No" if t == "x" else "Yes", "R1": "Yes" if t == "empotrado" else "No",
             "R2": "Yes" if t == "empotrado" else "No", "R3": "Yes" if t == "empotrado" else "No"}
            for n, t in mod.apoyos.items()])
     tabla("CONNECTIVITY - FRAME", [{"Frame": f, "JointI": a, "JointJ": b, "IsCurved": "No"} for f, a, b, _ in mod.barras])
@@ -566,7 +587,7 @@ def construir_en_sap(mod: ModeloEje, sap_model) -> None:
         real[n] = r[0] if isinstance(r, (list, tuple)) else n
     for n, t in mod.apoyos.items():
         fijo = t == "empotrado"
-        check(sap_model.PointObj.SetRestraint(real[n], [True, True, True, fijo, fijo, fijo]), message=f"apoyo {n}")
+        check(sap_model.PointObj.SetRestraint(real[n], [True, True, t != "x", fijo, fijo, fijo]), message=f"apoyo {n}")
     for f, a, b, s in mod.barras:
         r = sap_model.FrameObj.AddByPoint(real[a], real[b], "", s, f)
         check(r, message=f"barra {f}")

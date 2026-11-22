@@ -21,7 +21,7 @@ from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 10
+VERSION_RESULTADO = 11
 MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
 MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
@@ -182,7 +182,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     con_barra = {x for _, a, b, _ in mod.barras for x in (a, b)}
     for n in mod.nudos:
         t = mod.apoyos.get(n)
-        m.def_support(n, t is not None, t is not None, True, True, True, (t == "empotrado") or (n not in con_barra))
+        m.def_support(n, t is not None, t in ("rotula", "empotrado"), True, True, True, (t == "empotrado") or (n not in con_barra))
     for n in extra.values():
         m.def_support(n, False, False, True, True, True, True)
 

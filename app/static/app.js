@@ -2107,7 +2107,8 @@ function sapDibujar() {
   }
   for (const [n, t] of Object.entries(v.apoyos)) {
     const [x, z] = Pn(n), d = k * 6;
-    hijos.push(t === "empotrado"
+    hijos.push(t === "x" ? s("circle", { cx: x, cy: -z + d * 0.7, r: d * 0.7, fill: "none", stroke: "#222", "stroke-width": k })
+      : t === "empotrado"
       ? s("rect", { x: x - d, y: -z, width: 2 * d, height: d, fill: "#222" })
       : s("polygon", { points: `${x},${-z} ${x - d},${-z + 1.6 * d} ${x + d},${-z + 1.6 * d}`, fill: "none", stroke: "#222", "stroke-width": k }));
   }
@@ -2396,7 +2397,8 @@ function sapVisor() {
   }
   for (const [n, t] of Object.entries(v.apoyos)) {
     const [x, y] = [N[n][0], -N[n][1]], dd = k * 6;
-    hijos.push(t === "empotrado" ? s("rect", { x: x - dd, y, width: 2 * dd, height: dd, fill: "#222" })
+    hijos.push(t === "x" ? s("circle", { cx: x, cy: y + dd * 0.7, r: dd * 0.7, fill: "none", stroke: "#222", "stroke-width": k })
+      : t === "empotrado" ? s("rect", { x: x - dd, y, width: 2 * dd, height: dd, fill: "#222" })
       : s("polygon", { points: `${x},${y} ${x - dd},${y + 1.6 * dd} ${x + dd},${y + 1.6 * dd}`, fill: "none", stroke: "#222", "stroke-width": k }));
   }
   svg.replaceChildren(...hijos);
