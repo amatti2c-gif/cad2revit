@@ -255,6 +255,51 @@ namespace Cad2Revit
                 _inf.Advertencia($"Muro {w.Id}: entramado ajustado a {obs.Pilares.Count} pilar(es), {obs.Vigas.Count} viga(s) en su parte alta " +
                                  $"y {obs.Vanos.Count} elemento(s) que lo atraviesan" +
                                  (obs.Ignorados.Count > 0 ? $"; no se consideraron: {string.Join(", ", obs.Ignorados)}" : ""));
+            // diagonales: las piezas verticales que cruzan se cortan a ambos lados de la diagonal; las horizontales que
+            // la cruzan, también (queda la diagonal libre)
+            if (obs.Diagonales.Count > 0)
+            {
+                int cortadas = 0;
+                foreach (var (ta, za, tb, zbD, medio) in obs.Diagonales)
+                {
+                    if (tb - ta < 1e-6) continue;
+                    double pend = (zbD - za) / (tb - ta);
+                    double ZDiag(double t) => za + pend * (t - ta);
+                    double holgura = medio + conf.B / 2 + 0.005;               // medio alto de la diagonal + medio ancho de la pieza
+                    var nuevas = new List<PiezaDef>();
+                    foreach (var p in piezas)
+                    {
+                        double T(double[] q) => (q[0] - a[0]) * ux + (q[1] - a[1]) * uy;
+                        double ti = T(p.Inicio), tf = T(p.Fin);
+                        double[] P(double t, double z) => new[] { a[0] + ux * t, a[1] + uy * t, z };
+                        PiezaDef Copia(double[] i, double[] f) => new PiezaDef { Rol = p.Rol, Inicio = i, Fin = f, Ancho = p.Ancho, Profundidad = p.Profundidad };
+                        if (Math.Abs(tf - ti) < 1e-4)
+                        {
+                            // vertical en t: corte entre ZDiag ± holgura (con el ancho de la pieza a lo largo del muro)
+                            if (ti < ta - conf.B / 2 || ti > tb + conf.B / 2) { nuevas.Add(p); continue; }
+                            double zc = ZDiag(Math.Min(Math.Max(ti, ta), tb)), dz = holgura + Math.Abs(pend) * conf.B / 2;
+                            double z0 = Math.Min(p.Inicio[2], p.Fin[2]), z1 = Math.Max(p.Inicio[2], p.Fin[2]);
+                            if (zc + dz <= z0 || zc - dz >= z1) { nuevas.Add(p); continue; }
+                            cortadas++;
+                            if (zc - dz - z0 > 0.05) nuevas.Add(Copia(P(ti, z0), P(ti, zc - dz)));
+                            if (z1 - (zc + dz) > 0.05) nuevas.Add(Copia(P(ti, zc + dz), P(ti, z1)));
+                        }
+                        else if (Math.Abs(p.Fin[2] - p.Inicio[2]) < 1e-4 && Math.Abs(pend) > 1e-6)
+                        {
+                            // horizontal a la altura z: corte alrededor del t donde la diagonal pasa por z
+                            double z = p.Inicio[2], tc = ta + (z - za) / pend, dt = holgura / Math.Abs(pend) + conf.B / 2;
+                            double t0 = Math.Min(ti, tf), t1 = Math.Max(ti, tf);
+                            if (tc < ta || tc > tb || tc + dt <= t0 || tc - dt >= t1) { nuevas.Add(p); continue; }
+                            cortadas++;
+                            if (tc - dt - t0 > 0.05) nuevas.Add(Copia(P(t0, z), P(tc - dt, z)));
+                            if (t1 - (tc + dt) > 0.05) nuevas.Add(Copia(P(tc + dt, z), P(t1, z)));
+                        }
+                        else nuevas.Add(p);
+                    }
+                    piezas = nuevas;
+                }
+                _inf.Advertencia($"Muro {w.Id}: {obs.Diagonales.Count} diagonal(es) en el plano del muro: se cortaron {cortadas} pieza(s) a su paso");
+            }
             // revisión final: ninguna pieza puede pasar por un vano (puerta, ventana o abertura)
             // (un vano que llega al borde superior se revisa solo hasta bajo la solera superior y su dintel)
             double sol = conf.Soleras ? conf.B : 0;
@@ -265,7 +310,7 @@ namespace Cad2Revit
             }).Where(v => v.ZSup - v.ZInf > 0.05).ToList();
             // (las piezas que encajonan el vano —jambas, dinteles, alféizares y soleras— se conservan siempre: si el vano
             // pasa detrás de un pilar o del borde del muro, la jamba queda en el borde y lo cierra)
-            var marco = new HashSet<string> { "jamba", "dintel", "alfeizar", "solera_superior", "solera_inferior" };
+            var marco = new HashSet<string> { "pie_borde", "jamba", "dintel", "alfeizar", "solera_superior", "solera_inferior" };
             int quitadas = piezas.RemoveAll(p => !marco.Contains(p.Rol) && revisar.Any(v => Invade(p, v, a, ux, uy, conf.B)));
             if (quitadas > 0)
                 _inf.Advertencia($"Muro {w.Id}: se quitaron {quitadas} pieza(s) que pasaban por un vano");
@@ -407,6 +452,8 @@ namespace Cad2Revit
             public List<(double z0, double z1)> CaraSuperior = new();               // de cada viga, en t0 y t1
             public List<(double t0, double t1, double zSup)> Bases = new();         // vigas en la base: el entramado parte sobre ellas
             public List<VanoMuro> Vanos = new();                                    // el resto: se rodea como un vano
+            // diagonales en el plano del muro: eje (t, z) de extremo a extremo y medio alto vertical de su sección
+            public List<(double ta, double za, double tb, double zb, double medio)> Diagonales = new();
             public List<string> Ignorados = new();
         }
 
@@ -442,6 +489,12 @@ namespace Cad2Revit
                 bool pilar = e.Category?.Id == new ElementId(BuiltInCategory.OST_StructuralColumns);
                 if (pilar)
                 {
+                    var fuste = loc.Where(x => x.z > z0 + 0.15).ToList();
+                    if (fuste.Count >= 2)
+                    {
+                        t0 = Math.Max(0, fuste.Min(x => x.t));
+                        t1 = Math.Min(largo, fuste.Max(x => x.t));
+                    }
                     // pilar que corta el muro en tramos: parte abajo y llega al borde superior del muro en su posición
                     // (en un frontón, los pilares de los extremos llegan al alero, no a la cumbrera) o a la viga que
                     // lo remata (hasta 0,8 m bajo el borde)
@@ -480,9 +533,11 @@ namespace Cad2Revit
                             o.CaraSuperior.Add((Sup(t0), Sup(t1)));
                             continue;
                         }
-                        if (!horizontal && z0 < zBase + 0.3 * alto)
+                        if (!horizontal)
                         {
-                            o.Ignorados.Add(nombre + " (diagonal)");      // arriostramiento de altura completa
+                            // diagonal (arriostramiento): las piezas que cruza se cortan a lo largo de su eje
+                            double tA = Math.Max(0, Math.Min(te0, te1)), tB = Math.Min(largo, Math.Max(te0, te1));
+                            o.Diagonales.Add((tA, Eje(tA), tB, Eje(tB), (sobre - bajo) / 2));
                             continue;
                         }
                         if (horizontal && z0 <= zBase + 0.3)

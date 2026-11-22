@@ -8,7 +8,7 @@ namespace Cad2Revit
 {
     public partial class Constructor
     {
-        private static readonly HashSet<string> RolesVerticales = new() { "pie_derecho", "pie_derecho_corto", "jamba" };
+        private static readonly HashSet<string> RolesVerticales = new() { "pie_derecho", "pie_borde", "pie_derecho_corto", "jamba" };
         private static readonly string[] NombresAnchoMadera = { "b", "Width", "Ancho", "Anchura" };
         private static readonly string[] NombresAltoMadera = { "d", "h", "Depth", "Height", "Altura", "Profundidad" };
 

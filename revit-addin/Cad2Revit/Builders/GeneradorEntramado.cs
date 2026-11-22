@@ -91,8 +91,9 @@ namespace Cad2Revit
 
             var verticales = new List<Vertical>
             {
-                new() { T = s0 + bb / 2, Z0 = zb, Z1 = ZtEn(s0 + bb / 2), Rol = "pie_derecho" },
-                new() { T = s1 - bb / 2, Z0 = zb, Z1 = ZtEn(s1 - bb / 2), Rol = "pie_derecho" },
+                // pies derechos de borde: contra el pilar o el extremo del muro (nunca se quitan)
+                new() { T = s0 + bb / 2, Z0 = zb, Z1 = ZtEn(s0 + bb / 2), Rol = "pie_borde" },
+                new() { T = s1 - bb / 2, Z0 = zb, Z1 = ZtEn(s1 - bb / 2), Rol = "pie_borde" },
             };
             for (double t = s0 + c.SeparacionPies; t < s1 - bb / 2 - bb; t += c.SeparacionPies)
                 verticales.Add(new Vertical { T = t, Z0 = zb, Z1 = ZtEn(t), Rol = "pie_derecho" });
