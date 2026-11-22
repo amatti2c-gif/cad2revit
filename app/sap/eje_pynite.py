@@ -21,7 +21,7 @@ from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 13
+VERSION_RESULTADO = 14
 MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
 MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
@@ -233,7 +233,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     m.analyze_linear(check_statics=False)
     paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
-    K11, _, _, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
+    K11, _, K21, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
     if masa != "consistente":
         Mg = _masa_concentrada(m, peso_nudo)
     else:
@@ -533,6 +533,36 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
              "reac_z": np.sqrt(_cqc(reac_z, list(omegas)) ** 2 + reac_z_res ** 2) if reac_z else np.abs(reac_z_res),
              "signo_z": signo_z, "env": env_e, "masa_z": float(m_ef_z.sum() / masa_z) if masa_z else 0.0}
     casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, sismo, ref)
+    # ---- reacciones de cada apoyo, por estado de carga (para la pestaña de fundaciones) ----
+    # estáticas: las de PyNite; sismo: R = K21·d por modo (EX con el factor de corte y la torsión; EZ con la masa
+    # faltante), CQC por componente y con el signo del modo dominante de esa dirección
+    gl2 = np.asarray(D2_idx).ravel().astype(int)
+    pos2 = {int(g_): k for k, g_ in enumerate(gl2)}
+    RK = np.asarray(K21 @ vecs)                                            # reacciones de cada forma modal
+    Rres = np.asarray(K21 @ d_res).ravel()
+    om_all = list(omegas)
+    apoyos_out = []
+    for n_, t_ in mod.apoyos.items():
+        nd = m.nodes[n_]
+        idx = [pos2.get(nd.ID * 6 + k) for k in (0, 1, 5)]
+        fila = lambda M_, i_: np.array([M_[i_, :] if i_ is not None else np.zeros(M_.shape[1])][0])   # noqa: E731
+        cxs = (tor["factor"] * factor * gam * np.array([Sa(t) for t in periodos]) / omegas ** 2)
+        czs = (gam_z * np.array([Sv(t) for t in periodos]) / omegas ** 2)
+        ex_m = [np.array([cxs[i] * (RK[j, i] if j is not None else 0.0) for j in idx]) for i in range(nmod)]
+        ez_m = [np.array([czs[i] * (RK[j, i] if j is not None else 0.0) for j in idx]) for i in range(nmod)]
+        ex = _cqc(ex_m, om_all) * np.where(np.sign(ex_m[i_fund]) == 0, 1, np.sign(ex_m[i_fund]))
+        ez_res = np.array([Rres[j] if j is not None else 0.0 for j in idx])
+        ez = np.sqrt(_cqc(ez_m, om_all) ** 2 + ez_res ** 2)
+        dom = ez_m[i_fz] if np.abs(ez_m[i_fz]).sum() > np.abs(ez_res).sum() else ez_res
+        ez = ez * np.where(np.sign(dom) == 0, 1, np.sign(dom))
+        cs = {c: [float(nd.RxnFX[c]), float(nd.RxnFY[c]), float(nd.RxnMZ[c])] for c in estaticos}
+        cs["EX"] = [float(v) for v in ex]
+        cs["EZ"] = [float(v) for v in ez]
+        pil = next((mod.origen.get(f) for f, a, b, _ in mod.barras if mod.roles.get(f) == "pilar" and n_ in (a, b)), None)
+        mur = next((mod.origen.get(a_) for a_, ns, _ in mod.areas if n_ in ns), None)
+        apoyos_out.append({"nudo": n_, "x": float(mod.nudos[n_][0]), "z": float(mod.nudos[n_][1]), "tipo": t_,
+                           "pilar": pil, "muro": mur, "casos": cs})
+    apoyos_out.sort(key=lambda a: a["x"])
     # visor: los primeros modos y los que aportan al menos 1 % de masa en X o Z (máx. 40)
     pxs = m_ef / masa_tot if masa_tot else m_ef * 0
     pzs = m_ef_z / masa_z if masa_z else m_ef_z * 0
@@ -549,7 +579,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         "n_modos_usados": len(aporta),
         "criterio_sismo": "E = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±); EX: espectro NCh433:2026 con CQC; "
                           "EZ: espectro vertical = 2/3 del horizontal, CQC + masa vertical no captada por los modos (Sa(0))",
-        "version": VERSION_RESULTADO, "visor": visor, "columna_fuerte": columna_fuerte, "ry": ry, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
+        "version": VERSION_RESULTADO, "apoyos": apoyos_out, "combos_lrfd": cargas.combos,
+        "patrones": cargas.patrones, "visor": visor, "columna_fuerte": columna_fuerte, "ry": ry, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
 
     }
 

@@ -287,3 +287,40 @@ def test_escuadria_de_los_ppdd_de_borde():
     assert ParametrosMuroMadera(a_ext=0.02).area_ext() == 0.02                                     # dato explícito manda
     mod = mallar(EJE, opciones={"muros": {"f": {"escuadria_borde": "2x3"}}})
     assert mod.resumen_muros[0]["parametros"]["escuadria_borde"] == "2x3"
+
+
+def test_viga_sobre_resortes_solo_compresion():
+    import numpy as np
+    from app.sap.fundacion import _viga_sobre_resortes
+    xs = np.linspace(0, 6, 61)
+    P, M = np.zeros(61), np.zeros(61)
+    P[30] = -10.0
+    r = _viga_sobre_resortes(xs, 2000.0, 1800.0, P, M)
+    assert abs(np.sum(r["q"] * r["trib"]) - 10.0) < 1e-6 and (r["q"] >= 0).all()
+    r = _viga_sobre_resortes(xs, 2e6, 1800.0, P, M)                          # viga rígida: todo comprimido
+    assert r["activos"].all() and abs(r["q"].max() - r["q"].min()) < 0.05 * r["q"].max()
+    M[30] = 25.0                                                          # momento grande: una parte se despega
+    r = _viga_sobre_resortes(xs, 2000.0, 1800.0, P, M)
+    assert abs(np.sum(r["q"] * r["trib"]) - 10.0) < 1e-6 and not r["activos"].all() and (r["q"] >= 0).all()
+
+
+def test_fundacion_del_eje(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAD2REVIT_DATOS", str(tmp_path))
+    from fastapi.testclient import TestClient
+    from app.servidor import app
+    cli = TestClient(app)
+    pid = cli.post("/api/proyectos", json={"nombre": "fund"}).json()["id"]
+    arch = {"archivo": ("eje.sap.json", io.BytesIO(json.dumps(EJE).encode()), "application/json")}
+    nombre = cli.post(f"/api/proyectos/{pid}/sap", files=arch).json()["nombre"]
+    assert cli.post(f"/api/proyectos/{pid}/sap/{nombre}/fundacion", json={"parametros": {}}).status_code == 409
+    assert cli.post(f"/api/proyectos/{pid}/sap/{nombre}/analizar", json={"parametros": {"cargas": {"modos": 6}}, "opciones": {}}).status_code == 200
+    r = cli.post(f"/api/proyectos/{pid}/sap/{nombre}/fundacion",
+                 json={"parametros": {"b_zapata": 0.8, "armaduras": {"fun_barras_inferiores": 5}}})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert 0 < d["resumen_suelo"]["pct_compresion_min"] <= 1 and d["viga"] and d["zapata"] and d["pedestal"]
+    assert d["seccion"]["b_zapata"] == 0.8
+    # la suma de presiones de D equilibra el peso propio del eje más el de la fundación
+    s_d = next(c for c in d["servicio"] if c["combo"] == "D")
+    assert s_d["N"] > 1.9
+    assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/fundacion").json()["L"] == d["L"]

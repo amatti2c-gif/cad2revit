@@ -1820,7 +1820,7 @@ def leer_eje_sap(pid: str, nombre: str):
 def borrar_eje_sap(pid: str, nombre: str):
     f = _eje_sap(_proyecto(pid), nombre)
     f.unlink()
-    for ext in (".ajustes.json", ".resultado.json"):
+    for ext in (".ajustes.json", ".resultado.json", ".fundacion.json"):
         a = f.with_name(f.name.replace(".sap.json", ext))
         if a.is_file():
             a.unlink()
@@ -1930,6 +1930,49 @@ def resultado_eje_pynite(pid: str, nombre: str):
     d = json.loads(r.read_text(encoding="utf-8"))
     d["desactualizado"] = d.get("version") != VERSION_RESULTADO
     return d
+
+
+class PedidoFundacion(BaseModel):
+    parametros: dict = {}               # ParametrosFundacion (geometría, suelo, materiales) y «armaduras»
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/fundacion")
+def fundacion_eje(pid: str, nombre: str, pedido: PedidoFundacion):
+    """Fundación corrida del eje con las reacciones de sus apoyos (del análisis guardado): resortes solo en
+    compresión, presiones y % de área comprimida, y diseño del pedestal (muro) y de la zapata (viga de fundación)."""
+    from app.sap.eje_pynite import VERSION_RESULTADO
+    from app.sap.fundacion import ArmadurasFundacion, ParametrosFundacion, analizar_fundacion
+    f = _eje_sap(_proyecto(pid), nombre)
+    rf = f.with_name(f.name.replace(".sap.json", ".resultado.json"))
+    if not rf.is_file():
+        raise HTTPException(409, "Primero analiza el eje en la pestaña 6 (las cargas salen de sus apoyos)")
+    res = json.loads(rf.read_text(encoding="utf-8"))
+    if res.get("version") != VERSION_RESULTADO or not res.get("apoyos"):
+        raise HTTPException(409, "El análisis del eje es de una versión anterior: vuelve a analizarlo en la pestaña 6")
+    par = dict(pedido.parametros or {})
+    arm = par.pop("armaduras", {}) or {}
+    try:
+        pf = ParametrosFundacion(**{k: v for k, v in par.items() if k in ParametrosFundacion.__dataclass_fields__
+                                    and k != "armaduras" and v not in (None, "")})
+        pf.armaduras = ArmadurasFundacion(**{k: v for k, v in arm.items() if k in ArmadurasFundacion.__dataclass_fields__
+                                             and v not in (None, "")})
+        r = analizar_fundacion(res["apoyos"], res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+    r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    r["analisis_eje"] = res.get("fecha")
+    texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+    f.with_name(f.name.replace(".sap.json", ".fundacion.json")).write_text(texto, encoding="utf-8")
+    return Response(texto, media_type="application/json")
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}/fundacion")
+def fundacion_guardada(pid: str, nombre: str):
+    f = _eje_sap(_proyecto(pid), nombre)
+    r = f.with_name(f.name.replace(".sap.json", ".fundacion.json"))
+    if not r.is_file():
+        raise HTTPException(404, "La fundación de este eje aún no se ha analizado")
+    return json.loads(r.read_text(encoding="utf-8"))
 
 
 class SeccionHormigon(BaseModel):

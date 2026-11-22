@@ -65,6 +65,7 @@ function irA(tab) {
   if (tab === "resultado") dibujarVisor();
   if (tab === "estructura") intentar(cargarEstructura);
   if (tab === "sap") intentar(cargarSap);
+  if (tab === "fundaciones") intentar(cargarFundacion);
 }
 $$(".pestanas button").forEach(b => b.addEventListener("click", () => irA(b.dataset.tab)));
 
@@ -2444,6 +2445,121 @@ async function verificarHormigon() {
 $("#btn-hormigon").addEventListener("click", () => intentar(verificarHormigon));
 $("#sap-borrador").addEventListener("toggle", ev => { if (ev.target.open) sapAgente(); });
 $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
+
+
+// ------------------------------------------------------------------ Fundaciones (pestaña 7)
+const fun = { res: null };
+
+async function cargarFundacion() {
+  if (!estado.proyecto) return;
+  if (!sap.nombre) await cargarSap();
+  const sel = $("#sel-eje-fun");
+  sel.replaceChildren(...[...$("#sel-eje-sap").options].map(o => h("option", { value: o.value }, o.textContent)));
+  sel.value = sap.nombre || "";
+  $("#btn-arm-revit").disabled = !(sap.eje && sap.eje.fundacion && sap.eje.fundacion.armaduras);
+  fun.res = null;
+  $("#fun-res").classList.add("oculto");
+  $("#fun-estado").textContent = "";
+  if (!sap.nombre) return;
+  try { funMostrar(await api("GET", P(`/sap/${encodeURIComponent(sap.nombre)}/fundacion`))); } catch { /* aún sin análisis */ }
+}
+
+async function funAnalizar() {
+  if (!sap.nombre) throw new Error("Elige un eje (pestaña 6)");
+  await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
+  $("#fun-estado").textContent = "Analizando la fundación…";
+  const d = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/fundacion`), { parametros: sapParametros().fundacion || {} });
+  funMostrar(d);
+  $("#fun-estado").textContent = "Listo";
+}
+
+function funMostrar(d) {
+  fun.res = d;
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2), pc = x => x == null ? "—" : (100 * x).toFixed(0) + " %";
+  const celda = r => h("td", { class: r == null ? "" : (r > 1 ? "nocumple" : "cumple") }, r == null ? "—" : f2(r));
+  const s = d.resumen_suelo;
+  $("#fun-res").classList.remove("oculto");
+  const okPct = s.pct_compresion_min >= 0.8, okP = s.FU_presion_max <= 1;
+  $("#fun-resumen").replaceChildren(
+    `Fundación de x = ${f2(d.x0)} a ${f2(d.x1)} m (L = ${f2(d.L)} m), peso propio + suelo ${f2(d.peso_propio_tonf_m)} tonf/m. `,
+    h("span", { class: okPct ? "cumple" : "nocumple" }, `Área en compresión mínima ${pc(s.pct_compresion_min)} (${s.combo_pct}; ≥ 80 %, 7.2.1)`), " · ",
+    h("span", { class: okP ? "cumple" : "nocumple" }, `presión: FU máx. ${f2(s.FU_presion_max)} (${s.combo_presion})`), " · ",
+    `deslizamiento: FS mín. ${f2(s.FS_desliz_min)}` + (s.inestables.length ? ` · ${s.inestables.length} combinación(es) sin equilibrio (vuelco)` : ""));
+  const sel = $("#fun-combo"), antes = sel.value;
+  sel.replaceChildren(...d.servicio.filter(c => c.estable).map((c, i) => h("option", { value: i }, c.combo)));
+  const peor = d.servicio.filter(c => c.estable).findIndex(c => c.combo === s.combo_pct);
+  sel.value = antes && antes < sel.options.length ? antes : String(Math.max(peor, 0));
+  funDibujar();
+  $("#fun-servicio").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Combinación", "q máx. (tonf/m²)", "q adm.", "FU presión", "% área en compresión", "Asentamiento máx. (mm)",
+      "N (tonf)", "H (tonf)", "FS deslizamiento"].map(t => h("th", {}, t)))),
+    h("tbody", {}, d.servicio.map(c => c.estable ? h("tr", {}, h("td", {}, c.combo), h("td", {}, f2(c.q_max)), h("td", {}, f2(c.q_adm)), celda(c.FU_presion),
+      h("td", { class: c.pct_compresion >= 0.8 ? "cumple" : "nocumple" }, pc(c.pct_compresion)), h("td", {}, f2(c.asentamiento_max_mm)),
+      h("td", {}, f2(c.N)), h("td", {}, f2(c.H)), h("td", { class: c.FS_deslizamiento != null && c.FS_deslizamiento < 1.5 ? "nocumple" : "" }, f2(c.FS_deslizamiento)))
+      : h("tr", {}, h("td", {}, c.combo), h("td", { class: "nocumple", colspan: 8 }, "sin equilibrio: la fundación vuelca o se levanta entera")))));
+  const filas = lista => lista.map(v => h("tr", {}, h("td", {}, v.verificacion),
+    h("td", {}, v.Mu_tonfm != null ? `Mu ${f2(v.Mu_tonfm)} tonf·m` : v.Vu_tonf != null ? `Vu ${f2(v.Vu_tonf)} tonf` : v.Pu_tonf != null ? `Pu ${f2(v.Pu_tonf)} tonf` : `ρ = ${v.valor != null ? v.valor.toFixed(4) : "—"}`),
+    h("td", {}, v.phiMn_tonfm != null ? `φMn ${f2(v.phiMn_tonfm)}` : v.phiVn_tonf != null ? `φVn ${f2(v.phiVn_tonf)}` : v.phiPn_tonf != null ? `φPn ${f2(v.phiPn_tonf)}` : `mín. ${v.minimo}`),
+    celda(v.razon), h("td", {}, v.combo ?? ""), h("td", {}, (v.notas || []).join("; "))));
+  const cab = h("thead", {}, h("tr", {}, ...["Verificación", "Demanda", "Capacidad", "Razón", "Combinación", "Notas"].map(t => h("th", {}, t))));
+  $("#fun-viga").replaceChildren(cab.cloneNode(true), h("tbody", {}, filas([...d.viga, ...d.zapata])));
+  $("#fun-pedestal").replaceChildren(cab.cloneNode(true), h("tbody", {}, filas(d.pedestal)));
+}
+
+function funDibujar() {
+  const d = fun.res; if (!d) return;
+  const lista = d.servicio.filter(c => c.estable), c = lista[Number($("#fun-combo").value) || 0];
+  const svg = $("#fun-lienzo"), L = d.x1 - d.x0, sx = 100 / L, x = v => (v - d.x0) * sx;
+  const sec = d.seccion, esc = 6 / Math.max(sec.h_pedestal + sec.h_zapata, 0.1);
+  const hp = sec.h_pedestal * esc, hz = sec.h_zapata * esc;
+  const qmax = Math.max(...lista.map(o => o.q_max), 1e-9), qh = 12 / qmax;
+  const hijos = [];
+  hijos.push(s("rect", { x: 0, y: 4, width: 100, height: hp, fill: "#d7d7d7", stroke: "#888", "stroke-width": 0.1 }));
+  hijos.push(s("rect", { x: 0, y: 4 + hp, width: 100, height: hz, fill: "#c4c4c4", stroke: "#888", "stroke-width": 0.1 }));
+  const y0 = 4 + hp + hz;
+  if (c) {
+    const pts = d.x.map((xx, i) => `${x(xx)},${y0 + c.q[i] * qh}`).join(" ");
+    hijos.push(s("polygon", { points: `0,${y0} ${pts} 100,${y0}`, fill: "rgba(45,108,223,.25)", stroke: "#2d6cdf", "stroke-width": 0.2 }));
+    $("#fun-combo-info").textContent = `q máx. ${c.q_max.toFixed(2)} tonf/m² · área en compresión ${(100 * c.pct_compresion).toFixed(0)} %`;
+  }
+  for (const a of d.apoyos) {
+    hijos.push(s("line", { x1: x(a.x), y1: 0, x2: x(a.x), y2: 4, stroke: a.pilar ? "#1f4e9c" : "#b98a4a", "stroke-width": a.pilar ? 0.8 : 0.3 }));
+  }
+  svg.setAttribute("viewBox", `-2 -2 104 ${y0 + 16}`);
+  svg.replaceChildren(...hijos);
+}
+
+function funLlenarArmaduras(a) {
+  const pon = (k, v) => { const el = $(`[data-sap="fundacion.armaduras.${k}"]`); if (el && v != null) el.value = String(v); };
+  pon("ped_barras_por_cara", a.pedestal.barras_por_cara); pon("ped_diametro_mm", a.pedestal.diametro_mm);
+  pon("ped_estribo_diametro_mm", a.pedestal.estribo_diametro_mm); pon("ped_estribo_separacion_cm", a.pedestal.estribo_separacion_cm);
+  pon("ped_estribo_hasta_fondo", a.pedestal.estribo_hasta_fondo_fundacion ? "true" : "false");
+  pon("fun_barras_superiores", a.fundacion.barras_superiores); pon("fun_barras_inferiores", a.fundacion.barras_inferiores);
+  pon("fun_diametro_mm", a.fundacion.diametro_mm); pon("fun_estribo_diametro_mm", a.fundacion.estribo_diametro_mm);
+  pon("fun_estribo_separacion_cm", a.fundacion.estribo_separacion_cm);
+}
+
+$("#btn-fundacion").addEventListener("click", () => intentar(funAnalizar));
+$("#fun-combo").addEventListener("change", funDibujar);
+$("#sel-eje-fun").addEventListener("change", ev => intentar(async () => { await abrirEjeSap(ev.target.value); await cargarFundacion(); }));
+$("#inp-croquis-fun").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("imagen", f);
+  $("#fun-arm-nota").textContent = "Leyendo el croquis…";
+  const a = await api("POST", "/api/armaduras/leer", fd);
+  ev.target.value = "";
+  funLlenarArmaduras(a);
+  $("#fun-arm-nota").textContent = "Leído de la imagen" + (a.observaciones ? `: ${a.observaciones}` : "") + ". Revisa los valores.";
+}));
+$("#btn-arm-revit").addEventListener("click", () => intentar(async () => {
+  const fu = sap.eje && sap.eje.fundacion;
+  if (!fu || !fu.armaduras) throw new Error("Este eje no trae la sección de fundación desde Revit");
+  funLlenarArmaduras(fu.armaduras);
+  const g = fu.geometria || {};
+  const pon = (k, v) => { const el = $(`[data-sap="fundacion.${k}"]`); if (el && v) el.value = String(+(v * 100).toFixed(1)); };
+  pon("b_pedestal", g.b_pedestal); pon("h_pedestal", g.h_pedestal); pon("b_zapata", g.b_zapata); pon("h_zapata", g.h_zapata);
+  $("#fun-arm-nota").textContent = "Tomado de la sección de Revit" + (fu.nota ? `: ${fu.nota}` : "") + ". Revisa los valores.";
+}));
 
 $("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
 $$("[data-sap]").forEach(el => el.addEventListener("change", () => { sapGaPlaceholder(); sapTablaElementos(); intentar(sapActualizar); }));

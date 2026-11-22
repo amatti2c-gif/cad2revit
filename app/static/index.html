@@ -32,6 +32,7 @@
     <button data-tab="resultado">4 · Resultado</button>
     <button data-tab="historial">5 · Historial</button>
     <button data-tab="sap">6 · Análisis y diseño</button>
+    <button data-tab="fundaciones">7 · Fundaciones</button>
     <span id="badge-errores" class="badge oculto" hidden></span>
   </nav>
 
@@ -344,8 +345,9 @@
               (⑥ o ⑦); la tracción del anclaje es T = V·H/L′ − (carga gravitacional)·L/(2·L′) (Ec. 3.30–3.31).</p>
           </details>
         </div>
-        <div class="panel"><div class="panel-tit"><span>Elementos del eje</span></div>
-          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-elementos"></table></div></div>
+        <details class="panel plegable"><summary><strong>Elementos del eje</strong>
+            <span class="tenue">— incluir o quitar elementos, base de pilares y ajustes de cada muro</span></summary>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-elementos"></table></div></details>
         <div class="panel"><div class="panel-tit"><span>Secciones de acero (m)</span></div>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-secciones"></table></div></div>
         <div class="sap-cols">
@@ -411,6 +413,73 @@
             <p id="sap-res-resumen"></p>
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-razones"></table></div></div>
         </details>
+      </div>
+    </section>
+
+
+    <!-- ======================= FUNDACIONES ======================= -->
+    <section id="tab-fundaciones" class="tab">
+      <div class="panel">
+        <div class="panel-tit"><span>Fundación corrida del eje</span>
+          <span class="acciones"><button class="pri" id="btn-fundacion">▶ Analizar y diseñar la fundación</button></span></div>
+        <p class="tenue">Usa las reacciones de los apoyos del análisis del eje (pestaña 6) por estado de carga. La fundación
+          es una viga continua (pedestal sobre zapata) apoyada en resortes que solo trabajan en compresión: se verifica la
+          presión de contacto, el % del área en compresión (≥ 80 %, NCh433:2026 7.2.1) y el deslizamiento con las
+          combinaciones de servicio, y se diseñan la zapata como viga de fundación y el pedestal como muro (ACI 318-19)
+          con las combinaciones mayoradas.</p>
+        <div class="fila-sap"><label>Eje <select id="sel-eje-fun"></select></label><span id="fun-estado" class="tenue"></span></div>
+      </div>
+      <div class="sap-cols">
+        <div class="panel"><div class="panel-tit"><span>Geometría</span></div>
+          <div class="sap-form">
+              <label>Ancho del pedestal (cm) <input data-sap="fundacion.b_pedestal" data-f="0.01" type="number" step="any" value="20"></label>
+              <label>Alto del pedestal sobre la zapata (cm) <input data-sap="fundacion.h_pedestal" data-f="0.01" type="number" step="any" value="60"></label>
+              <label>Ancho de la zapata (cm) <input data-sap="fundacion.b_zapata" data-f="0.01" type="number" step="any" value="60"></label>
+              <label>Alto de la zapata (cm) <input data-sap="fundacion.h_zapata" data-f="0.01" type="number" step="any" value="25"></label>
+              <label>Profundidad del sello Df (cm) <input data-sap="fundacion.profundidad" data-f="0.01" type="number" step="any" value="80"></label>
+              <label>Voladizo más allá de los apoyos extremos (cm) <input data-sap="fundacion.voladizo" data-f="0.01" type="number" step="any" value="20"></label>
+              <label>Recubrimiento (cm) <input data-sap="fundacion.recubrimiento" data-f="0.01" type="number" step="any" value="5"></label>
+              <label>Ancho de la placa o muro que apoya (cm) <input data-sap="fundacion.ancho_apoyo" data-f="0.01" type="number" step="any" value="20"></label>
+          </div>
+          <div class="panel-tit"><span>Suelo y materiales</span></div>
+          <div class="sap-form">
+              <label>Balasto ks (kgf/cm³) <input data-sap="fundacion.ks" type="number" step="any" value="3"></label>
+              <label>Presión admisible estática (tonf/m²) <input data-sap="fundacion.q_adm" type="number" step="any" value="15"></label>
+              <label>Presión admisible eventual, viento o sismo (tonf/m²) <input data-sap="fundacion.q_adm_eventual" type="number" step="any" placeholder="1,33 × estática"></label>
+              <label>Peso unitario del suelo (tonf/m³) <input data-sap="fundacion.gamma_suelo" type="number" step="any" value="1.8"></label>
+              <label>Coeficiente de roce suelo-hormigón <input data-sap="fundacion.roce" type="number" step="any" value="0.4"></label>
+              <label>f'c (MPa) <input data-sap="fundacion.fc" type="number" step="any" value="25"></label>
+              <label>fy (MPa) <input data-sap="fundacion.fy" type="number" step="any" value="420"></label>
+          </div></div>
+        <div class="panel"><div class="panel-tit"><span>Armaduras (corte del sobrecimiento)</span>
+            <span class="acciones"><label class="link">Leer de una imagen<input id="inp-croquis-fun" type="file" accept="image/*" hidden></label>
+              <button class="sec" id="btn-arm-revit">Desde Revit</button></span></div>
+          <p class="tenue" id="fun-arm-nota">Ingrésalas, léelas de una foto o croquis del corte, o tráelas de la sección del modelo de Revit
+            (botón «Eje a análisis»).</p>
+          <div class="sap-form">
+              <label>Pedestal: barras por cara <input data-sap="fundacion.armaduras.ped_barras_por_cara" type="number" step="any" value="3"></label>
+              <label>Pedestal: diámetro (mm) <input data-sap="fundacion.armaduras.ped_diametro_mm" type="number" step="any" value="10"></label>
+              <label>Pedestal: estribo φ (mm) <input data-sap="fundacion.armaduras.ped_estribo_diametro_mm" type="number" step="any" value="8"></label>
+              <label>Pedestal: estribo @ (cm) <input data-sap="fundacion.armaduras.ped_estribo_separacion_cm" type="number" step="any" value="20"></label>
+              <label>Pedestal: estribo hasta el fondo de la zapata <select data-sap="fundacion.armaduras.ped_estribo_hasta_fondo"><option value="true" selected>sí</option><option value="false">no</option></select></label>
+              <label>Zapata: barras superiores <input data-sap="fundacion.armaduras.fun_barras_superiores" type="number" step="any" value="4"></label>
+              <label>Zapata: barras inferiores <input data-sap="fundacion.armaduras.fun_barras_inferiores" type="number" step="any" value="4"></label>
+              <label>Zapata: diámetro (mm) <input data-sap="fundacion.armaduras.fun_diametro_mm" type="number" step="any" value="10"></label>
+              <label>Zapata: estribo φ (mm) <input data-sap="fundacion.armaduras.fun_estribo_diametro_mm" type="number" step="any" value="8"></label>
+              <label>Zapata: estribo @ (cm) <input data-sap="fundacion.armaduras.fun_estribo_separacion_cm" type="number" step="any" value="20"></label>
+          </div></div>
+      </div>
+      <div class="panel oculto" id="fun-res">
+        <div class="panel-tit"><span>Resultados</span></div>
+        <p id="fun-resumen"></p>
+        <div class="fila-sap"><label>Presiones de <select id="fun-combo"></select></label><span id="fun-combo-info" class="tenue"></span></div>
+        <svg id="fun-lienzo" viewBox="0 0 100 40"></svg>
+        <h3>Suelo: combinaciones de servicio</h3>
+        <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-servicio"></table></div>
+        <h3>Zapata como viga de fundación y ala transversal</h3>
+        <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-viga"></table></div>
+        <h3>Pedestal como muro (ACI 318-19 cap. 11)</h3>
+        <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-pedestal"></table></div>
       </div>
     </section>
 

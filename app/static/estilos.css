@@ -277,3 +277,8 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .esquema-muro .t, .esquema-muro .ll text { font-size: 12px; fill: #222; }
 .esquema-muro .ll line { stroke: #777; stroke-width: 0.8; }
 @media (prefers-color-scheme: dark) { .esquema-muro .t, .esquema-muro .ll text { fill: #ddd; } }
+
+#fun-lienzo { width: 100%; height: 260px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+
+.plegable > summary { cursor: pointer; }
+.plegable[open] > summary { margin-bottom: 8px; }
