@@ -115,8 +115,33 @@ def _seccion(m: dict, s: dict, avisos: list, cambios: dict | None = None) -> str
     return nombre
 
 
+def _juntar(candidatos: list, tol: float):
+    """Agrupa coordenadas a menos de tol entre sí; cada grupo queda en la de mayor prioridad (número menor).
+    Devuelve una función que lleva cualquier coordenada de la lista a la de su grupo."""
+    orden = sorted(candidatos)
+    grupos, actual = [], []
+    for v, pr in orden:
+        if actual and v - actual[-1][0] > tol:
+            grupos.append(actual)
+            actual = []
+        actual.append((v, pr))
+    if actual:
+        grupos.append(actual)
+    mapa = []
+    for g in grupos:
+        rep = min(g, key=lambda t: (t[1], t[0]))[0]
+        mapa.append((g[0][0], g[-1][0], rep))
+
+    def aj(v):
+        for a, b, rep in mapa:
+            if a - 1e-9 <= v <= b + 1e-9:
+                return rep
+        return v
+    return aj
+
+
 def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 0.5, apoyo_pilares: str = "rotula",
-           tol_borde: float = 0.40, opciones: dict | None = None) -> ModeloEje:
+           tol_borde: float = 0.40, opciones: dict | None = None, min_celda: float = 0.10) -> ModeloEje:
     """Arma el modelo plano (x, z) del eje: nudos compartidos entre barras y shells, apoyos en la base.
 
     ``opciones`` (ajustes de la aplicación web): ``excluir`` [ids de Revit], ``apoyos`` {id pilar: "rotula" |
@@ -187,11 +212,17 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                           for (xa, za), (xb, zb) in zip(perfil, perfil[1:]) if xa <= x <= xb and xb > xa)
             return viga_en(x, zt)
 
-        vanos = [v for v in w.get("vanos", []) if v["x1"] > x0 + 0.05 and v["x0"] < x1 - 0.05]
-        # cortes en x: extremos, bordes de vanos, pilares dentro del muro, quiebres del borde superior; luego ≤ malla
-        cx = {x0, x1} | {min(max(v[k], x0), x1) for v in vanos for k in ("x0", "x1")}
-        cx |= {x for x in xs_pilar if x0 < x < x1} | {x for x, _ in perfil if x0 + 0.15 < x < x1 - 0.15}
-        cx = sorted(cx)
+        vanos = [dict(v) for v in w.get("vanos", []) if v["x1"] > x0 + 0.05 and v["x0"] < x1 - 0.05]
+        # cortes en x: pilares, extremos, quiebres del borde superior y bordes de vanos. Los que quedan a menos de
+        # min_celda se juntan en uno (manda el pilar, luego el extremo, el quiebre y al final el vano): sin shells angostos
+        cand = [(x, 0) for x in xs_pilar if x0 - 1e-6 <= x <= x1 + 1e-6] + [(x0, 1), (x1, 1)]
+        cand += [(x, 2) for x, _ in perfil if x0 < x < x1]
+        cand += [(min(max(v[k], x0), x1), 3) for v in vanos for k in ("x0", "x1")]
+        ajx = _juntar(cand, min_celda)
+        for v in vanos:
+            v["x0"], v["x1"] = ajx(min(max(v["x0"], x0), x1)), ajx(min(max(v["x1"], x0), x1))
+        vanos = [v for v in vanos if v["x1"] - v["x0"] > 0.05]
+        cx = sorted({ajx(x) for x, _ in cand})
         xs = []
         for a, b in zip(cx, cx[1:]):
             n = max(1, math.ceil((b - a) / malla - 1e-9))
@@ -201,7 +232,12 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         zmin_top = min(tops)
         # cortes en z bajo el tope más bajo: base, bordes de vanos; ≤ malla. Sobre él, el mismo número de divisiones
         # en cada línea de x (malla compatible bajo un borde inclinado)
-        cz = sorted({z0, zmin_top} | {v[k] for v in vanos for k in ("z0", "z1") if z0 < v[k] < zmin_top})
+        candz = [(z0, 0), (zmin_top, 0)] + [(min(max(v[k], z0), zmin_top), 3) for v in vanos for k in ("z0", "z1")]
+        ajz = _juntar(candz, min_celda)
+        for v in vanos:
+            v["z0"], v["z1"] = ajz(min(max(v["z0"], z0), zmin_top)) if v["z0"] < zmin_top else v["z0"], \
+                               ajz(min(max(v["z1"], z0), zmin_top)) if v["z1"] < zmin_top else v["z1"]
+        cz = sorted({ajz(z) for z, _ in candz})
         zs = []
         for a, b in zip(cz, cz[1:]):
             n = max(1, math.ceil((b - a) / malla - 1e-9))
