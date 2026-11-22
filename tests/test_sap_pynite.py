@@ -141,3 +141,24 @@ def test_masa_concentrada_por_defecto_y_consistente_equivalente():
     b = analizar(mod, c, pc, masa="consistente")
     assert a["masa"] == "concentrada" and b["masa"] == "consistente"
     assert abs(a["T"] / b["T"] - 1) < 0.05 and abs(a["peso_sismico"] / b["peso_sismico"] - 1) < 0.05
+
+
+def test_anclaje_por_defecto_unido_al_pilar_y_hold_down_en_vanos():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import HOLD_DOWNS, mallar
+    mod = mallar(EJE)
+    # el segmento 0–1 llega al pilar por la izquierda y a la puerta por la derecha
+    seg = {s["x0"]: s for s in mod.resumen_muros}
+    assert seg[0.0]["anclaje"]["bordes"] == ["pilar", "hold_down"]
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    for w in r["madera"]:
+        tipos = {a["tipo"] for a in w["anclajes"]}
+        assert tipos == {"unión al pilar", "hold-down"} and w["falta_capacidad_union"]
+        assert all(a["modelo"] in HOLD_DOWNS for a in w["anclajes"] if a["tipo"] == "hold-down")
+        assert w["T_anclaje"] >= 0 and w["L_prima"] < w["L"]
+    # todo con hold-down: ambos bordes con hold-down y la rigidez del modelo elegido
+    mod2 = mallar(EJE, opciones={"muros": {"f": {"anclaje": "hold_down", "hold_down": "HD5B"}}})
+    a = mod2.resumen_muros[0]["anclaje"]
+    assert a["bordes"] == ["hold_down", "hold_down"] and abs(a["k"] - 1.90 / 0.0038) < 1

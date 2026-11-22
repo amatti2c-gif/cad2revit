@@ -2140,14 +2140,16 @@ function sapTablaElementos() {
   }
   for (const w of e.muros || []) {
     const mw = o.muros[w.id] || {};
-    const fija = (k, v) => { const x = o.muros[w.id] = o.muros[w.id] || {}; if (v === "") delete x[k]; else x[k] = Number(v); };
+    const fija = (k, v) => { const x = o.muros[w.id] = o.muros[w.id] || {}; if (v === "") delete x[k]; else x[k] = isNaN(Number(v)) ? v : Number(v); };
     filas.push(h("tr", {}, h("td", {}, incluir(w.id)), h("td", {}, `Muro (${w.material})`), h("td", {}, w.id), h("td", {}, w.tipo),
       h("td", {}, `x ${w.x0.toFixed(2)}–${w.x1.toFixed(2)} · ${(w.vanos || []).length} vano(s)`),
       h("td", {}, "clavos ", selector([["", "def."], ["150", "150"], ["100", "100"], ["50", "50"]], mw.espaciamiento_clavos, v => fija("espaciamiento_clavos", v)),
         " caras ", selector([["", "def."], ["1", "1"], ["2", "2"]], mw.tableros, v => fija("tableros", v)),
         " Ga ", h("input", { type: "number", step: "any", value: mw.ga ?? "", title: "vacío = Manual según clavado y caras",
           placeholder: String(sapGaManual(Number(mw.espaciamiento_clavos || $('[data-sap="muro.espaciamiento_clavos"]').value),
-            Number(mw.tableros || $('[data-sap="muro.tableros"]').value)) ?? "def."), onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }))));
+            Number(mw.tableros || $('[data-sap="muro.tableros"]').value)) ?? "def."), onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }),
+        " anclaje ", selector([["", "def."], ["pilar", "unido al pilar"], ["hold_down", "hold-down"]], mw.anclaje, v => fija("anclaje", v)),
+        " HD ", selector([["", "def."], ["auto", "auto"], ...["HD3B", "HD5B", "HD7B", "HD9B", "HD12", "HD19", "HD12 dobles"].map(m => [m, m])], mw.hold_down, v => fija("hold_down", v)))));
   }
   $("#sap-elementos").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Incluir", "Elemento", "Id Revit", "Sección / tipo", "Posición (m)", "Ajuste"].map(t => h("th", {}, t)))),
@@ -2239,7 +2241,7 @@ function sapMostrarNube(d) {
   const celda = r => h("td", { class: r > 1 ? "nocumple" : "cumple" }, f2(r));
   sap.razones = {};
   for (const a of d.acero) for (const b of a.barras) sap.razones[b] = a.razon;
-  const malas = d.acero.filter(a => a.razon > 1).length, mmalas = d.madera.filter(m => m.FU > 1).length;
+  const malas = d.acero.filter(a => a.razon > 1).length, mmalas = d.madera.filter(m => m.FU > 1 || m.FU_anclaje > 1).length;
   const defs = d.deformaciones || [], dmalas = defs.filter(x => x.razon > 1).length;
   $("#sap-nube").classList.remove("oculto");
   $("#sap-leyenda-razon").classList.remove("oculto");
@@ -2282,11 +2284,17 @@ function sapMostrarNube(d) {
       h("td", {}, f2(a.interaccion)), h("td", {}, f2(a.corte)), h("td", {}, a.ecuacion ?? ""), h("td", {}, a.combo ?? ""),
       h("td", {}, f2(a.Pu)), h("td", {}, f2(a.Mu)), h("td", {}, f2(a.Vu)), h("td", {}, f2(a.phiPn)), h("td", {}, f2(a.phiMn)),
       h("td", {}, f2(a.phiVn)), h("td", {}, a.KL_r ? a.KL_r.toFixed(0) : ""), h("td", {}, (a.notas || []).join("; "))))));
+  const anclajeTxt = m => (m.anclajes || []).map(a => `${a.borde}: ${a.tipo === "hold-down" ? a.modelo : "unión al pilar"}` +
+    (a.T_adm ? ` (Tadm ${f2(a.T_adm)})` : " (falta Tadm)")).join(" · ");
+  const celdaAnc = m => m.anclajes ? (m.falta_capacidad_union && !(m.FU_anclaje > 1)
+    ? h("td", { class: "nocumple", title: "indica la tracción admisible de la unión al pilar" }, `${f2(m.FU_anclaje)} · falta Tadm unión`)
+    : celda(m.FU_anclaje)) : h("td", {}, "");
   $("#sap-nube-madera").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "FU = v/vadm", "v (tonf/m)", "vadm (tonf/m)", "Combinación",
-      "Tracción anclaje T (tonf)"].map(t => h("th", {}, t)))),
+    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "FU corte = v/vadm", "v (tonf/m)", "vadm (tonf/m)", "Combinación",
+      "T anclaje (tonf)", "L' (m)", "Combinación T", "Anclajes", "FU anclaje"].map(t => h("th", {}, t)))),
     h("tbody", {}, d.madera.map(m => h("tr", {}, h("td", {}, m.muro), h("td", {}, `${m.x0}–${m.x1}`), h("td", {}, f2(m.L)), h("td", {}, f2(m.H)),
-      celda(m.FU), h("td", {}, f3(m.v)), h("td", {}, f3(m.vn)), h("td", {}, m.combo), h("td", {}, f2(m.T_anclaje))))));
+      celda(m.FU), h("td", {}, f3(m.v)), h("td", {}, f3(m.vn)), h("td", {}, m.combo), h("td", {}, f2(m.T_anclaje)),
+      h("td", {}, f2(m.L_prima)), h("td", {}, m.combo_anclaje ?? ""), h("td", {}, anclajeTxt(m)), celdaAnc(m)))));
   sapDibujar();
 }
 

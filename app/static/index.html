@@ -239,7 +239,12 @@
               <label>E pies derechos (tonf/cm²) <input data-sap="muro.e_ppdd" data-f="10000" type="number" step="any" value="102"></label>
               <label>Área PPDD de borde, un extremo (cm²) <input data-sap="muro.a_ext" data-f="0.0001" type="number" step="any" value="75"></label>
               <label>Ancho PPDD de borde (cm) <input data-sap="muro.b_ext" data-f="0.01" type="number" step="any" value="10"></label>
-              <label>Rigidez del anclaje (tonf/m) <input data-sap="muro.k_anclaje" type="number" step="any" value="1337"></label>
+              <label>Anclaje al volcamiento <select data-sap="muro.anclaje"><option value="pilar" selected>unido al pilar de acero (bordes en vano: hold-down)</option>
+                <option value="hold_down">hold-down en ambos bordes</option></select></label>
+              <label>Hold-down (Manual, Tablas 20, 21 y 47) <select data-sap="muro.hold_down"><option value="auto" selected>automático (el más chico que resiste)</option><option value="HD3B">HD3B</option><option value="HD5B">HD5B</option><option value="HD7B">HD7B</option><option value="HD9B">HD9B</option><option value="HD12">HD12</option><option value="HD19">HD19</option><option value="HD12 dobles">HD12 dobles</option></select></label>
+              <label>Rigidez del hold-down si es automático (tonf/m; HD12 = 1337) <input data-sap="muro.k_anclaje" type="number" step="any" value="1337"></label>
+              <label>Unión al pilar: tracción admisible (tonf) <input data-sap="muro.t_union_pilar" type="number" step="any" placeholder="indicar (pernos al pilar)"></label>
+              <label>Unión al pilar: rigidez (tonf/m) <input data-sap="muro.k_union_pilar" type="number" step="any" value="1337"></label>
               <label>Peso del muro (kgf/m²) <input data-sap="muro.peso" data-f="0.001" type="number" step="any" value="50"></label>
               <label>Tamaño de malla (m) <input data-sap="malla" type="number" step="any" value="0.5"></label>
               <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">rotulada</option><option value="empotrado">empotrada</option></select></label>
@@ -248,7 +253,7 @@
             <div class="sap-form">
               <label>Ancho colaborante (m; carga/m² → carga/m) <input data-sap="cargas.ancho_colaborante" id="sap-ancho" type="number" step="any"></label>
               <label>Peso del techo (kgf/m²) <input data-sap="cargas.peso_techo" data-f="0.001" type="number" step="any" value="30"></label>
-              <label>Sobrecarga de techo Lo (kgf/m²) <input data-sap="cargas.lo_techo" data-f="0.001" type="number" step="any" value="100"></label>
+              <label>Sobrecarga de techo Lo (kgf/m²) <input data-sap="cargas.lo_techo" data-f="0.001" type="number" step="any" value="102"></label>
               <label>Reducción de Lr (NCh1537 §8.2: área y pendiente)
                 <select data-sap="cargas.reducir_lr"><option value="true" selected>sí, según cálculo</option><option value="false">no (Lo completa)</option></select></label>
               <label>Viento V (m/s; Ancud 40, NCh432 Tabla 6) <input data-sap="cargas.v_viento" type="number" step="any" value="40"></label>
@@ -297,7 +302,8 @@
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-cargas"></table></div></details>
           <h3>Acero AISC 360-16 LRFD (por elemento de Revit)</h3>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-acero"></table></div>
-          <h3>Muros de madera (Manual de diseño en madera, tensiones admisibles NCh3171 §9.2)</h3>
+          <h3>Muros de madera: corte y anclaje al volcamiento (Manual, Ec. 3.29–3.31; tensiones admisibles NCh3171 §9.2)</h3>
+          <p class="tenue">T = V·H/L′ − (carga gravitacional)·L/(2·L′), con la peor combinación de servicio (controla 0,6D + W o 0,6D + E). Bordes unidos al pilar: el pilar de acero toma T a través de la unión; bordes en un vano: hold-down del catálogo del Manual.</p>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-madera"></table></div>
           <h3>Deformaciones (servicio): flecha de vigas, desplazamiento lateral de pilares y muros</h3>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-deform"></table></div></div>

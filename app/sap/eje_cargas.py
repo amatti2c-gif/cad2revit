@@ -64,7 +64,7 @@ class ParametrosCargas:
     ancho_colaborante: float | None = None   # m: pasa las cargas de superficie (tonf/m²) a líneas (tonf/m); None = el
                                              # ancho tributario del eje que exportó Revit
     peso_techo: float = 0.03            # tonf/m² de techo (cubierta, costaneras, aislación)
-    lo_techo: float = 0.10              # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención (1 kPa)
+    lo_techo: float = 1.0 / G_ACC      # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención: 1 kPa = 102 kgf/m²
     reducir_lr: bool = True             # NCh1537 §8.2: reducción por área tributaria (R1) y pendiente (R2)
     # viento
     v_viento: float = 40.0              # m/s, velocidad básica (NCh432 Tabla 6: 35°–42° S; Ancud, 41°52' S)
@@ -98,7 +98,7 @@ def lr_techo(p: ParametrosCargas, area_tributaria: float, pendiente_pct: float) 
     """Sobrecarga de techo [tonf/m² de proyección horizontal]: Lo, reducida según NCh1537 §8.2 si se pide; nunca
     menos de 0,3 kPa (§5.3.2)."""
     f = reduccion_lr(area_tributaria, pendiente_pct)["factor"] if p.reducir_lr else 1.0
-    return max(p.lo_techo * f, 0.03)
+    return max(p.lo_techo * f, 0.3 / G_ACC)                   # 0,3 kPa = 30,6 kgf/m²
 
 
 def kz(p: ParametrosCargas, z: float) -> float:

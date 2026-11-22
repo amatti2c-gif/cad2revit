@@ -17,10 +17,11 @@ import numpy as np
 
 from .diseno_acero import FY_A270ES, Perfil, capacidades, razon
 from .eje_cargas import A0_ZONA, SUELOS_DS61, espectro_ds61
+from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 6
+VERSION_RESULTADO = 7
 # resistencia admisible al corte de muros (tonf/m), 1 tablero OSB 9,5 mm Sheathing y clavo 8d, según el clavado
 # perimetral (Manual de diseño de estructuras en madera, Tablas 45 y 46; SDPWS 4.3A, sismo). Viento: × 1,4 (SDPWS)
 VN_OSB_9_5_8D = {150: 0.33, 100: 0.48, 50: 0.79}
@@ -98,12 +99,15 @@ def _cqc(valores: list[np.ndarray], omegas: list[float], amort: float = 0.05) ->
     return np.sqrt(np.abs(tot))
 
 
-def _txy_global(q, combo) -> float:
-    """τxy en ejes globales en el centro de un cuadrilátero (PyNite 3.2 falla al pedirlo con local=False)."""
+def _s_global(q, combo) -> np.ndarray:
+    """Tensiones de membrana en ejes globales en el centro de un cuadrilátero (PyNite 3.2 falla con local=False)."""
     sx, sy, txy = (float(np.ravel(v)[0]) for v in q.membrane(0.0, 0.0, True, combo))
     T = q.T()[:3, :3]
-    S = T.T @ np.array([[sx, txy, 0.0], [txy, sy, 0.0], [0.0, 0.0, 0.0]]) @ T
-    return float(S[0, 1])
+    return T.T @ np.array([[sx, txy, 0.0], [txy, sy, 0.0], [0.0, 0.0, 0.0]]) @ T
+
+
+def _txy_global(q, combo) -> float:
+    return float(_s_global(q, combo)[0, 1])
 
 
 def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
@@ -375,14 +379,16 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         fila = [(nombre, ns) for nombre, ns in cuads if abs(round(zc(ns), 3) - fila_z) < 1e-6]
         t = mod.secciones_area[seg["seccion"]]["espesor"]
 
-        def V_fila(combo):
+        def V_fila(combo, comp=(0, 1)):
             v = 0.0
             for nombre, ns in fila:
                 xs_ = [mod.nudos[n][0] for n in ns]
-                txy = sum(_txy_global(m.quads[q], combo) for q in sub[nombre]) / len(sub[nombre])
+                txy = sum(_s_global(m.quads[q], combo)[comp] for q in sub[nombre]) / len(sub[nombre])
                 v += txy * t * (max(xs_) - min(xs_))
             return v
         Vest = {c: V_fila(c) for c in ["DEAD", "LR"] + vientos}
+        # carga gravitacional que baja por el segmento (compresión a media altura, tonf): estabiliza el volcamiento
+        Nest = {c: -V_fila(c, (1, 1)) for c in ("DEAD", "LR")}
         VE = float(_cqc([np.array([V_fila(c)]) for c in modos_combo], list(omegas))[0])
         pm = seg.get("parametros", {})
         esp = int(pm.get("espaciamiento_clavos", 100))
@@ -398,9 +404,39 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                 fu = V / L / cap
                 if peor is None or fu > peor["FU"]:
                     peor = {"FU": fu, "combo": cn + (f" ({w})" if w else ""), "v": V / L, "vn": cap}
-        T = (peor["v"] * L) * H / max(L - 0.1, 0.5) if peor else 0.0
-        madera.append({"muro": seg["muro"], "x0": x0, "x1": x1, "L": L, "H": H, **peor, "T_anclaje": T})
-    madera.sort(key=lambda r: -r["FU"])
+        # ---- anclaje al volcamiento (Manual 3.30 y 3.31): T = V·H/L' − (carga gravitacional)·L/(2·L') ----
+        anc = seg.get("anclaje") or {"bordes": ["hold_down", "hold_down"], "hold_down": "auto"}
+        b_ext = float(pm.get("b_ext", 0.10))
+        b_hd = HOLD_DOWNS.get(anc.get("hold_down"), HOLD_DOWNS["HD12"])[2]
+        Lp = max(L - 1.5 * b_ext - b_hd, 0.3)
+        peor_t = (0.0, "")
+        for cn, fac in asd.items():
+            for w in (vientos if "W" in fac else [None]):
+                V = abs(sum(fac.get(c, 0) * Vest[c] for c in ("DEAD", "LR")) + (fac.get("W", 0) * Vest[w] if w else 0.0)) \
+                    + fac.get("E", 0) * VE
+                Ngrav = max(sum(fac.get(c, 0) * Nest[c] for c in ("DEAD", "LR")), 0.0)
+                T = V * H / Lp - Ngrav * L / (2 * Lp)
+                if T > peor_t[0]:
+                    peor_t = (T, cn + (f" ({w})" if w else ""))
+        T, combo_t = peor_t
+        anclajes = []
+        for lado, tipo in zip(("izquierdo", "derecho"), anc["bordes"]):
+            if tipo == "pilar":
+                cap = anc.get("t_union_pilar")
+                anclajes.append({"borde": lado, "tipo": "unión al pilar", "modelo": "PPDD apernado al pilar",
+                                 "T_adm": cap, "FU": (T / cap) if cap else None})
+            else:
+                modelo = anc.get("hold_down")
+                if modelo not in HOLD_DOWNS:
+                    modelo = hold_down_para(T) or "ninguno alcanza"
+                t_adm = HOLD_DOWNS[modelo][0] if modelo in HOLD_DOWNS else None
+                anclajes.append({"borde": lado, "tipo": "hold-down", "modelo": modelo, "T_adm": t_adm,
+                                 "FU": (T / t_adm) if t_adm else float("inf")})
+        fu_anc = max((a["FU"] for a in anclajes if a["FU"] is not None), default=0.0)
+        madera.append({"muro": seg["muro"], "x0": x0, "x1": x1, "L": L, "H": H, **peor, "T_anclaje": T,
+                       "combo_anclaje": combo_t, "L_prima": Lp, "anclajes": anclajes, "FU_anclaje": fu_anc,
+                       "falta_capacidad_union": any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
+    madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
     deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
     casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, reac_modo, ref)

@@ -35,6 +35,27 @@ G_ACC = 9.80665
 GA_OSB_9_5_8D = {150: 304.0, 100: 446.0, 50: 804.0}
 
 
+# Hold-downs del Manual de diseño de estructuras en madera (Tablas 20, 21 y 47; Simpson Strong-Tie serie HDB, valores
+# SPF/HF para pino radiata, ya amplificados por 1,6 por carga de corta duración): modelo → (T_adm tonf, Δ_adm m, b_HD m)
+HOLD_DOWNS = {
+    "HD3B": (1.38, 0.0030, 0.0333),
+    "HD5B": (1.90, 0.0038, 0.0318),
+    "HD7B": (2.56, 0.0036, 0.0318),
+    "HD9B": (3.82, 0.0045, 0.0318),
+    "HD12": (5.48, 0.0041, 0.0540),
+    "HD19": (7.35, 0.0035, 0.0540),
+    "HD12 dobles": (8.36, 0.0043, 0.0540),
+}
+
+
+def hold_down_para(T: float) -> str | None:
+    """El hold-down más chico del catálogo que resiste la tracción T (tonf); None si ninguno alcanza."""
+    for nombre, (t_adm, _, _) in sorted(HOLD_DOWNS.items(), key=lambda kv: kv[1][0]):
+        if t_adm >= T:
+            return nombre
+    return None
+
+
 @dataclass
 class ParametrosMuroMadera:
     """Parámetros de la rigidez lateral de un muro de marco plataforma (tonf, m)."""
@@ -46,6 +67,12 @@ class ParametrosMuroMadera:
     tableros: int = 1                   # caras con OSB
     ga: float | None = None             # tonf/m; si se da, manda sobre la tabla
     k_anclaje: float = 5.48 / 0.0041    # hold-down HD12: T_adm 5,48 tonf / Δ_adm 4,1 mm ≈ 1337 tonf/m
+    # anclaje al volcamiento (todo muro va anclado): "pilar" (por defecto): el borde que llega a un pilar de acero se
+    # une a él (el pilar toma la tracción) y el borde que llega a un vano lleva hold-down; "hold_down": ambos bordes
+    anclaje: str = "pilar"
+    hold_down: str = "auto"             # modelo de HOLD_DOWNS; "auto" = el más chico que resiste (rigidez: k_anclaje)
+    k_union_pilar: float = 5.48 / 0.0041  # tonf/m, rigidez axial de la unión del PPDD de borde al pilar
+    t_union_pilar: float | None = None  # tonf, tracción admisible de esa unión (pernos o tornillos al pilar)
     peso: float = 0.05                  # tonf/m² de muro (peso propio)
 
     def ga_total(self) -> float:
@@ -290,7 +317,13 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                 nombre = f"MURO_{mat}_{round(t * 1000)}"
                 mod.secciones_area.setdefault(nombre, {"material": mat, "espesor": t, "f11": 1, "f22": 1, "f12": 1, "peso": 1})
                 return nombre
-            e, g, r = shell_equivalente(L, H, t, pmw)
+            # anclaje de cada borde del segmento: unión al pilar (si el muro va unido a pilares y hay uno en ese
+            # borde) o hold-down; la rigidez del anclaje entra en la calibración del shell (Manual, Ec. 2.22)
+            en_pilar = [any(abs(xb - xp) <= 0.05 for xp in xs_pilar) for xb in seg]
+            bordes = ["pilar" if (pmw.anclaje == "pilar" and p_) else "hold_down" for p_ in en_pilar]
+            k_hd = (HOLD_DOWNS[pmw.hold_down][0] / HOLD_DOWNS[pmw.hold_down][1]) if pmw.hold_down in HOLD_DOWNS else pmw.k_anclaje
+            k_anc = min(pmw.k_union_pilar if b_ == "pilar" else k_hd for b_ in bordes)
+            e, g, r = shell_equivalente(L, H, t, _replace(pmw, k_anclaje=k_anc))
             mod.materiales.setdefault("MADERA_EQ", {"tipo": "Other", "E": pmw.e_ppdd, "nu": 0.0, "gamma": pmw.peso / t})
             g0 = pmw.e_ppdd / 2.0
             nombre = f"MPF_{w['id']}_{round(seg[0] * 100)}"
@@ -301,7 +334,9 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                                           "H": round(H, 3), "K_eq_tonf_m": round(r["K"], 1), "E_shell": round(e, 1),
                                           "G_shell": round(g, 1), "seccion": nombre,
                                           "parametros": {"espaciamiento_clavos": pmw.espaciamiento_clavos,
-                                                         "tableros": pmw.tableros}})
+                                                         "tableros": pmw.tableros, "b_ext": pmw.b_ext},
+                                          "anclaje": {"bordes": bordes, "hold_down": pmw.hold_down, "k": round(k_anc, 1),
+                                                      "t_union_pilar": pmw.t_union_pilar}})
             return nombre
 
         nudos_muro = set()
