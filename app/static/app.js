@@ -2461,6 +2461,18 @@ async function cargarFundacion() {
     "Este eje no trae la sección de fundación: vuelve a exportarlo con el botón «Eje a análisis» de Revit";
   fun.res = null;
   $("#fun-res").classList.add("oculto");
+  // imagen del detalle de armaduras exportada desde Revit
+  const caja = $("#fun-detalle");
+  caja.classList.add("oculto");
+  if (sap.nombre) {
+    const url = P(`/sap/${encodeURIComponent(sap.nombre)}/detalle`);
+    const r = await fetch(url, { method: "GET", cache: "no-store" });
+    if (r.ok) {
+      $("#fun-detalle-img").src = URL.createObjectURL(await r.blob());
+      caja.classList.remove("oculto");
+      $("#fun-detalle-nota").textContent = "Imagen del detalle exportada desde Revit con «Eje a análisis».";
+    }
+  }
   $("#fun-estado").textContent = "";
   if (!sap.nombre) return;
   try { funMostrar(await api("GET", P(`/sap/${encodeURIComponent(sap.nombre)}/fundacion`))); } catch { /* aún sin análisis */ }
@@ -2542,6 +2554,14 @@ function funLlenarArmaduras(a) {
 }
 
 $("#btn-fundacion").addEventListener("click", () => intentar(funAnalizar));
+async function funUsarDetalle(deNuevo) {
+  $("#fun-detalle-nota").textContent = "Leyendo el detalle…";
+  const a = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/detalle/leer${deNuevo ? "?de_nuevo=true" : ""}`));
+  funLlenarArmaduras(a);
+  $("#fun-detalle-nota").textContent = "Armaduras tomadas del detalle de Revit" + (a.observaciones ? `: ${a.observaciones}` : "") + ". Revisa los valores.";
+}
+$("#btn-detalle-usar").addEventListener("click", () => intentar(() => funUsarDetalle(false)));
+$("#btn-detalle-releer").addEventListener("click", () => intentar(() => funUsarDetalle(true)));
 $("#fun-combo").addEventListener("change", funDibujar);
 $("#sel-eje-fun").addEventListener("change", ev => intentar(async () => { await abrirEjeSap(ev.target.value); await cargarFundacion(); }));
 $("#inp-croquis-fun").addEventListener("change", ev => intentar(async () => {

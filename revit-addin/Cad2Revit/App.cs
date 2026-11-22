@@ -704,6 +704,13 @@ namespace Cad2Revit
                 ruta = dlg.FileName;
             }
             var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ExportarEjeSap(eje, ruta);
+            // detalle de armaduras del sobrecimiento (vista de Revit) como imagen, para la pestaña 7 · Fundaciones
+            string detalle = null, vistaDetalle = null;
+            try { (detalle, vistaDetalle) = ExportarDetalleArmaduras(doc, eje.Name, ruta); }
+            catch (System.Exception ex) { informe.Advertencia($"No se pudo exportar la vista de detalle de armaduras: {ex.Message}"); }
+            if (detalle != null) informe.Advertencia($"Detalle de armaduras: vista «{vistaDetalle}» exportada como imagen");
+            else informe.Advertencia("No hay una vista de detalle de armaduras (su nombre debe contener «armadura», «sobrecimiento», " +
+                                     "«fundación» o «pedestal»): la pestaña 7 no tendrá la imagen del detalle");
             if (informe.Errores.Count > 0)
             {
                 new TaskDialog("cad2revit") { MainInstruction = "No se pudo exportar el eje", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
@@ -712,7 +719,7 @@ namespace Cad2Revit
             // el eje se sube a la app de cad2revit y se abre su pestaña de análisis y diseño (ahí se ajusta la modelación y
             // se analiza y diseña en la nube con PyNite; SAP2000 con sap2000-toolkit queda como borrador opcional)
             string abierto = null, falla = null;
-            try { abierto = SubirEje(ruta); }
+            try { abierto = SubirEje(ruta, detalle); }
             catch (System.Exception ex) { falla = ex.Message; }
             new TaskDialog("cad2revit")
             {
@@ -728,7 +735,45 @@ namespace Cad2Revit
 
         /// <summary>Sube el .sap.json a un proyecto de la app y abre su pestaña de análisis y diseño. Devuelve la URL abierta (o null si
         /// se canceló).</summary>
-        private static string SubirEje(string ruta)
+        /// <summary>Exporta como PNG la vista de detalle de armaduras del sobrecimiento: vistas de dibujo, de detalle o
+        /// secciones cuyo nombre contenga «armadura», «sobrecimiento», «fundación» o «pedestal» (prefiere la que nombra
+        /// el eje y la que dice «armadura»). Devuelve (ruta del PNG, nombre de la vista) o (null, null).</summary>
+        private static (string, string) ExportarDetalleArmaduras(Document doc, string nombreEje, string rutaEje)
+        {
+            string[] claves = { "armadura", "sobrecimiento", "fundaci", "pedestal" };
+            bool Contiene(string t, string k) => t.IndexOf(k, System.StringComparison.OrdinalIgnoreCase) >= 0;
+            var vista = new FilteredElementCollector(doc).OfClass(typeof(View)).Cast<View>()
+                .Where(v => !v.IsTemplate && (v.ViewType == ViewType.DraftingView || v.ViewType == ViewType.Detail ||
+                                              v.ViewType == ViewType.Section || v.ViewType == ViewType.Legend))
+                .Where(v => claves.Any(k => Contiene(v.Name, k)))
+                .OrderByDescending(v => Contiene(v.Name, "eje " + nombreEje) || v.Name.EndsWith(" " + nombreEje) ? 2 : 0)
+                .ThenByDescending(v => Contiene(v.Name, "armadura") ? 1 : 0)
+                .ThenBy(v => v.Name)
+                .FirstOrDefault();
+            if (vista == null) return (null, null);
+            var dir = System.IO.Path.GetDirectoryName(rutaEje);
+            var baseNombre = System.IO.Path.GetFileNameWithoutExtension(rutaEje).Replace(".sap", "") + "-detalle";
+            var opt = new ImageExportOptions
+            {
+                ExportRange = ExportRange.SetOfViews,
+                FilePath = System.IO.Path.Combine(dir, baseNombre),
+                HLRandWFViewsFileType = ImageFileType.PNG,
+                ShadowViewsFileType = ImageFileType.PNG,
+                ImageResolution = ImageResolution.DPI_150,
+                ZoomType = ZoomFitType.FitToPage,
+                FitDirection = FitDirectionType.Horizontal,
+                PixelSize = 2000,
+            };
+            opt.SetViewsAndSheets(new System.Collections.Generic.List<ElementId> { vista.Id });
+            var antes = System.DateTime.Now.AddSeconds(-2);
+            doc.ExportImage(opt);
+            var png = System.IO.Directory.GetFiles(dir, baseNombre + "*.png")
+                .Select(f => new System.IO.FileInfo(f)).Where(f => f.LastWriteTime >= antes)
+                .OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+            return png != null ? (png.FullName, vista.Name) : (null, null);
+        }
+
+        private static string SubirEje(string ruta, string detalle = null)
         {
             var c = ComandoArmaduras.CargarConexion(false);
             for (int intento = 0; c != null && intento < 3; intento++)
@@ -774,6 +819,20 @@ namespace Cad2Revit
                 var texto = s.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 if (!s.IsSuccessStatusCode) throw new System.Exception($"la app respondió {(int)s.StatusCode}: {texto}");
                 var nombre = System.Text.Json.JsonDocument.Parse(texto).RootElement.GetProperty("nombre").GetString();
+                if (detalle != null && System.IO.File.Exists(detalle))
+                {
+                    using var cuerpoImg = new System.Net.Http.MultipartFormDataContent();
+                    var img = new System.Net.Http.ByteArrayContent(System.IO.File.ReadAllBytes(detalle));
+                    img.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+                    cuerpoImg.Add(img, "imagen", System.IO.Path.GetFileName(detalle));
+                    try
+                    {
+                        http.Timeout = System.TimeSpan.FromSeconds(120);
+                    }
+                    catch { /* ya se usó el cliente: queda el plazo anterior */ }
+                    http.PostAsync($"{c.Url}/api/proyectos/{System.Uri.EscapeDataString(ultimo)}/sap/{System.Uri.EscapeDataString(nombre)}/detalle",
+                                   cuerpoImg).GetAwaiter().GetResult();
+                }
                 var url = $"{c.Url}/?proyecto={System.Uri.EscapeDataString(ultimo)}&tab=sap&eje={System.Uri.EscapeDataString(nombre)}";
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = url, UseShellExecute = true });
                 return url;

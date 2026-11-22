@@ -1820,7 +1820,7 @@ def leer_eje_sap(pid: str, nombre: str):
 def borrar_eje_sap(pid: str, nombre: str):
     f = _eje_sap(_proyecto(pid), nombre)
     f.unlink()
-    for ext in (".ajustes.json", ".resultado.json", ".fundacion.json"):
+    for ext in (".ajustes.json", ".resultado.json", ".fundacion.json", ".detalle.png", ".detalle.json"):
         a = f.with_name(f.name.replace(".sap.json", ext))
         if a.is_file():
             a.unlink()
@@ -1930,6 +1930,63 @@ def resultado_eje_pynite(pid: str, nombre: str):
     d = json.loads(r.read_text(encoding="utf-8"))
     d["desactualizado"] = d.get("version") != VERSION_RESULTADO
     return d
+
+
+def _detalle_eje(f: Path, ext: str) -> Path:
+    return f.with_name(f.name.replace(".sap.json", ext))
+
+
+def _leer_detalle(f: Path) -> dict:
+    from app.armaduras import leer_croquis
+    png = _detalle_eje(f, ".detalle.png")
+    try:
+        lectura = leer_croquis(png.read_bytes(), "image/png")
+    except RuntimeError as e:
+        raise HTTPException(502, str(e))
+    _detalle_eje(f, ".detalle.json").write_text(json.dumps(lectura, ensure_ascii=False), encoding="utf-8")
+    return lectura
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/detalle")
+async def subir_detalle_eje(pid: str, nombre: str, imagen: UploadFile = File(...)):
+    """Imagen del detalle de armaduras del sobrecimiento (la exporta Revit con «Eje a análisis»). Se lee al subirla si
+    la app tiene la clave de la API de Claude."""
+    f = _eje_sap(_proyecto(pid), nombre)
+    datos = await imagen.read()
+    if len(datos) > 8 * 1024 * 1024:
+        raise HTTPException(413, "La imagen pesa más de 8 MB")
+    _detalle_eje(f, ".detalle.png").write_bytes(datos)
+    lectura, aviso = None, None
+    if _detalle_eje(f, ".detalle.json").exists():
+        _detalle_eje(f, ".detalle.json").unlink()
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import asyncio
+            lectura = await asyncio.to_thread(_leer_detalle, f)
+        except HTTPException as e:
+            aviso = e.detail
+    else:
+        aviso = "sin la clave de la API de Claude la imagen queda guardada, pero no se lee"
+    return {"guardado": True, "lectura": lectura, "aviso": aviso}
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}/detalle")
+def ver_detalle_eje(pid: str, nombre: str):
+    png = _detalle_eje(_eje_sap(_proyecto(pid), nombre), ".detalle.png")
+    if not png.is_file():
+        raise HTTPException(404, "Este eje no tiene imagen del detalle de armaduras")
+    return FileResponse(png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/detalle/leer")
+def leer_detalle_eje(pid: str, nombre: str, de_nuevo: bool = False):
+    f = _eje_sap(_proyecto(pid), nombre)
+    if not _detalle_eje(f, ".detalle.png").is_file():
+        raise HTTPException(404, "Este eje no tiene imagen del detalle de armaduras: expórtalo de nuevo con «Eje a análisis»")
+    js = _detalle_eje(f, ".detalle.json")
+    if js.is_file() and not de_nuevo:
+        return json.loads(js.read_text(encoding="utf-8"))
+    return _leer_detalle(f)
 
 
 class PedidoFundacion(BaseModel):

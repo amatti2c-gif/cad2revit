@@ -324,3 +324,20 @@ def test_fundacion_del_eje(tmp_path, monkeypatch):
     s_d = next(c for c in d["servicio"] if c["combo"] == "D")
     assert s_d["N"] > 1.9
     assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/fundacion").json()["L"] == d["L"]
+
+
+def test_detalle_de_armaduras_del_eje(tmp_path, monkeypatch):
+    monkeypatch.setenv("CAD2REVIT_DATOS", str(tmp_path))
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from fastapi.testclient import TestClient
+    from app.servidor import app
+    cli = TestClient(app)
+    pid = cli.post("/api/proyectos", json={"nombre": "det"}).json()["id"]
+    arch = {"archivo": ("eje.sap.json", io.BytesIO(json.dumps(EJE).encode()), "application/json")}
+    nombre = cli.post(f"/api/proyectos/{pid}/sap", files=arch).json()["nombre"]
+    assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/detalle").status_code == 404
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 100
+    r = cli.post(f"/api/proyectos/{pid}/sap/{nombre}/detalle", files={"imagen": ("d.png", io.BytesIO(png), "image/png")}).json()
+    assert r["guardado"] and r["lectura"] is None and "clave" in r["aviso"]
+    assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/detalle").content == png
+    assert cli.post(f"/api/proyectos/{pid}/sap/{nombre}/detalle/leer").status_code == 502     # sin clave

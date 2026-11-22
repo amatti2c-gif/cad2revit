@@ -282,3 +282,6 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 
 .plegable > summary { cursor: pointer; }
 .plegable[open] > summary { margin-bottom: 8px; }
+
+#fun-detalle-img { width: 100%; max-height: 380px; object-fit: contain; background: #fff; border: 1px solid var(--borde);
+  border-radius: var(--radio); margin-bottom: 8px; }
