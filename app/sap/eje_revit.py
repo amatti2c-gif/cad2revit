@@ -596,6 +596,8 @@ def main(argv=None):
     ap.add_argument("--k-anclaje", type=float, help="rigidez del anclaje (tonf/m)")
     ap.add_argument("--sin-cargas", action="store_true", help="solo geometría (sin cargas ni combinaciones)")
     ap.add_argument("--peso-techo", type=float, default=30, help="peso del techo (kgf/m²)")
+    ap.add_argument("--ancho", type=float, help="ancho colaborante (m) para pasar cargas por m² a cargas por m; "
+                                                "por defecto, el ancho tributario del eje exportado por Revit")
     ap.add_argument("--viento", type=float, default=35, help="velocidad básica del viento V (m/s, NCh432)")
     ap.add_argument("--exposicion", default="C", choices=["B", "C", "D"])
     ap.add_argument("--zona", type=int, default=2, choices=[1, 2, 3], help="zona sísmica (NCh433)")
@@ -624,7 +626,7 @@ def main(argv=None):
         from .eje_cargas import ParametrosCargas, cargas_eje
         pc = ParametrosCargas(peso_techo=a.peso_techo / 1000, v_viento=a.viento, exposicion=a.exposicion, zona=a.zona,
                               suelo=a.suelo, importancia_sismo=a.importancia, r0=a.r0,
-                              reducir_lr=not a.sin_reduccion_lr)
+                              reducir_lr=not a.sin_reduccion_lr, ancho_colaborante=a.ancho)
         cargas = cargas_eje(mod, pc)
         for x in cargas.resumen:
             print(" ", x)

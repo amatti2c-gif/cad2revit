@@ -2040,7 +2040,9 @@ async function abrirEjeSap(nombre) {
   const r = await api("GET", P(`/sap/${encodeURIComponent(nombre)}`));
   sap.nombre = nombre; sap.eje = r.eje; sap.razones = {};
   sap.opciones = Object.assign({ excluir: [], apoyos: {}, secciones: {}, muros: {} }, r.ajustes.opciones || {});
+  $("#sap-ancho").value = "";
   sapPonerParametros(r.ajustes.parametros || {});
+  $("#sap-ancho").placeholder = r.eje.ancho_tributario != null ? r.eje.ancho_tributario + " (tributario de Revit)" : "1";
   $("#sap-contenido").classList.remove("oculto");
   $("#sap-resultados").classList.add("oculto");
   $("#sap-leyenda-razon").classList.add("oculto");

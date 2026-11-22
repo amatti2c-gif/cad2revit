@@ -40,6 +40,8 @@ CP_TECHO_SOTAVENTO = [(0, -0.3), (10, -0.3), (15, -0.5), (20, -0.6), (90, -0.6)]
 
 @dataclass
 class ParametrosCargas:
+    ancho_colaborante: float | None = None   # m: pasa las cargas de superficie (tonf/m²) a líneas (tonf/m); None = el
+                                             # ancho tributario del eje que exportó Revit
     peso_techo: float = 0.03            # tonf/m² de techo (cubierta, costaneras, aislación)
     lo_techo: float = 0.10              # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención (1 kPa)
     reducir_lr: bool = True             # NCh1537 §8.2: reducción por área tributaria (R1) y pendiente (R2)
@@ -112,6 +114,7 @@ class CargasEje:
     patrones: dict = field(default_factory=dict)       # nombre → tipo (DEAD, ROOF LIVE, WIND, QUAKE)
     distribuidas: list = field(default_factory=list)   # (barra, patrón, dir "X"|"Z"|"GRAV"|"GRAV_PROY", valor tonf/m)
     combos: dict = field(default_factory=dict)         # nombre → {caso: factor}
+    ancho: float = 1.0                                 # ancho colaborante usado (m)
     resumen: list = field(default_factory=list)
 
 
@@ -119,9 +122,16 @@ def cargas_eje(mod, p: ParametrosCargas | None = None) -> CargasEje:
     """Cargas sobre las barras del modelo (mod: eje_revit.ModeloEje) y combinaciones NCh3171."""
     p = p or ParametrosCargas()
     c = CargasEje()
-    b = mod.ancho_tributario or 1.0
-    if not mod.ancho_tributario:
-        c.resumen.append("Sin ancho tributario en el archivo: se usó 1 m")
+    if p.ancho_colaborante:
+        b = float(p.ancho_colaborante)
+        origen_b = "dado en la app" + (f"; el ancho tributario de Revit es {mod.ancho_tributario:.2f} m" if mod.ancho_tributario else "")
+    elif mod.ancho_tributario:
+        b, origen_b = mod.ancho_tributario, "ancho tributario del eje en Revit (mitad de la distancia a los ejes vecinos)"
+    else:
+        b, origen_b = 1.0, "sin ancho tributario en el archivo: se usó 1 m"
+    c.ancho = b
+    c.resumen.append(f"Ancho colaborante b = {b:.2f} m ({origen_b}): carga por m² × b = carga por metro lineal")
+    c.resumen.append(f"D techo: {p.peso_techo * 1000:.0f} kgf/m² × {b:.2f} m = {p.peso_techo * b * 1000:.0f} kgf/m sobre las vigas de techo")
     c.patrones = {"DEAD": "DEAD", "LR": "ROOF LIVE", "W1": "WIND", "W2": "WIND", "W3": "WIND", "W4": "WIND", "E": "QUAKE"}
 
     def geo(f):
@@ -150,17 +160,17 @@ def cargas_eje(mod, p: ParametrosCargas | None = None) -> CargasEje:
         c.distribuidas.append((f, "LR", "GRAV_PROY", lr * b))
     red = reduccion_lr(at, pend * 100)
     if p.reducir_lr:
-        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² — NCh1537 §8.2: Lo {p.lo_techo * 1000:.0f} kgf/m², "
+        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² × {b:.2f} m = {lr * b * 1000:.0f} kgf/m (proyección horizontal) — NCh1537 §8.2: Lo {p.lo_techo * 1000:.0f} kgf/m², "
                          f"A_T {at:.1f} m² → R1 = {red['R1']:.3f}; pendiente F {pend * 100:.1f} % → R2 = {red['R2']:.3f}; "
                          f"R1·R2 = {red['R1R2']:.3f} → factor {red['factor']:.3f}" + (" (mínimo 0,3 kPa)" if lr > p.lo_techo * red['factor'] + 1e-9 else ""))
     else:
-        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² — sin reducción (Lo); con NCh1537 §8.2 sería factor "
+        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² × {b:.2f} m = {lr * b * 1000:.0f} kgf/m — sin reducción (Lo); con NCh1537 §8.2 sería factor "
                          f"{red['factor']:.3f} (R1 {red['R1']:.3f}, R2 {red['R2']:.3f})")
 
     # W: viento en el plano del eje, +X (W1 con +GCpi, W2 con −GCpi) y −X (W3, W4)
     qh = q_viento(p, h)
     c.resumen.append(f"Viento: q_h = {qh * 1000:.1f} kgf/m² (V {p.v_viento} m/s, exposición {p.exposicion}, h {h:.2f} m); "
-                     f"pendiente {ang:.1f}°")
+                     f"pendiente {ang:.1f}°; presiones p = q_h·(G·Cp − GCpi) × {b:.2f} m sobre pilares extremos y faldones")
     x_min = min((geo(f)[0] for f in pilares), default=None)
     x_max = max((geo(f)[0] for f in pilares), default=None)
     for nombre, sentido, gcpi in (("W1", 1, p.gcpi), ("W2", 1, -p.gcpi), ("W3", -1, p.gcpi), ("W4", -1, -p.gcpi)):
