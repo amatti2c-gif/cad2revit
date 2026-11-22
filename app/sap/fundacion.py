@@ -377,13 +377,39 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     Acv = bp_mm * L * 1000
     Vn_h = Acv * (ac * lam * math.sqrt(pf.fc) + rho_l * pf.fy) / 1000    # kN (corte horizontal en el plano)
     Vn_h = min(Vn_h, 0.83 * math.sqrt(pf.fc) * Acv / 1000)
+    sec_p = f"sección del pedestal {bp_mm / 10:.0f}×{hp_mm / 10:.0f} cm"
+    # armadura mínima longitudinal del pedestal solo (9.6.1.2, bw = espesor del pedestal): cada cara cuenta las barras
+    # de su mitad de la altura del pedestal, con d medido sobre el pedestal
+    capas_p = [(a_, y) for a_, y in capas if y < hp_mm]
+
+    def minimo_pedestal(cara):
+        arriba = cara == "superior"
+        sel = [(a_, y) for a_, y in capas_p if (y <= hp_mm / 2) == arriba]
+        As = sum(a_ for a_, _ in sel)
+        if As <= 0:
+            return {"verificacion": f"Pedestal: armadura mínima longitudinal, mitad {cara} ({sec_p})", "valor": 0.0,
+                    "minimo": round(rho_min, 5), "razon": None, "notas": ["sin barras en esa mitad del pedestal"]}
+        yb = sum(a_ * y for a_, y in sel) / As
+        d = hp_mm - yb if arriba else yb
+        As_min = rho_min * bp_mm * d
+        txt = (f"{As:.0f} mm² frente a As,min = {rho_min:.5f}·{bp_mm:.0f}·{d:.0f} = {As_min:.0f} mm² (9.6.1.2)")
+        if As < As_min:
+            txt += f": para cumplir usar {opciones_armadura(As_min)} en esa mitad"
+        return {"verificacion": f"Pedestal: armadura mínima longitudinal, mitad {cara} ({sec_p})", "valor": As / (bp_mm * d),
+                "minimo": round(rho_min, 5), "razon": As_min / As, "notas": [txt]}
+
     muro = [
-        {"verificacion": "Cuantía vertical mínima ρl ≥ 0,0012 (11.6.1)", "valor": rho_l, "minimo": 0.0012,
-         "razon": 0.0012 / rho_l if rho_l else None},
-        {"verificacion": "Cuantía horizontal mínima ρt ≥ 0,0020 (11.6.1)", "valor": rho_t, "minimo": 0.0020,
-         "razon": 0.0020 / rho_t if rho_t else None},
-        {"verificacion": "Corte en su plano por las fuerzas horizontales (11.5.4.3)", "Vu_tonf": peor["H"][0],
-         "combo": peor["H"][1], "phiVn_tonf": 0.75 * Vn_h / kN, "razon": peor["H"][0] * kN / (0.75 * Vn_h) if Vn_h else None},
+        {"verificacion": f"Pedestal como muro: cuantía vertical ρl ≥ 0,0012 (11.6.1; {sec_p})", "valor": rho_l, "minimo": 0.0012,
+         "razon": 0.0012 / rho_l if rho_l else None,
+         "notas": [f"estribos φ{arm.ped_estribo_diametro_mm:g}@{arm.ped_estribo_separacion_cm:g} (2 ramas) / ({bp_mm:.0f} × separación)"]},
+        {"verificacion": f"Pedestal como muro: cuantía horizontal ρt ≥ 0,0020 (11.6.1; {sec_p})", "valor": rho_t, "minimo": 0.0020,
+         "razon": 0.0020 / rho_t if rho_t else None,
+         "notas": [f"{2 * n_cara} φ{arm.ped_diametro_mm:g} del pedestal / ({bp_mm:.0f} × {hp_mm:.0f})"]},
+        minimo_pedestal("superior"),
+        minimo_pedestal("inferior"),
+        {"verificacion": f"Pedestal como muro: corte en su plano por las fuerzas horizontales (11.5.4.3; espesor {bp_mm / 10:.0f} cm)",
+         "Vu_tonf": peor["H"][0], "combo": peor["H"][1], "phiVn_tonf": 0.75 * Vn_h / kN,
+         "razon": peor["H"][0] * kN / (0.75 * Vn_h) if Vn_h else None},
     ]
     # carga axial bajo cada apoyo: largo efectivo = ancho del apoyo + 4·espesor (11.2.3.1), sin pasar la distancia a
     # los vecinos; φPn = 0,55·φ·f'c·Ag·[1 − (k·lc/32h)²] con k = 0,8 (11.5.3.1)
@@ -395,7 +421,7 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
         vec = sorted(abs(o["x"] - a["x"]) for o in apoyos if o is not a and abs(o["x"] - a["x"]) > 1e-6)
         le = min(pf.ancho_apoyo + 4 * bp, vec[0] if vec else L) * 1000
         phiPn = 0.55 * 0.65 * pf.fc * bp_mm * le * (1 - (0.8 * lc / (32 * bp_mm)) ** 2) / 1000
-        muro.append({"verificacion": f"Carga axial bajo el apoyo x = {a['x']:.2f} m" + (f" (pilar {a['pilar']})" if a.get("pilar") else ""),
+        muro.append({"verificacion": f"Pedestal como muro: carga axial bajo el apoyo x = {a['x']:.2f} m" + (f" (pilar {a['pilar']})" if a.get("pilar") else ""),
                      "Pu_tonf": pu, "combo": cn, "phiPn_tonf": phiPn / kN, "razon": pu * kN / phiPn if phiPn > 0 else None})
 
     ok_srv = [s for s in servicio if s["estable"]]
