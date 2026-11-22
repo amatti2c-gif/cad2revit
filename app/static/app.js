@@ -2245,6 +2245,19 @@ function sapMostrarNube(d) {
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
     h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"), " · ",
     h("span", { class: dmalas ? "nocumple" : "cumple" }, dmalas ? `${dmalas} deformación(es) exceden el límite` : "Deformaciones: todas cumplen"));
+  const casos = d.casos || [];
+  $("#sap-nube-casos").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Caso", "Descripción", "ΣFx reacción (tonf)", "ΣFy reacción (tonf)", "δx máx (mm)", "δy máx (mm)",
+      "|N| máx (tonf)", "|V| máx (tonf)", "|M| máx (tonf·m)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, casos.map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso)), h("td", {}, c.descripcion),
+      h("td", {}, c.reaccion_y == null ? `Q = ${f2(c.reaccion_x)}` : f2(c.reaccion_x)), h("td", {}, c.reaccion_y == null ? "—" : f2(c.reaccion_y)),
+      h("td", {}, f2(c.dx_max_mm)), h("td", {}, c.dy_max_mm == null ? "—" : f2(c.dy_max_mm)),
+      h("td", {}, f2(c.N_max)), h("td", {}, f2(c.V_max)), h("td", {}, f2(c.M_max))))));
+  const rango = (a, b) => Math.abs(a - b) < 5e-4 ? f3(a) : `${f3(a)} a ${f3(b)}`;
+  $("#sap-nube-cargas").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Caso", "Elemento (Revit)", "Rol", "Dirección", "Carga (tonf/m)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, casos.flatMap(c => c.cargas.map(x => h("tr", {}, h("td", {}, c.caso), h("td", {}, x.elemento), h("td", {}, x.rol),
+      h("td", {}, x.direccion), h("td", {}, rango(x.min, x.max)))))));
   $("#sap-nube-deform").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Elemento", "Verificación", "Combinación", "δ (mm)", "Límite (mm)", "Criterio", "L o H (m)", "Razón"]
       .map(t => h("th", {}, t)))),

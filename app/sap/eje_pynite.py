@@ -119,9 +119,18 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         m.def_support(n, False, False, True, True, True, True)
 
     # ---- cargas ----
+    # peso sísmico concentrado en los nudos (tonf), a partir de las mismas cargas de DEAD: PyNite subestima la masa de
+    # las cargas distribuidas en barras (FEModel3D.M), así que la matriz de masa se arma aquí
+    peso_nudo: dict = {}
+
+    def repartir(a, b, w):
+        peso_nudo[a] = peso_nudo.get(a, 0.0) + w / 2
+        peso_nudo[b] = peso_nudo.get(b, 0.0) + w / 2
     for f, a, b, sec in mod.barras:                                   # peso propio del acero
         _, g = perfiles[sec]
         m.add_member_dist_load(f, "FY", -7.85 * g["A"], -7.85 * g["A"], case="DEAD")
+        (xa, za), (xb, zb) = mod.nudos[a], mod.nudos[b]
+        repartir(a, b, 7.85 * g["A"] * math.hypot(xb - xa, zb - za))
     for nombre, ns, sec in mod.areas:                                 # peso de los muros a sus nudos
         a = mod.secciones_area[sec]
         pts = [mod.nudos[n] for n in ns]
@@ -130,7 +139,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         w = mod.materiales[a["material"]]["gamma"] * a["espesor"] * area / len(ns)
         for n in ns:
             m.add_node_load(n, "FY", -w, case="DEAD")
+            peso_nudo[n] = peso_nudo.get(n, 0.0) + w
     geo = {f: (mod.nudos[a], mod.nudos[b]) for f, a, b, _ in mod.barras}
+    _extremos = {f: (a, b) for f, a, b, _ in mod.barras}
     for f, pat, d, v in cargas.distribuidas:
         (x0, z0), (x1, z1) = geo[f]
         L = math.hypot(x1 - x0, z1 - z0)
@@ -143,6 +154,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         else:                                                         # por proyección horizontal
             w = -v * abs(x1 - x0) / L
             m.add_member_dist_load(f, "FY", w, w, case=pat)
+        if pat == "DEAD":
+            peso = {"GRAV": abs(v) * L, "Z": abs(v) * L, "GRAV_PROY": abs(v) * abs(x1 - x0)}.get(d, 0.0)
+            repartir(*_extremos[f], peso)
     estaticos = [n for n, t in cargas.patrones.items() if t != "QUAKE"]
     for n in estaticos:
         m.add_load_combo(n, {n: 1.0})
@@ -153,7 +167,11 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
     K11, _, _, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
-    M11, _, _, _ = Analysis._partition(m, m.M("DEAD", "Y", G_ACC, False, sparse=True).tocsr(), D1_idx, D2_idx)
+    import scipy.sparse as sps
+    diag = np.zeros(len(m.nodes) * 6)
+    for n, w in peso_nudo.items():
+        diag[m.nodes[n].ID * 6 + 0] = diag[m.nodes[n].ID * 6 + 1] = w / G_ACC
+    M11, _, _, _ = Analysis._partition(m, sps.diags(diag).tocsr(), D1_idx, D2_idx)
     import scipy.sparse.linalg as sla
     nmod = min(pc.modos, K11.shape[0] - 2)
     vals, vecs = sla.eigsh(K11.tocsc(), k=nmod, M=M11.tocsc(), sigma=0.0, which="LM")
@@ -303,12 +321,13 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     madera.sort(key=lambda r: -r["FU"])
 
     deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
+    casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), q0 * factor, factor)
 
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro,
-        "acero": acero, "madera": madera, "deformaciones": deformaciones,
+        "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
         "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }
 
@@ -319,6 +338,47 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
 # - pilares y muros, desplazamiento lateral relativo: H/200 con viento (D+W) y 0,002·H con sismo (NCh433 5.9.2, con
 #   los desplazamientos del análisis espectral reducido)
 LIMITES_DEF = {"viga_total": 240, "viga_variable": 360, "lateral_viento": 200, "deriva_sismo": 0.002}
+
+
+def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, q_sismo, factor) -> list[dict]:
+    """Resumen de cada estado de carga sin mayorar: reacciones totales, desplazamientos máximos, esfuerzos máximos en
+    las barras de acero y las cargas aplicadas a cada elemento de Revit (tonf/m)."""
+    desc = {"DEAD": "Peso propio (acero y muros) + peso del techo", "LR": "Sobrecarga de techo Lr (NCh1537)"}
+    for linea in cargas.resumen:
+        t = linea.strip()
+        if t[:1] == "W" and ":" in t and t.split(":")[0][1:].isdigit():
+            desc[t.split(":")[0]] = "Viento NCh432: " + t.split(":", 1)[1].strip()
+    apoyos = list(mod.apoyos)
+    nudos = list(mod.nudos)
+    # cargas aplicadas por elemento de Revit, patrón y dirección: rango de valores (tonf/m)
+    aplic = {}
+    for f, pat, d, v in cargas.distribuidas:
+        k = (pat, mod.origen.get(f) or f, mod.roles.get(f) or "", {"X": "horizontal (X)", "Z": "vertical (Z, + arriba)",
+                                                                     "GRAV": "gravedad", "GRAV_PROY": "gravedad, por m de proyección"}[d])
+        a = aplic.setdefault(k, [v, v])
+        a[0], a[1] = min(a[0], v), max(a[1], v)
+    out = []
+    for c in estaticos:
+        rx = sum(m.nodes[n].RxnFX[c] for n in apoyos)
+        ry = sum(m.nodes[n].RxnFY[c] for n in apoyos)
+        dx = max((abs(m.nodes[n].DX[c]) for n in nudos), default=0.0)
+        dy = max((abs(m.nodes[n].DY[c]) for n in nudos), default=0.0)
+        N = max((float(np.max(np.abs(e[c][0]))) for e, _ in res_barra.values()), default=0.0)
+        V = max((float(np.max(np.abs(e[c][1]))) for e, _ in res_barra.values()), default=0.0)
+        M = max((float(np.max(np.abs(e[c][2]))) for e, _ in res_barra.values()), default=0.0)
+        cargas_el = [{"elemento": o, "rol": rol, "direccion": d, "min": a[0], "max": a[1]}
+                     for (pat, o, rol, d), a in aplic.items() if pat == c]
+        out.append({"caso": c, "tipo": cargas.patrones.get(c, ""), "descripcion": desc.get(c, ""),
+                    "reaccion_x": float(rx), "reaccion_y": float(ry), "dx_max_mm": float(dx) * 1000, "dy_max_mm": float(dy) * 1000,
+                    "N_max": N, "V_max": V, "M_max": M, "cargas": cargas_el})
+    # sismo: envolvente CQC (sin signo)
+    de = max((float(_cqc([np.array([m.nodes[n].DX[k]]) for k in modos], omegas)[0]) for n in nudos), default=0.0)
+    ee = [e for _, e in res_barra.values()]
+    out.append({"caso": "E", "tipo": "QUAKE", "descripcion": f"Sismo espectral NCh433 + DS61, CQC (factor de corte {factor:.2f})",
+                "reaccion_x": float(q_sismo), "reaccion_y": None, "dx_max_mm": de * 1000, "dy_max_mm": None,
+                "N_max": max((float(np.max(e[0])) for e in ee), default=0.0), "V_max": max((float(np.max(e[1])) for e in ee), default=0.0),
+                "M_max": max((float(np.max(e[2])) for e in ee), default=0.0), "cargas": []})
+    return out
 
 
 def _deformaciones(m, mod, cargas, modos, omegas, sub, lim) -> list[dict]:

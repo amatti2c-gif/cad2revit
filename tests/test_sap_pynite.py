@@ -113,3 +113,18 @@ def test_deformaciones():
     assert {"Viga (vertical)", "Pilar (lateral, viento)", "Pilar (deriva sísmica)", "Muro (deriva sísmica)"} <= tipos
     assert any(d["criterio"] == "L/300" for d in r["deformaciones"])
     assert all(d["delta_mm"] >= 0 and d["limite_mm"] > 0 for d in r["deformaciones"])
+
+
+def test_casos_puros_y_peso_sismico():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    casos = {c["caso"]: c for c in r["casos"]}
+    assert {"DEAD", "LR", "W1", "E"} <= set(casos)
+    # el peso sísmico es el peso propio (menos lo que cae directo en los apoyos), no el doble ni la mitad
+    assert 0.9 < r["peso_sismico"] / casos["DEAD"]["reaccion_y"] <= 1.0
+    assert abs(casos["E"]["reaccion_x"] - r["corte_basal"]) < 1e-9
+    assert casos["W1"]["cargas"] and casos["W1"]["reaccion_x"] < 0
