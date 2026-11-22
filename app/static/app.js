@@ -2616,17 +2616,31 @@ function funEsquema() {
   const ePy1 = hastaFondo ? yF - rec - eF - eP / 2 : yZ + rec;
   if (eP > 0) hijos.push(rect(ePx0, ePy0, ePx1, ePy1, eP, "#d35400"));
   const barra = (x, y, d, color) => s("circle", { cx: x, cy: y, r: Math.max(d / 2, 0.35 * k), fill: color });
-  // pedestal: una barra por cara en cada nivel, de la esquina superior hacia abajo, sobre la zapata
-  const xpI = ePx0 + eP / 2 + dP / 2, xpD = ePx1 - eP / 2 - dP / 2, ypA = ePy0 + eP / 2 + dP / 2, ypB = yZ - dP / 2 - 1;
+  // posiciones como en el croquis: en la zapata, las barras de cada cara van primero en las esquinas del estribo de la
+  // zapata y luego en las esquinas del estribo del pedestal (bajo el pedestal); las que sobran, en el hueco más grande.
+  // En el pedestal, n barras por cara desde la esquina superior, repartidas hasta la capa superior de la zapata.
+  const fx0 = eFx0 + eF / 2 + dF / 2, fx1 = eFx1 - eF / 2 - dF / 2;
+  const px0 = ePx0 + eP / 2 + Math.max(dF, dP) / 2, px1 = ePx1 - eP / 2 - Math.max(dF, dP) / 2;
+  const yFs = eFy0 + eF / 2 + dF / 2, yFi = eFy1 - eF / 2 - dF / 2;
+  const posiciones = (n, bajoPedestal) => {
+    if (n <= 0) return [];
+    if (n === 1) return [(fx0 + fx1) / 2];
+    const xs = [fx0, fx1];
+    if (n >= 4 && bajoPedestal) xs.push(px0, px1);
+    while (xs.length < n) {
+      xs.sort((u, w) => u - w);
+      let g = 0; for (let i = 1; i < xs.length - 1; i++) if (xs[i + 1] - xs[i] > xs[g + 1] - xs[g]) g = i;
+      xs.push((xs[g] + xs[g + 1]) / 2);
+    }
+    return xs.slice(0, n);
+  };
+  for (const x of posiciones(nSup, true)) hijos.push(barra(x, yFs, dF, "#1f4e9c"));
+  for (const x of posiciones(nInf, hastaFondo)) hijos.push(barra(x, yFi, dF, "#1f4e9c"));
+  const xpI = ePx0 + eP / 2 + dP / 2, xpD = ePx1 - eP / 2 - dP / 2, ypA = ePy0 + eP / 2 + dP / 2;
   for (let i = 0; i < nCara; i++) {
-    const y = nCara > 1 ? ypA + (ypB - ypA) * i / (nCara - 1) : ypA;
+    const y = ypA + (yFs - ypA) * i / nCara;
     hijos.push(barra(xpI, y, dP, "#1f4e9c"), barra(xpD, y, dP, "#1f4e9c"));
   }
-  // zapata: superiores e inferiores repartidas en el ancho, por dentro del estribo
-  const fila = (n, y) => { const xa = eFx0 + eF / 2 + dF / 2, xb = eFx1 - eF / 2 - dF / 2;
-    for (let i = 0; i < n; i++) hijos.push(barra(n > 1 ? xa + (xb - xa) * i / (n - 1) : (xa + xb) / 2, y, dF, "#1f4e9c")); };
-  fila(nSup, eFy0 + eF / 2 + dF / 2);
-  fila(nInf, eFy1 - eF / 2 - dF / 2);
   // cotas
   const cota = (xa, ya, xb, yb, t, lado = 1) => {
     const g = [s("line", { x1: xa, y1: ya, x2: xb, y2: yb, stroke: "#555", "stroke-width": 0.25 * k, "marker-start": "url(#fun-fl)", "marker-end": "url(#fun-fl)" })];
@@ -2643,8 +2657,7 @@ function funEsquema() {
   hijos.push(...cota(xZ0 - 24 * k, yTerreno, xZ0 - 24 * k, yF, `Df ${Df.toFixed(0)} cm`));
   // leyendas de armadura
   // leyendas a la derecha, con una línea guía hasta la barra o el estribo
-  const xl = xZ1 + 22 * k, yFs = eFy0 + eF / 2 + dF / 2, yFi = eFy1 - eF / 2 - dF / 2;
-  const xUlt = eFx1 - eF / 2 - dF / 2;
+  const xl = xZ1 + 22 * k, xUlt = fx1;
   const ley = [
     [ypA + 2 * k, xpD, ypA, `${nCara} φ${(dP * 10).toFixed(0)} por cara (${2 * nCara} φ${(dP * 10).toFixed(0)})`, "#1f4e9c"],
     [ypA + 14 * k, ePx1, ypA + 14 * k, `E φ${(eP * 10).toFixed(0)}@${sP} pedestal${hastaFondo ? ", hasta el fondo" : ""}`, "#d35400"],
@@ -2656,6 +2669,8 @@ function funEsquema() {
     hijos.push(s("polyline", { points: `${xa},${ya} ${xl - 2 * k},${y - k} ${xl - 0.5 * k},${y - k}`, fill: "none", stroke: c, "stroke-width": 0.2 * k, opacity: 0.8 }));
     hijos.push(T(xl, y, t, { fill: c }));
   }
+  const tot = 2 * nCara + nSup + nInf, mismo = Math.abs(dP - dF) < 1e-6;
+  hijos.push(T(xl, yF + 24 * k, `total: ${tot} barras longitudinales` + (mismo ? ` (${tot} φ${(dP * 10).toFixed(0)})` : ""), { fill: "#1f4e9c" }));
   hijos.push(T(xl, yF + 15 * k, `recubrimiento ${rec.toFixed(1).replace(".0", "")} cm`, { fill: "#555" }));
   svg.replaceChildren(...hijos);
 }

@@ -284,7 +284,9 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     capas = []
     n_cara = max(int(arm.ped_barras_por_cara), 0)
     if n_cara:
-        ys = [rec + (hp_mm - rec) * k / max(n_cara - 1, 1) for k in range(n_cara)] if n_cara > 1 else [rec]
+        # como en el croquis: n barras por cara desde la esquina superior, repartidas hasta la capa superior de la zapata
+        y_sup_zap = hp_mm + rec
+        ys = [rec + (y_sup_zap - rec) * k / n_cara for k in range(n_cara)]
         capas += [(2 * _area_barra(arm.ped_diametro_mm), y) for y in ys]   # una barra por cara en cada nivel
     capas.append((arm.fun_barras_superiores * _area_barra(arm.fun_diametro_mm), hp_mm + rec))
     capas.append((arm.fun_barras_inferiores * _area_barra(arm.fun_diametro_mm), Ht_mm - rec))
