@@ -2297,6 +2297,8 @@ function sapMostrarNube(d) {
       h("td", {}, c.vigas.join(", ")), h("td", {}, f2(c.sum_Mpc)), h("td", {}, f2(c.sum_Mpb)),
       h("td", { class: c.cumple ? "cumple" : (c.excepcion ? "" : "nocumple") }, f2(c.razon)), h("td", {}, f2(c.Puc_rel)),
       h("td", { title: c.detalle }, c.cumple ? "cumple" : (c.excepcion ? "no cumple; aplica excepción E3.4a(a)" : "NO cumple"))))));
+  $("#sap-nube-cfvd-nota").textContent = d.sistema_acero && d.sistema_acero !== "SMF"
+    ? `Informativo: con el sistema ${d.sistema_acero} no se exige (AISC 341 E3.4a es para marcos especiales SMF).` : "";
   $("#sap-nube-deform").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Elemento", "Verificación", "Combinación", "δ (mm)", "Límite (mm)", "Criterio", "L o H (m)", "Razón"]
       .map(t => h("th", {}, t)))),

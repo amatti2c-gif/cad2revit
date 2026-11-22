@@ -541,7 +541,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "norma_sismo": "NCh433:2026", "sistema": sis, "R_estrella": r_est, "R1": r1, "separacion_m": sep,
+        "norma_sismo": "NCh433:2026", "sistema": sis, "sistema_acero": pc.sistema_acero, "R_estrella": r_est, "R1": r1, "separacion_m": sep,
         "factor_desplazamientos": factor_d, "omega0": omega, "limites_deformacion": lim_def,
         "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL, "n_modos": int(nmod),
         "n_modos_usados": len(aporta),
