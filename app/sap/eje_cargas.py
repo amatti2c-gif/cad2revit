@@ -46,7 +46,7 @@ class ParametrosCargas:
     lo_techo: float = 0.10              # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención (1 kPa)
     reducir_lr: bool = True             # NCh1537 §8.2: reducción por área tributaria (R1) y pendiente (R2)
     # viento
-    v_viento: float = 35.0              # m/s, velocidad básica del lugar (NCh432)
+    v_viento: float = 40.0              # m/s, velocidad básica (NCh432 Tabla 6: 35°–42° S; Ancud, 41°52' S)
     exposicion: str = "C"
     kzt: float = 1.0
     kd: float = 0.85

@@ -598,7 +598,7 @@ def main(argv=None):
     ap.add_argument("--peso-techo", type=float, default=30, help="peso del techo (kgf/m²)")
     ap.add_argument("--ancho", type=float, help="ancho colaborante (m) para pasar cargas por m² a cargas por m; "
                                                 "por defecto, el ancho tributario del eje exportado por Revit")
-    ap.add_argument("--viento", type=float, default=35, help="velocidad básica del viento V (m/s, NCh432)")
+    ap.add_argument("--viento", type=float, default=40, help="velocidad básica del viento V (m/s, NCh432; 40 = Ancud, Tabla 6)")
     ap.add_argument("--exposicion", default="C", choices=["B", "C", "D"])
     ap.add_argument("--zona", type=int, default=2, choices=[1, 2, 3], help="zona sísmica (NCh433)")
     ap.add_argument("--suelo", default="C", choices=list("ABCDE"), help="tipo de suelo (DS61)")
