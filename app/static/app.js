@@ -2298,8 +2298,11 @@ function sapMostrarNube(d) {
       h("td", {}, f2(a.phiVn)), h("td", {}, a.KL_r ? a.KL_r.toFixed(0) : ""), h("td", {}, (a.notas || []).join("; "))))));
   const anclajeTxt = m => (m.anclajes || []).map(a => `${a.borde}: ${a.tipo === "hold-down" ? a.modelo : "unión al pilar"}` +
     (a.T_adm ? ` (Tadm ${f2(a.T_adm)})` : " (falta Tadm)")).join(" · ");
-  const celdaAnc = m => m.anclajes ? (m.falta_capacidad_union && !(m.FU_anclaje > 1)
-    ? h("td", { class: "nocumple", title: "indica la tracción admisible de la unión al pilar" }, `${f2(m.FU_anclaje)} · falta Tadm unión`)
+  const celdaAnc = m => m.anclajes ? (m.sin_traccion || (m.T_anclaje != null && m.T_anclaje <= 1e-9)
+    ? h("td", { class: "cumple", title: "el peso que baja por el muro supera el volcamiento: el borde no se levanta" }, "0.00 · sin tracción")
+    : m.falta_capacidad_union && !(m.FU_anclaje > 1)
+    ? h("td", { class: "nocumple", title: "hay tracción: indica en el panel de muros la tracción admisible de la unión al pilar (tonf)" },
+        `${f2(m.FU_anclaje)} · falta Tadm de la unión al pilar`)
     : celda(m.FU_anclaje)) : h("td", {}, "");
   $("#sap-nube-madera").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "FU corte = v/vadm", "v (tonf/m)", "vadm (tonf/m)", "Combinación",

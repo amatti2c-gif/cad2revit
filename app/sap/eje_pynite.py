@@ -490,7 +490,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         fu_anc = max((a["FU"] for a in anclajes if a["FU"] is not None), default=0.0)
         madera.append({"muro": seg["muro"], "x0": x0, "x1": x1, "L": L, "H": H, **peor, "T_anclaje": T,
                        "combo_anclaje": combo_t, "L_prima": Lp, "anclajes": anclajes, "FU_anclaje": fu_anc,
-                       "falta_capacidad_union": any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
+                       "sin_traccion": T <= 1e-9,
+                       "falta_capacidad_union": T > 1e-9 and any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
     madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
     deformaciones = _deformaciones(m, mod, cargas, modos_x_esc, om_a, sub, {**LIMITES_DEF, **(limites or {})})
