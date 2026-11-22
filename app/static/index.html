@@ -31,6 +31,7 @@
     <button data-tab="estructura">3 · Estructuración</button>
     <button data-tab="resultado">4 · Resultado</button>
     <button data-tab="historial">5 · Historial</button>
+    <button data-tab="sap">6 · SAP2000</button>
     <button data-tab="lineamientos">Lineamientos (avanzado) <span id="badge-errores" class="badge oculto"></span></button>
   </nav>
 
@@ -201,6 +202,75 @@
 
         <h3>Advertencias</h3>
         <ul id="lista-advertencias" class="advertencias"></ul>
+      </div>
+    </section>
+
+    <!-- ======================= SAP2000 ======================= -->
+    <section id="tab-sap" class="tab">
+      <div class="panel">
+        <div class="panel-tit"><span>Ejes para SAP2000</span>
+          <span class="acciones"><label class="link">Subir .sap.json<input id="inp-eje-sap" type="file" accept=".json" hidden></label></span></div>
+        <p class="tenue">En Revit, el botón <strong>Eje a SAP2000</strong> exporta un eje (pilares y vigas de acero, muros
+          con sus vanos) y lo sube aquí. Ajusta la modelación y las cargas, y arma, analiza y diseña en SAP2000 con el
+          agente local (la app de sap2000-toolkit en tu PC), o descarga el .s2k.</p>
+        <div class="fila-sap"><label>Eje <select id="sel-eje-sap"></select></label>
+          <button class="sec" id="btn-borrar-eje-sap">Eliminar eje</button>
+          <span id="sap-agente" class="tenue"></span></div>
+      </div>
+      <div id="sap-contenido" class="oculto">
+        <div class="panel">
+          <div class="panel-tit"><span id="sap-estado"></span>
+            <span class="acciones"><button class="sec" id="btn-sap-guardar">Guardar ajustes</button>
+              <button class="sec" id="btn-sap-s2k">Descargar .s2k</button>
+              <button class="pri" id="btn-sap-correr">▶ Armar, analizar y diseñar en SAP2000</button></span></div>
+          <svg id="sap-lienzo" viewBox="0 0 100 50"></svg>
+          <div class="tenue sap-leyenda"><span style="color:#1f4e9c">━ pilar</span> <span style="color:#c06000">━ techo</span>
+            <span style="color:#555">━ viga</span> <span style="color:#7a3fb0">━ diagonal</span> <span style="color:#b98a4a">▮ muro (shell)</span>
+            <span id="sap-leyenda-razon" class="oculto">· diseño: <span style="color:#1b6e20">━ ≤0,7</span>
+              <span style="color:#e0a000">━ ≤1</span> <span style="color:#b00020">━ &gt;1</span></span></div>
+        </div>
+        <div class="sap-cols">
+          <div class="panel"><div class="panel-tit"><span>Muros de marco plataforma (por defecto)</span></div>
+            <div class="sap-form">
+              <label>Clavado perimetral OSB (mm) <select data-sap="muro.espaciamiento_clavos"><option>150</option><option selected>100</option><option>50</option></select></label>
+              <label>Caras con OSB <select data-sap="muro.tableros"><option selected>1</option><option>2</option></select></label>
+              <label>Ga (tonf/m; vacío = tabla OSB 9,5 mm 8d) <input data-sap="muro.ga" type="number" step="any"></label>
+              <label>E pies derechos (tonf/cm²) <input data-sap="muro.e_ppdd" data-f="10000" type="number" step="any" value="102"></label>
+              <label>Área PPDD de borde, un extremo (cm²) <input data-sap="muro.a_ext" data-f="0.0001" type="number" step="any" value="75"></label>
+              <label>Ancho PPDD de borde (cm) <input data-sap="muro.b_ext" data-f="0.01" type="number" step="any" value="10"></label>
+              <label>Rigidez del anclaje (tonf/m) <input data-sap="muro.k_anclaje" type="number" step="any" value="1337"></label>
+              <label>Peso del muro (kgf/m²) <input data-sap="muro.peso" data-f="0.001" type="number" step="any" value="50"></label>
+              <label>Tamaño de malla (m) <input data-sap="malla" type="number" step="any" value="0.5"></label>
+              <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">rotulada</option><option value="empotrado">empotrada</option></select></label>
+            </div></div>
+          <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432, NCh433 + DS61)</span></div>
+            <div class="sap-form">
+              <label>Peso del techo (kgf/m²) <input data-sap="cargas.peso_techo" data-f="0.001" type="number" step="any" value="30"></label>
+              <label>Sobrecarga de techo Lo (kgf/m²) <input data-sap="cargas.lo_techo" data-f="0.001" type="number" step="any" value="100"></label>
+              <label>Viento V (m/s) <input data-sap="cargas.v_viento" type="number" step="any" value="35"></label>
+              <label>Exposición <select data-sap="cargas.exposicion"><option>B</option><option selected>C</option><option>D</option></select></label>
+              <label>Kzt <input data-sap="cargas.kzt" type="number" step="any" value="1"></label>
+              <label>GCpi (±) <input data-sap="cargas.gcpi" type="number" step="any" value="0.18"></label>
+              <label>Zona sísmica <select data-sap="cargas.zona"><option>1</option><option selected>2</option><option>3</option></select></label>
+              <label>Suelo (DS61) <select data-sap="cargas.suelo"><option>A</option><option>B</option><option selected>C</option><option>D</option><option>E</option></select></label>
+              <label>Importancia sísmica I <input data-sap="cargas.importancia_sismo" type="number" step="any" value="1.0"></label>
+              <label>R0 <input data-sap="cargas.r0" type="number" step="any" value="7"></label>
+              <label>Modos <input data-sap="cargas.modos" type="number" step="1" value="12"></label>
+            </div></div>
+        </div>
+        <div class="panel"><div class="panel-tit"><span>Elementos del eje</span></div>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-elementos"></table></div></div>
+        <div class="panel"><div class="panel-tit"><span>Secciones de acero (m)</span></div>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-secciones"></table></div></div>
+        <div class="sap-cols">
+          <div class="panel"><div class="panel-tit"><span>Rigidez de los muros (Manual de madera, Ec. 2.22)</span></div>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-muros"></table></div></div>
+          <div class="panel"><div class="panel-tit"><span>Cargas y combinaciones (NCh3171)</span></div>
+            <ul id="sap-cargas"></ul><ul id="sap-avisos" class="advertencias"></ul></div>
+        </div>
+        <div class="panel oculto" id="sap-resultados"><div class="panel-tit"><span>Diseño de acero AISC 360-16</span></div>
+          <p id="sap-res-resumen"></p>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-razones"></table></div></div>
       </div>
     </section>
 

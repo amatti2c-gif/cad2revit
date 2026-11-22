@@ -245,3 +245,15 @@ legend { padding: 0 4px; }
 .form-est label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
 .form-est .fila { display: flex; gap: 6px; flex-wrap: wrap; }
 .lista-dibujados { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+
+/* ---- SAP2000 ---- */
+#sap-lienzo { width: 100%; height: 440px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+.sap-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
+.sap-form { display: grid; grid-template-columns: 1fr; gap: 6px; }
+.sap-form label { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; }
+.sap-form input, .sap-form select { width: 120px; }
+.sap-tabla td input, .sap-tabla td select { min-width: 0; width: 90px; }
+.fila-sap { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.sap-leyenda span { margin-right: 10px; }
+.nocumple { color: #b00020; font-weight: 600; }
+.cumple { color: #1b6e20; }

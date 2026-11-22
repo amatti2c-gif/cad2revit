@@ -1759,6 +1759,124 @@ def restaurar(pid: str, n: int):
     return {"restaurado": n, "errores": _validar_entradas(d)}
 
 
+# ------------------------------------------------------------------ SAP2000: ejes exportados desde Revit
+
+class AjustesEje(BaseModel):
+    parametros: dict = {}
+    opciones: dict = {}
+
+
+def _eje_sap(d: Path, nombre: str) -> Path:
+    f = d / "sap" / f"{nombre}.sap.json"
+    if not re.fullmatch(r"[\w.\-]+", nombre) or not f.is_file():
+        raise HTTPException(404, f"No existe el eje {nombre}")
+    return f
+
+
+def _ajustes_eje(f: Path) -> dict:
+    a = f.with_name(f.name.replace(".sap.json", ".ajustes.json"))
+    return json.loads(a.read_text(encoding="utf-8")) if a.is_file() else {"parametros": {}, "opciones": {}}
+
+
+@app.get("/api/proyectos/{pid}/sap")
+def listar_ejes_sap(pid: str):
+    d = _proyecto(pid)
+    out = []
+    for f in sorted((d / "sap").glob("*.sap.json")):
+        try:
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        out.append({"nombre": f.name[: -len(".sap.json")], "eje": e.get("eje"), "proyecto_revit": e.get("proyecto"),
+                    "fecha": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                    "pilares": len(e.get("pilares") or []), "vigas": len(e.get("vigas") or []), "muros": len(e.get("muros") or [])})
+    return out
+
+
+@app.post("/api/proyectos/{pid}/sap", status_code=201)
+async def subir_eje_sap(pid: str, archivo: UploadFile = File(...)):
+    """El .sap.json del botón «Eje a SAP2000» de Revit (lo sube el propio botón o se arrastra a la pestaña)."""
+    d = _proyecto(pid)
+    try:
+        e = json.loads((await archivo.read()).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "El archivo no es JSON")
+    if e.get("tipo_archivo") != "cad2revit-eje-sap":
+        raise HTTPException(400, "No es un archivo del botón «Eje a SAP2000» de Revit")
+    nombre = "eje-" + re.sub(r"[^\w.\-]", "_", str(e.get("eje") or "x"))
+    (d / "sap").mkdir(exist_ok=True)
+    (d / "sap" / f"{nombre}.sap.json").write_text(json.dumps(e, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"nombre": nombre}
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}")
+def leer_eje_sap(pid: str, nombre: str):
+    f = _eje_sap(_proyecto(pid), nombre)
+    return {"eje": json.loads(f.read_text(encoding="utf-8")), "ajustes": _ajustes_eje(f)}
+
+
+@app.delete("/api/proyectos/{pid}/sap/{nombre}", status_code=204)
+def borrar_eje_sap(pid: str, nombre: str):
+    f = _eje_sap(_proyecto(pid), nombre)
+    f.unlink()
+    a = f.with_name(f.name.replace(".sap.json", ".ajustes.json"))
+    if a.is_file():
+        a.unlink()
+
+
+@app.put("/api/proyectos/{pid}/sap/{nombre}/ajustes")
+def guardar_ajustes_eje(pid: str, nombre: str, datos: AjustesEje):
+    f = _eje_sap(_proyecto(pid), nombre)
+    f.with_name(f.name.replace(".sap.json", ".ajustes.json")).write_text(
+        json.dumps({"parametros": datos.parametros, "opciones": datos.opciones}, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"guardado": True}
+
+
+def _modelo_eje(eje: dict, aj: AjustesEje):
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_revit import ParametrosMuroMadera, mallar
+    par = aj.parametros or {}
+    try:
+        pm = ParametrosMuroMadera(**{k: v for k, v in (par.get("muro") or {}).items()
+                                     if k in ParametrosMuroMadera.__dataclass_fields__ and v not in (None, "")})
+        mod = mallar(eje, pm, malla=float(par.get("malla") or 0.5), apoyo_pilares=par.get("apoyo_pilares") or "rotula",
+                     opciones=aj.opciones)
+        pc = ParametrosCargas(**{k: v for k, v in (par.get("cargas") or {}).items()
+                                 if k in ParametrosCargas.__dataclass_fields__ and v not in (None, "")})
+        return mod, pc, cargas_eje(mod, pc)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/vista")
+def vista_eje_sap(pid: str, nombre: str, aj: AjustesEje):
+    f = _eje_sap(_proyecto(pid), nombre)
+    mod, pc, cargas = _modelo_eje(json.loads(f.read_text(encoding="utf-8")), aj)
+    return {
+        "nombre": mod.nombre, "nudos": mod.nudos, "apoyos": mod.apoyos,
+        "barras": [{"nombre": b, "ni": a, "nj": c, "seccion": sec, "rol": mod.roles.get(b), "origen": mod.origen.get(b)}
+                   for b, a, c, sec in mod.barras],
+        "areas": [{"nombre": a, "nudos": ns, "seccion": sec, "origen": mod.origen.get(a)} for a, ns, sec in mod.areas],
+        "secciones": mod.secciones, "secciones_area": mod.secciones_area, "muros": mod.resumen_muros,
+        "cargas": cargas.resumen, "combos": list(cargas.combos), "avisos": mod.avisos,
+        "ancho_tributario": mod.ancho_tributario,
+        "conteo": {"nudos": len(mod.nudos), "barras": len(mod.barras), "shells": len(mod.areas)},
+    }
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/s2k")
+def s2k_eje_sap(pid: str, nombre: str, aj: AjustesEje):
+    import tempfile
+    from app.sap.eje_revit import escribir_s2k
+    f = _eje_sap(_proyecto(pid), nombre)
+    mod, _, cargas = _modelo_eje(json.loads(f.read_text(encoding="utf-8")), aj)
+    with tempfile.TemporaryDirectory() as tmp:
+        ruta = Path(tmp) / f"{nombre}.s2k"
+        escribir_s2k(mod, str(ruta), cargas)
+        return Response(ruta.read_text(encoding="utf-8"), media_type="text/plain",
+                        headers={"Content-Disposition": f'attachment; filename="{nombre}.s2k"'})
+
+
 @app.post("/api/armaduras/leer")
 async def leer_armaduras(imagen: UploadFile = File(...)):
     """Croquis de armaduras de pedestal y fundación (foto) → barras, para el botón «Armaduras» de Revit."""
