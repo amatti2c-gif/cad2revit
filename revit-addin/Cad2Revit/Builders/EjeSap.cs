@@ -35,7 +35,8 @@ namespace Cad2Revit
                 var barras = new FilteredElementCollector(_doc).OfClass(typeof(Rebar)).Cast<Rebar>()
                     .Select(r => (r, c: r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? ""))
                     .Where(x => x.c.StartsWith(marca + " ")).ToList();
-                if (wf == null && barras.Count == 0) continue;
+                var rutaLectura = ComandoArmaduras.RutasLecturaMuro(_doc, w.Id).FirstOrDefault(File.Exists);
+                if (wf == null && barras.Count == 0 && rutaLectura == null) continue;
                 (double n0, double n1, double z0, double z1) Caja(Element e)
                 {
                     var pts = PuntosGeometria(e);
@@ -74,7 +75,15 @@ namespace Cad2Revit
                     hastaFondo = bb != null && bb.Min.Z < zTopZapata - U.M(0.05);
                 }
                 object armaduras = null;
-                if (barras.Count > 0)
+                string origenArmaduras = null;
+                if (rutaLectura != null)
+                {
+                    // la lectura que se usó para armar el sobrecimiento con el botón «Armaduras» (tal cual, sin costo)
+                    using var jd = JsonDocument.Parse(File.ReadAllText(rutaLectura));
+                    armaduras = jd.RootElement.Clone();
+                    origenArmaduras = "la lectura guardada por el botón «Armaduras»";
+                }
+                else if (barras.Count > 0)
                     armaduras = new
                     {
                         pedestal = new
@@ -96,7 +105,8 @@ namespace Cad2Revit
                     geometria = new { b_pedestal = Rd(bP), h_pedestal = Rd(hP), b_zapata = Rd(bZ), h_zapata = Rd(hZ) },
                     armaduras,
                     nota = $"sobrecimiento {w.Id}" + (wf != null ? $" con zapata corrida {wf.Id}" : " sin zapata corrida") +
-                           (barras.Count > 0 ? $", {barras.Count} grupo(s) de barras del botón «Armaduras»" : ", sin armaduras del botón «Armaduras»"),
+                           (origenArmaduras != null ? $", armaduras según {origenArmaduras}" :
+                            barras.Count > 0 ? $", {barras.Count} grupo(s) de barras del botón «Armaduras»" : ", sin armaduras del botón «Armaduras»"),
                 };
             }
             return null;

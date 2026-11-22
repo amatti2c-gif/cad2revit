@@ -338,6 +338,5 @@ def test_detalle_de_armaduras_del_eje(tmp_path, monkeypatch):
     assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/detalle").status_code == 404
     png = b"\x89PNG\r\n\x1a\n" + b"0" * 100
     r = cli.post(f"/api/proyectos/{pid}/sap/{nombre}/detalle", files={"imagen": ("d.png", io.BytesIO(png), "image/png")}).json()
-    assert r["guardado"] and r["lectura"] is None and "clave" in r["aviso"]
+    assert r == {"guardado": True}                                        # solo se guarda: no se lee con la API
     assert cli.get(f"/api/proyectos/{pid}/sap/{nombre}/detalle").content == png
-    assert cli.post(f"/api/proyectos/{pid}/sap/{nombre}/detalle/leer").status_code == 502     # sin clave

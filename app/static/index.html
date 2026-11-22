@@ -452,13 +452,12 @@
               <label>fy (MPa) <input data-sap="fundacion.fy" type="number" step="any" value="420"></label>
           </div></div>
         <div class="panel"><div class="panel-tit"><span>Armaduras (corte del sobrecimiento)</span>
-            <span class="acciones"><label class="link">Leer de una imagen<input id="inp-croquis-fun" type="file" accept="image/*" hidden></label>
+            <span class="acciones"><label class="link">Cargar lectura (.armaduras.json)<input id="inp-lectura-fun" type="file" accept=".json,application/json" hidden></label>
               <button class="sec" id="btn-arm-revit">Desde Revit</button></span></div>
           <div id="fun-detalle" class="oculto"><img id="fun-detalle-img" alt="Detalle de armaduras exportado desde Revit">
-            <div class="fila-sap"><button class="pri" id="btn-detalle-usar">Usar el detalle de Revit</button>
-              <button class="sec" id="btn-detalle-releer">Leer de nuevo</button><span id="fun-detalle-nota" class="tenue"></span></div></div>
-          <p class="tenue" id="fun-arm-nota">Ingrésalas, léelas de una foto o croquis del corte, o tráelas de la sección del modelo de Revit
-            (botón «Eje a análisis»).</p>
+            <div class="fila-sap"><span id="fun-detalle-nota" class="tenue"></span></div></div>
+          <p class="tenue" id="fun-arm-nota">«Desde Revit» usa la lectura con que el botón «Armaduras» armó el sobrecimiento; también puedes
+            cargar un archivo .armaduras.json o ingresarlas mirando el detalle de Revit (se muestra arriba cuando el eje lo trae).</p>
           <div class="sap-form">
               <label>Pedestal: barras por cara <input data-sap="fundacion.armaduras.ped_barras_por_cara" type="number" step="any" value="3"></label>
               <label>Pedestal: diámetro (mm) <input data-sap="fundacion.armaduras.ped_diametro_mm" type="number" step="any" value="10"></label>

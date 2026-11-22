@@ -119,6 +119,20 @@ namespace Cad2Revit
             catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
 
             var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ArmadurasPedestalFundacion(muro, fundacion, lectura);
+            // la lectura queda asociada al muro: «Eje a análisis» la lleva a la pestaña 7 · Fundaciones de la app
+            if (informe.Errores.Count == 0)
+            {
+                foreach (var destino in RutasLecturaMuro(doc, muro.Id))
+                {
+                    try
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destino));
+                        File.WriteAllText(destino, JsonSerializer.Serialize(lectura, Json));
+                        break;
+                    }
+                    catch { /* carpeta sin permiso: se prueba la siguiente */ }
+                }
+            }
             new TaskDialog("cad2revit")
             {
                 MainInstruction = informe.Errores.Count == 0 ? "Armaduras creadas" : "Armaduras con observaciones (ver detalle)",
@@ -126,6 +140,25 @@ namespace Cad2Revit
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
+        }
+
+        /// <summary>Dónde se guarda la lectura de armaduras de un muro: en una carpeta junto al archivo de Revit
+        /// («modelo.armaduras/id.json», compartida con quien abra el modelo) o, si no se puede, en la carpeta de datos
+        /// del usuario.</summary>
+        internal static List<string> RutasLecturaMuro(Document doc, ElementId muro)
+        {
+            var rutas = new List<string>();
+            try
+            {
+                if (!string.IsNullOrEmpty(doc.PathName) && Path.IsPathRooted(doc.PathName) && Directory.Exists(Path.GetDirectoryName(doc.PathName)))
+                    rutas.Add(Path.Combine(Path.GetDirectoryName(doc.PathName),
+                                           Path.GetFileNameWithoutExtension(doc.PathName) + ".armaduras", muro + ".json"));
+            }
+            catch { /* ruta de nube u otra: se usa la carpeta del usuario */ }
+            string titulo = string.Concat((doc.Title ?? "modelo").Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
+            rutas.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "cad2revit", "armaduras",
+                                   titulo, muro + ".json"));
+            return rutas;
         }
 
         // ---------------- conexión con la app ----------------

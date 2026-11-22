@@ -2470,7 +2470,7 @@ async function cargarFundacion() {
     if (r.ok) {
       $("#fun-detalle-img").src = URL.createObjectURL(await r.blob());
       caja.classList.remove("oculto");
-      $("#fun-detalle-nota").textContent = "Imagen del detalle exportada desde Revit con «Eje a análisis».";
+      $("#fun-detalle-nota").textContent = "Detalle exportado desde Revit con «Eje a análisis»: referencia para ingresar las armaduras.";
     }
   }
   $("#fun-estado").textContent = "";
@@ -2551,27 +2551,21 @@ function funLlenarArmaduras(a) {
   pon("fun_barras_superiores", a.fundacion.barras_superiores); pon("fun_barras_inferiores", a.fundacion.barras_inferiores);
   pon("fun_diametro_mm", a.fundacion.diametro_mm); pon("fun_estribo_diametro_mm", a.fundacion.estribo_diametro_mm);
   pon("fun_estribo_separacion_cm", a.fundacion.estribo_separacion_cm);
+  const rec = $('[data-sap="fundacion.recubrimiento"]');
+  if (rec && a.recubrimiento_fundacion_cm) rec.value = String(a.recubrimiento_fundacion_cm);
 }
 
 $("#btn-fundacion").addEventListener("click", () => intentar(funAnalizar));
-async function funUsarDetalle(deNuevo) {
-  $("#fun-detalle-nota").textContent = "Leyendo el detalle…";
-  const a = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/detalle/leer${deNuevo ? "?de_nuevo=true" : ""}`));
-  funLlenarArmaduras(a);
-  $("#fun-detalle-nota").textContent = "Armaduras tomadas del detalle de Revit" + (a.observaciones ? `: ${a.observaciones}` : "") + ". Revisa los valores.";
-}
-$("#btn-detalle-usar").addEventListener("click", () => intentar(() => funUsarDetalle(false)));
-$("#btn-detalle-releer").addEventListener("click", () => intentar(() => funUsarDetalle(true)));
 $("#fun-combo").addEventListener("change", funDibujar);
 $("#sel-eje-fun").addEventListener("change", ev => intentar(async () => { await abrirEjeSap(ev.target.value); await cargarFundacion(); }));
-$("#inp-croquis-fun").addEventListener("change", ev => intentar(async () => {
+$("#inp-lectura-fun").addEventListener("change", ev => intentar(async () => {
   const f = ev.target.files[0]; if (!f) return;
-  const fd = new FormData(); fd.append("imagen", f);
-  $("#fun-arm-nota").textContent = "Leyendo el croquis…";
-  const a = await api("POST", "/api/armaduras/leer", fd);
+  let a;
+  try { a = JSON.parse(await f.text()); } catch { throw new Error("El archivo no es un JSON válido"); }
   ev.target.value = "";
+  if (!a.pedestal || !a.fundacion) throw new Error("No es una lectura de armaduras (.armaduras.json)");
   funLlenarArmaduras(a);
-  $("#fun-arm-nota").textContent = "Leído de la imagen" + (a.observaciones ? `: ${a.observaciones}` : "") + ". Revisa los valores.";
+  $("#fun-arm-nota").textContent = `Tomado de ${f.name}` + (a.observaciones ? `: ${a.observaciones.replace(/\.\s*$/, "")}` : "") + ". Revisa los valores.";
 }));
 $("#btn-arm-revit").addEventListener("click", () => intentar(async () => {
   const fu = sap.eje && sap.eje.fundacion;
