@@ -2007,6 +2007,14 @@ function sapPonerParametros(p) {
   });
 }
 const sapAjustes = () => ({ parametros: sapParametros(), opciones: sap.opciones });
+// Ga del Manual de diseño de estructuras en madera (Tablas 18 y 19; SDPWS 4.3A): OSB 9,5 mm, clavo 8d, por cara
+const GA_MANUAL = { 150: 304, 100: 446, 50: 804 };
+const sapGaManual = (clavos, caras) => GA_MANUAL[clavos] ? GA_MANUAL[clavos] * (caras || 1) : null;
+function sapGaPlaceholder() {
+  const c = Number($('[data-sap="muro.espaciamiento_clavos"]').value), k = Number($('[data-sap="muro.tableros"]').value);
+  const ga = sapGaManual(c, k);
+  $("#sap-ga").placeholder = ga ? `${ga} (Manual: OSB 9,5 mm 8d @${c} mm, ${k} cara${k > 1 ? "s" : ""})` : "";
+}
 
 async function cargarSap(elegir) {
   if (!estado.proyecto) return;
@@ -2043,6 +2051,7 @@ async function abrirEjeSap(nombre) {
   sap.opciones = Object.assign({ excluir: [], apoyos: {}, secciones: {}, muros: {} }, r.ajustes.opciones || {});
   $("#sap-ancho").value = "";
   sapPonerParametros(r.ajustes.parametros || {});
+  sapGaPlaceholder();
   $("#sap-ancho").placeholder = r.eje.ancho_tributario != null ? r.eje.ancho_tributario + " (tributario de Revit)" : "1";
   $("#sap-contenido").classList.remove("oculto");
   $("#sap-resultados").classList.add("oculto");
@@ -2110,7 +2119,7 @@ function sapTablaElementos() {
     intentar(sapActualizar);
   } });
   const selector = (opciones, valor, cambio) => {
-    const sel = h("select", { onchange: ev => { cambio(ev.target.value); intentar(sapActualizar); } },
+    const sel = h("select", { onchange: ev => { cambio(ev.target.value); sapTablaElementos(); intentar(sapActualizar); } },
       ...opciones.map(([v, t]) => h("option", { value: v }, t)));
     sel.value = valor ?? "";
     return sel;
@@ -2133,7 +2142,9 @@ function sapTablaElementos() {
       h("td", {}, `x ${w.x0.toFixed(2)}–${w.x1.toFixed(2)} · ${(w.vanos || []).length} vano(s)`),
       h("td", {}, "clavos ", selector([["", "def."], ["150", "150"], ["100", "100"], ["50", "50"]], mw.espaciamiento_clavos, v => fija("espaciamiento_clavos", v)),
         " caras ", selector([["", "def."], ["1", "1"], ["2", "2"]], mw.tableros, v => fija("tableros", v)),
-        " Ga ", h("input", { type: "number", step: "any", placeholder: "def.", value: mw.ga ?? "", onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }))));
+        " Ga ", h("input", { type: "number", step: "any", value: mw.ga ?? "", title: "vacío = Manual según clavado y caras",
+          placeholder: String(sapGaManual(Number(mw.espaciamiento_clavos || $('[data-sap="muro.espaciamiento_clavos"]').value),
+            Number(mw.tableros || $('[data-sap="muro.tableros"]').value)) ?? "def."), onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }))));
   }
   $("#sap-elementos").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Incluir", "Elemento", "Id Revit", "Sección / tipo", "Posición (m)", "Ajuste"].map(t => h("th", {}, t)))),
@@ -2235,7 +2246,7 @@ $("#sap-borrador").addEventListener("toggle", ev => { if (ev.target.open) sapAge
 $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 
 $("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
-$$("[data-sap]").forEach(el => el.addEventListener("change", () => intentar(sapActualizar)));
+$$("[data-sap]").forEach(el => el.addEventListener("change", () => { sapGaPlaceholder(); sapTablaElementos(); intentar(sapActualizar); }));
 $("#btn-sap-guardar").addEventListener("click", () => intentar(async () => {
   await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
   toast("Ajustes guardados");
