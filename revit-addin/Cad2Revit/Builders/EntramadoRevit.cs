@@ -181,15 +181,22 @@ namespace Cad2Revit
                 _inf.Advertencia($"Muro {w.Id}: el entramado sigue su borde superior inclinado (cumbrera a {perfil.Max(x => x.z) - zBase:0.00} m)");
             // tramos entre pilares: cada uno se arma por separado y sus soleras y pies derechos extremos llegan a la cara
             // del pilar (sin superponerse)
+            // si hay un pilar en un extremo del muro, el entramado parte (o termina) en la cara de ese pilar, aunque el
+            // recorte por el muro perpendicular sea mayor o menor (revestimientos): el pie derecho de borde queda
+            // contra el pilar
+            double fin = largo - r1;
+            var alInicio = obs.Pilares.Where(x => x.t0 <= Math.Max(r0, 0.05) + 0.01).ToList();
+            var alFinal = obs.Pilares.Where(x => x.t1 >= largo - Math.Max(r1, 0.05) - 0.01).ToList();
+            double inicio = alInicio.Count > 0 ? alInicio.Max(x => x.t1) : r0;
+            if (alFinal.Count > 0) fin = alFinal.Min(x => x.t0);
             var tramos = new List<(double s0, double s1)>();
-            double inicio = r0;
             foreach (var (c0, c1) in obs.Pilares.OrderBy(x => x.t0))
             {
-                if (c1 <= inicio) continue;
-                if (c0 > inicio) tramos.Add((inicio, Math.Min(c0, largo - r1)));
+                if (c1 <= inicio || c0 >= fin) continue;
+                if (c0 > inicio) tramos.Add((inicio, Math.Min(c0, fin)));
                 inicio = Math.Max(inicio, c1);
             }
-            if (inicio < largo - r1) tramos.Add((inicio, largo - r1));
+            if (inicio < fin) tramos.Add((inicio, fin));
             // vanos que quedan detrás de un pilar o del borde del muro: la jamba queda en la cara del pilar/borde
             int nPropios = vanos.Count - obs.Vanos.Count;
             foreach (var v in vanos.Take(nPropios))
