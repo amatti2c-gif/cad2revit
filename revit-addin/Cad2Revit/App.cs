@@ -708,45 +708,76 @@ namespace Cad2Revit
                 new TaskDialog("cad2revit") { MainInstruction = "No se pudo exportar el eje", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
                 return Result.Failed;
             }
-            // la aplicación web de sap2000-toolkit (en esta PC) abre el eje: ahí se ajusta la modelación, se arma el modelo
-            // en SAP2000, se analiza y se chequea el acero
-            const string url = "http://127.0.0.1:8000";
-            bool activa = AppActiva(url);
-            string python = activa ? null : BuscarPython();
-            if (!activa && python != null)
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = python, Arguments = "-m webapp.run", UseShellExecute = false, CreateNoWindow = true,
-                });
-                for (int k = 0; k < 30 && !activa; k++) { System.Threading.Thread.Sleep(500); activa = AppActiva(url); }
-            }
-            if (activa)
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                { FileName = $"{url}/eje?archivo={System.Uri.EscapeDataString(ruta)}", UseShellExecute = true });
-            }
+            // el eje se sube a la app de cad2revit y se abre su pestaña SAP2000 (ahí se ajusta la modelación y se arma,
+            // analiza y diseña en SAP2000 con la app local de sap2000-toolkit)
+            string abierto = null, falla = null;
+            try { abierto = SubirEje(ruta); }
+            catch (System.Exception ex) { falla = ex.Message; }
             new TaskDialog("cad2revit")
             {
-                MainInstruction = activa ? $"Eje {eje.Name}: abierto en la aplicación web" : $"Eje {eje.Name} exportado",
-                MainContent = informe.Resumen() + (activa
-                    ? "\n\nEn el navegador se abrió el eje: ajusta secciones, apoyos, muros y cargas, y arma, analiza y diseña en SAP2000."
-                    : "\n\nNo se encontró la aplicación web de sap2000-toolkit en esta PC. Instálala una vez con:\n" +
-                      "pip install \"sap2000-toolkit[web] @ git+https://github.com/amatti2c-gif/sap2000-toolkit@claude/eje-desde-revit\"\n" +
-                      $"y vuelve a apretar el botón (o abre {url}/eje y carga el archivo {ruta})."),
+                MainInstruction = abierto != null ? $"Eje {eje.Name}: abierto en la pestaña SAP2000 de la app" : $"Eje {eje.Name} exportado",
+                MainContent = informe.Resumen() + (abierto != null
+                    ? "\n\nSe abrió la app en el navegador (pestaña 6 · SAP2000). Para armar en SAP2000 deja abierta en esta PC la " +
+                      "app de sap2000-toolkit (iniciar_app.bat)."
+                    : $"\n\nNo se pudo subir a la app ({falla}). Súbelo a mano en la pestaña SAP2000: {ruta}"),
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
         }
 
-        private static bool AppActiva(string url)
+        /// <summary>Sube el .sap.json a un proyecto de la app y abre su pestaña SAP2000. Devuelve la URL abierta (o null si
+        /// se canceló).</summary>
+        private static string SubirEje(string ruta)
         {
-            try
+            var c = ComandoArmaduras.CargarConexion(false);
+            for (int intento = 0; c != null && intento < 3; intento++)
             {
-                using var http = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(1) };
-                return http.GetAsync(url + "/eje").GetAwaiter().GetResult().IsSuccessStatusCode;
+                using var http = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(60) };
+                if (!string.IsNullOrEmpty(c.Usuario))
+                    http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Basic",
+                        System.Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(c.Usuario + ":" + c.Clave)));
+                var r = http.GetAsync(c.Url + "/api/proyectos").GetAwaiter().GetResult();
+                if ((int)r.StatusCode == 401) { c = ComandoArmaduras.CargarConexion(true); continue; }
+                r.EnsureSuccessStatusCode();
+                using var lista = System.Text.Json.JsonDocument.Parse(r.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                var proyectos = lista.RootElement.EnumerateArray()
+                    .Select(p => (id: p.GetProperty("id").GetString(), nombre: p.GetProperty("nombre").GetString())).ToList();
+                if (proyectos.Count == 0) throw new System.Exception("la app no tiene proyectos");
+                // proyecto: elegir (se recuerda el último)
+                var archivoUltimo = System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.ApplicationData),
+                                                           "cad2revit", "ultimo-proyecto.txt");
+                string ultimo = System.IO.File.Exists(archivoUltimo) ? System.IO.File.ReadAllText(archivoUltimo).Trim() : null;
+                using (var f = new System.Windows.Forms.Form
+                {
+                    Text = "Proyecto de la app para este eje", Width = 460, Height = 150,
+                    FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
+                    StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
+                })
+                {
+                    var cb = new System.Windows.Forms.ComboBox { Left = 12, Top = 15, Width = 420, DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList };
+                    foreach (var p in proyectos) cb.Items.Add(p.nombre);
+                    int k = proyectos.FindIndex(p => p.id == ultimo);
+                    cb.SelectedIndex = k >= 0 ? k : 0;
+                    var ok = new System.Windows.Forms.Button { Text = "Subir", Left = 240, Top = 60, Width = 90, DialogResult = System.Windows.Forms.DialogResult.OK };
+                    var no = new System.Windows.Forms.Button { Text = "Cancelar", Left = 340, Top = 60, Width = 90, DialogResult = System.Windows.Forms.DialogResult.Cancel };
+                    f.Controls.Add(cb); f.Controls.Add(ok); f.Controls.Add(no); f.AcceptButton = ok; f.CancelButton = no;
+                    if (f.ShowDialog() != System.Windows.Forms.DialogResult.OK) return null;
+                    ultimo = proyectos[cb.SelectedIndex].id;
+                }
+                try { System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(archivoUltimo)); System.IO.File.WriteAllText(archivoUltimo, ultimo); } catch { }
+                using var cuerpo = new System.Net.Http.MultipartFormDataContent();
+                var bytes = new System.Net.Http.ByteArrayContent(System.IO.File.ReadAllBytes(ruta));
+                bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+                cuerpo.Add(bytes, "archivo", System.IO.Path.GetFileName(ruta));
+                var s = http.PostAsync($"{c.Url}/api/proyectos/{System.Uri.EscapeDataString(ultimo)}/sap", cuerpo).GetAwaiter().GetResult();
+                var texto = s.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                if (!s.IsSuccessStatusCode) throw new System.Exception($"la app respondió {(int)s.StatusCode}: {texto}");
+                var nombre = System.Text.Json.JsonDocument.Parse(texto).RootElement.GetProperty("nombre").GetString();
+                var url = $"{c.Url}/?proyecto={System.Uri.EscapeDataString(ultimo)}&tab=sap&eje={System.Uri.EscapeDataString(nombre)}";
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = url, UseShellExecute = true });
+                return url;
             }
-            catch { return false; }
+            return null;
         }
 
         /// <summary>python.exe con sap2000-toolkit instalado (o null).</summary>

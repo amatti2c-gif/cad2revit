@@ -30,7 +30,7 @@ namespace Cad2Revit
             public bool AllowReference(Reference r, XYZ p) => false;
         }
 
-        private static readonly JsonSerializerOptions Json = new()
+        internal static readonly JsonSerializerOptions Json = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = true, WriteIndented = true,
         };
@@ -130,7 +130,7 @@ namespace Cad2Revit
 
         // ---------------- conexión con la app ----------------
 
-        private class Conexion
+        internal class Conexion
         {
             public string Url { get; set; } = "https://cad2revit-production.up.railway.app";
             public string Usuario { get; set; } = "";
@@ -140,7 +140,7 @@ namespace Cad2Revit
         private static string RutaConexion => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "cad2revit", "conexion.json");
 
-        private static Conexion CargarConexion(bool preguntar)
+        internal static Conexion CargarConexion(bool preguntar)
         {
             Conexion c = null;
             try { if (File.Exists(RutaConexion)) c = JsonSerializer.Deserialize<Conexion>(File.ReadAllText(RutaConexion), Json); }

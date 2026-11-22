@@ -252,7 +252,8 @@ legend { padding: 0 4px; }
 .sap-form { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .sap-form label { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; }
 .sap-form input, .sap-form select { width: 120px; }
-.sap-tabla td input, .sap-tabla td select { min-width: 0; width: 90px; }
+.sap-tabla td input { min-width: 0; width: 90px; }
+.sap-tabla td select { min-width: 0; width: auto; }
 .fila-sap { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .sap-leyenda span { margin-right: 10px; }
 .nocumple { color: #b00020; font-weight: 600; }
