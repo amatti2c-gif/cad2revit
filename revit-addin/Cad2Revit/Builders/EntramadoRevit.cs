@@ -129,19 +129,30 @@ namespace Cad2Revit
             }
 
             // encuentros: cuánto recortar en cada extremo para terminar en la cara del muro vecino
-            double Recorte(double[] p)
+            // (hasta la cara del muro vecino que da hacia este, según dónde termine realmente este muro: en su eje, antes o
+            // más allá de él)
+            double Recorte(double[] p, double sx, double sy)            // (sx, sy): dirección hacia afuera desde el extremo
             {
                 double r = 0;
                 foreach (var o in todos)
                 {
                     if (o.Id == w.Id || !(o.Location is LocationCurve olc) || !(olc.Curve is Line ol)) continue;
                     var q = new XYZ(U.M(p[0]), U.M(p[1]), ol.GetEndPoint(0).Z);
-                    var d = ol.Distance(q);
-                    if (Mt(d) <= Mt(o.Width) / 2 + 0.02) r = Math.Max(r, Mt(o.Width) / 2);
+                    double mitad = Mt(o.Width) / 2;
+                    if (Mt(ol.Distance(q)) > mitad + 0.02) continue;
+                    XYZ o0 = ol.GetEndPoint(0), od = ol.Direction;
+                    double hn = Math.Sqrt(od.X * od.X + od.Y * od.Y);
+                    if (hn < 1e-9) continue;
+                    double nx = -od.Y / hn, ny = od.X / hn;                    // normal horizontal del muro vecino
+                    double sd = (p[0] - Mt(o0.X)) * nx + (p[1] - Mt(o0.Y)) * ny;   // distancia con signo al eje del vecino
+                    double k = -(sx * nx + sy * ny);                           // avance hacia adentro de este muro, en la normal
+                    if (Math.Abs(k) < 0.2) continue;                           // casi paralelos: no es un encuentro de extremo
+                    double s = Math.Sign(k);
+                    r = Math.Max(r, Math.Max(0, (mitad - s * sd) / Math.Abs(k)));
                 }
                 return r;
             }
-            double r0 = Recorte(a), r1 = Recorte(b);
+            double r0 = Recorte(a, -ux, -uy), r1 = Recorte(b, ux, uy);
 
             // vanos: puertas, ventanas y aberturas alojadas en el muro
             var vanos = VanosDelMuro(w, a, ux, uy, largo, zBase, todos);
