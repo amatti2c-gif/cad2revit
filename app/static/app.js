@@ -2456,7 +2456,9 @@ async function cargarFundacion() {
   const sel = $("#sel-eje-fun");
   sel.replaceChildren(...[...$("#sel-eje-sap").options].map(o => h("option", { value: o.value }, o.textContent)));
   sel.value = sap.nombre || "";
-  $("#btn-arm-revit").disabled = !(sap.eje && sap.eje.fundacion && sap.eje.fundacion.armaduras);
+  $("#btn-arm-revit").disabled = !(sap.eje && sap.eje.fundacion);
+  $("#btn-arm-revit").title = sap.eje && sap.eje.fundacion ? (sap.eje.fundacion.nota || "") :
+    "Este eje no trae la sección de fundación: vuelve a exportarlo con el botón «Eje a análisis» de Revit";
   fun.res = null;
   $("#fun-res").classList.add("oculto");
   $("#fun-estado").textContent = "";
@@ -2553,8 +2555,8 @@ $("#inp-croquis-fun").addEventListener("change", ev => intentar(async () => {
 }));
 $("#btn-arm-revit").addEventListener("click", () => intentar(async () => {
   const fu = sap.eje && sap.eje.fundacion;
-  if (!fu || !fu.armaduras) throw new Error("Este eje no trae la sección de fundación desde Revit");
-  funLlenarArmaduras(fu.armaduras);
+  if (!fu) throw new Error("Este eje no trae la sección de fundación desde Revit: vuelve a exportarlo con «Eje a análisis»");
+  if (fu.armaduras) funLlenarArmaduras(fu.armaduras);
   const g = fu.geometria || {};
   const pon = (k, v) => { const el = $(`[data-sap="fundacion.${k}"]`); if (el && v) el.value = String(+(v * 100).toFixed(1)); };
   pon("b_pedestal", g.b_pedestal); pon("h_pedestal", g.h_pedestal); pon("b_zapata", g.b_zapata); pon("h_zapata", g.h_zapata);

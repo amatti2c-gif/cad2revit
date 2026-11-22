@@ -15,6 +15,93 @@ namespace Cad2Revit
     /// </summary>
     public partial class Constructor
     {
+        /// <summary>
+        /// Sección de fundación del eje: el primer sobrecimiento (muro de hormigón) que tenga zapata corrida o armaduras
+        /// del botón «Armaduras»: anchos y altos de pedestal y zapata (m) y las barras por función (las marca ese
+        /// botón en el comentario: pedestal, fundación superior/inferior, estribo pedestal/fundación).
+        /// </summary>
+        private object SeccionFundacion(List<Wall> murosHormigon)
+        {
+            foreach (var w in murosHormigon)
+            {
+                if (!(w.Location is LocationCurve lc) || !(lc.Curve is Line lw)) continue;
+                XYZ q0 = lw.GetEndPoint(0), q1 = lw.GetEndPoint(1);
+                var u = new XYZ(q1.X - q0.X, q1.Y - q0.Y, 0).Normalize();
+                var n = XYZ.BasisZ.CrossProduct(u);
+                var o = new XYZ(q0.X, q0.Y, 0);
+                var wf = new FilteredElementCollector(_doc).OfClass(typeof(WallFoundation)).Cast<WallFoundation>()
+                    .FirstOrDefault(f => f.WallId == w.Id);
+                string marca = MarcaArmadura + w.Id;
+                var barras = new FilteredElementCollector(_doc).OfClass(typeof(Rebar)).Cast<Rebar>()
+                    .Select(r => (r, c: r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? ""))
+                    .Where(x => x.c.StartsWith(marca + " ")).ToList();
+                if (wf == null && barras.Count == 0) continue;
+                (double n0, double n1, double z0, double z1) Caja(Element e)
+                {
+                    var pts = PuntosGeometria(e);
+                    if (pts.Count == 0) throw new Exception($"el elemento {e.Id} no tiene geometría");
+                    return (pts.Min(q => (q - o).DotProduct(n)), pts.Max(q => (q - o).DotProduct(n)), pts.Min(q => q.Z), pts.Max(q => q.Z));
+                }
+                double Rd(double v) => Math.Round(v, 4);
+                var ped = Caja(w);
+                double bP = Mt(w.Width), hP = Mt(ped.z1 - ped.z0), bZ = 0, hZ = 0, zTopZapata = ped.z0;
+                if (wf != null)
+                {
+                    var f = Caja(wf);
+                    bZ = Mt(f.n1 - f.n0);
+                    hZ = Mt(f.z1 - f.z0);
+                    zTopZapata = f.z1;
+                    hP = Mt(ped.z1 - Math.Max(ped.z0, f.z1));
+                }
+                List<Rebar> DeRol(string rol) => barras.Where(x => x.c.EndsWith(" " + rol)).Select(x => x.r).ToList();
+                int Cuenta(string rol) => DeRol(rol).Sum(r => r.NumberOfBarPositions);
+                double Diametro(string rol)
+                {
+                    var r = DeRol(rol).FirstOrDefault();
+                    var t = r != null ? _doc.GetElement(r.GetTypeId()) as RebarBarType : null;
+                    return t != null ? Math.Round(Mt(t.BarNominalDiameter) * 1000, 1) : 0;
+                }
+                double Separacion(string rol)
+                {
+                    var r = DeRol(rol).FirstOrDefault();
+                    return r != null ? Math.Round(Mt(r.MaxSpacing) * 100, 1) : 0;
+                }
+                bool hastaFondo = false;
+                var ep = DeRol("estribo pedestal").FirstOrDefault();
+                if (ep != null && wf != null)
+                {
+                    var bb = ep.get_BoundingBox(null);
+                    hastaFondo = bb != null && bb.Min.Z < zTopZapata - U.M(0.05);
+                }
+                object armaduras = null;
+                if (barras.Count > 0)
+                    armaduras = new
+                    {
+                        pedestal = new
+                        {
+                            barras_por_cara = Cuenta("pedestal") / 2, diametro_mm = Diametro("pedestal"),
+                            estribo_diametro_mm = Diametro("estribo pedestal"), estribo_separacion_cm = Separacion("estribo pedestal"),
+                            estribo_hasta_fondo_fundacion = hastaFondo,
+                        },
+                        fundacion = new
+                        {
+                            barras_superiores = Cuenta("fundación superior"), barras_inferiores = Cuenta("fundación inferior"),
+                            diametro_mm = Math.Max(Diametro("fundación inferior"), Diametro("fundación superior")),
+                            estribo_diametro_mm = Diametro("estribo fundación"), estribo_separacion_cm = Separacion("estribo fundación"),
+                        },
+                    };
+                return new
+                {
+                    muro_id = w.Id.ToString(),
+                    geometria = new { b_pedestal = Rd(bP), h_pedestal = Rd(hP), b_zapata = Rd(bZ), h_zapata = Rd(hZ) },
+                    armaduras,
+                    nota = $"sobrecimiento {w.Id}" + (wf != null ? $" con zapata corrida {wf.Id}" : " sin zapata corrida") +
+                           (barras.Count > 0 ? $", {barras.Count} grupo(s) de barras del botón «Armaduras»" : ", sin armaduras del botón «Armaduras»"),
+                };
+            }
+            return null;
+        }
+
         public Informe ExportarEjeSap(Grid eje, string ruta, double tolerancia = 0.30)
         {
             if (!(eje.Curve is Line linea)) { _inf.Error("El eje no es recto"); return _inf; }
@@ -67,6 +154,7 @@ namespace Cad2Revit
                 int omitidos = 0;
                 var vigas = new List<object>();
                 var muros = new List<object>();
+                var murosHormigon = new List<Wall>();
                 var instancias = new FilteredElementCollector(_doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
                     .Where(f => !Entramado(f)).ToList();
                 foreach (var f in instancias.Where(f => f.StructuralType == StructuralType.Column))
@@ -133,7 +221,7 @@ namespace Cad2Revit
                             ? "madera" : "otro";
                     bool conEntramado = new FilteredElementCollector(_doc).WhereElementIsNotElementType()
                         .Any(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(MarcaEntramadoRevit + w.Id + " ") == true);
-                    if (material == "hormigon") { omitidos++; continue; }       // sobrecimientos y muros de hormigón: fuera del modelo
+                    if (material == "hormigon") { omitidos++; murosHormigon.Add(w); continue; }   // sobrecimientos: van a «fundacion»
                     muros.Add(new
                     {
                         id = w.Id.ToString(), tipo = nombreTipo, material, entramado = conEntramado,
@@ -152,18 +240,24 @@ namespace Cad2Revit
                 if (izq == null || der == null) _inf.Advertencia($"Eje de borde: ancho tributario {anchoTrib:0.00} m (solo hacia un lado)");
                 var niveles = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation)
                     .Select(l => new { nombre = l.Name, z = R(Mt(l.Elevation)) }).ToList();
+                // sección de la fundación del eje (sobrecimiento + zapata corrida, con sus armaduras) para la pestaña 7
+                object fundacionEje = null;
+                try { fundacionEje = SeccionFundacion(murosHormigon); }
+                catch (Exception ex) { _inf.Advertencia($"No se pudo leer la sección de fundación del eje: {ex.Message}"); }
                 var archivo = new
                 {
                     tipo_archivo = "cad2revit-eje-sap", version = 1, unidades = "m", eje = eje.Name,
                     origen = new[] { R(o[0]), R(o[1]) }, direccion = new[] { Math.Round(ux, 6), Math.Round(uy, 6) },
                     largo_eje = R(L), ancho_tributario = R(anchoTrib), proyecto = _doc.Title, niveles, pilares, vigas, muros,
+                    fundacion = fundacionEje,
                 };
                 File.WriteAllText(ruta, JsonSerializer.Serialize(archivo, new JsonSerializerOptions { WriteIndented = true }));
                 _inf.Contar("Pilares en el eje", pilares.Count);
                 _inf.Contar("Vigas y diagonales en el eje", vigas.Count);
                 _inf.Contar("Muros en el eje", muros.Count);
                 _inf.Advertencia($"Archivo: {ruta}");
-                if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) de hormigón (fundaciones, sobrecimientos, pedestales) no se exportan: el modelo SAP2000 es de acero y madera");
+                if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) de hormigón no entran al modelo del eje (acero y madera); " +
+                    (fundacionEje != null ? "la sección del sobrecimiento va a la pestaña 7 · Fundaciones" : "no se encontró su sección de fundación"));
                 if (pilares.Count + vigas.Count + muros.Count == 0)
                     _inf.Advertencia($"No hay elementos a menos de {tolerancia:0.00} m del eje {eje.Name}");
             }
