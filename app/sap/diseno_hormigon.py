@@ -26,8 +26,32 @@ def phi_por_deformacion(et: float, fy: float, espiral: bool = False) -> float:
     return fc_ + (0.90 - fc_) * (et - ey) / 0.003
 
 
-def flexion(b: float, h: float, d: float, As: float, fc: float, fy: float, As_comp: float = 0.0, d_comp: float = 0.0) -> dict:
-    """Momento resistente φMn de una viga rectangular (con armadura de compresión opcional)."""
+DIAMETROS = (8, 10, 12, 16, 18, 22, 25)
+
+
+def opciones_armadura(As_req: float, ancho_mm: float | None = None, h_mm: float | None = None, losa: bool = False) -> str:
+    """Formas de dar As_req (mm²): en losas y zapatas (por metro), φ@s con s en múltiplos de 2,5 cm hasta
+    mín(3h, 45 cm) (7.7.2.3); en vigas, n barras de cada diámetro."""
+    ops = []
+    if losa:
+        s_max = min(3 * h_mm, 450) if h_mm else 450
+        for db in DIAMETROS[:4]:
+            a1 = math.pi * db ** 2 / 4
+            s = math.floor(min(a1 * 1000 / As_req, s_max) / 25) * 25
+            if s >= 75:
+                ops.append(f"φ{db}@{s / 10:g}")
+    else:
+        for db in DIAMETROS[1:6]:
+            n = max(2, math.ceil(As_req / (math.pi * db ** 2 / 4)))
+            if n <= 8:
+                ops.append(f"{n}φ{db}")
+    return ", ".join(ops[:4])
+
+
+def flexion(b: float, h: float, d: float, As: float, fc: float, fy: float, As_comp: float = 0.0, d_comp: float = 0.0,
+            losa: bool = False, Mu_kNm: float | None = None) -> dict:
+    """Momento resistente φMn de una viga rectangular (con armadura de compresión opcional). losa=True: zapatas y
+    losas (mínimo 0,0018·b·h, 7.6.1.1 y 24.4.3.2); si no, mínimo de vigas (9.6.1.2)."""
     b1 = beta1(fc)
     # se resuelve c por equilibrio con la armadura de compresión en su tensión real
     lo, hi = 1e-3, h
@@ -45,10 +69,22 @@ def flexion(b: float, h: float, d: float, As: float, fc: float, fy: float, As_co
     Mn = 0.85 * fc * a * b * (d - a / 2) + As_comp * fs_c * (d - d_comp)
     et = ECU * (d - c) / c
     phi = phi_por_deformacion(et, fy)
-    rho_min = max(0.25 * math.sqrt(fc) / fy, 1.4 / fy)
     notas = []
-    if As < rho_min * b * d:
-        notas.append(f"As < As,min = {rho_min * b * d:.0f} mm² (9.6.1.2)")
+    if losa:
+        As_min = (0.0018 if fy >= 420 else 0.0020) * b * h
+        if As < As_min:
+            notas.append(f"As = {As:.0f} < As,min = 0,0018·b·h = {As_min:.0f} mm²/m (7.6.1.1): para cumplir usar "
+                         f"{opciones_armadura(As_min, h_mm=h, losa=True)} (por m)")
+    else:
+        As_min = max(0.25 * math.sqrt(fc) / fy, 1.4 / fy) * b * d
+        if As < As_min:
+            texto = (f"As = {As:.0f} < As,min = {As_min:.0f} mm² (9.6.1.2): para cumplir usar {opciones_armadura(As_min)}")
+            if Mu_kNm is not None and Mn > 0:
+                # 9.6.1.3: basta con 4/3 del As requerido por el análisis
+                As_req = As * min(abs(Mu_kNm) * 1e6 / (phi * Mn), 1.0)
+                if As >= 4 / 3 * As_req:
+                    texto += f"; o se acepta por 9.6.1.3 (As ≥ 4/3·As requerido = {4 / 3 * As_req:.0f} mm²)"
+            notas.append(texto)
     if et < 0.004:
         notas.append(f"εt = {et:.4f} < 0,004: no cumple el mínimo para vigas (9.3.3.1)")
     return {"phiMn_kNm": phi * Mn / 1e6, "phi": phi, "c_mm": c, "a_mm": a, "et": et, "notas": notas}

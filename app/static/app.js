@@ -2478,11 +2478,34 @@ async function cargarFundacion() {
   try { funMostrar(await api("GET", P(`/sap/${encodeURIComponent(sap.nombre)}/fundacion`))); } catch { /* aún sin análisis */ }
 }
 
+// barra de avance genérica: prefijo de los elementos (#<p>-avance, #<p>-avance-relleno, #<p>-avance-txt), ruta que
+// informa {pct, etapa, hasta}, botón a desactivar y la tarea (promesa)
+async function conAvance(p, rutaAvance, boton, tarea) {
+  const caja = $(`#${p}-avance`);
+  const poner = (pct, etapa) => { $(`#${p}-avance-relleno`).style.width = `${pct}%`; $(`#${p}-avance-txt`).textContent = `${pct} % · ${etapa}`; };
+  let pct = 0, mostrado = 0, hasta = 0, etapa = "Enviando";
+  poner(0, etapa); caja.classList.remove("oculto"); boton.disabled = true;
+  const reloj = setInterval(async () => {
+    try { const a = await api("GET", rutaAvance); if (a.pct != null && a.pct >= pct) { pct = a.pct; hasta = Math.max(a.hasta ?? a.pct, a.pct); etapa = a.etapa; } }
+    catch { /* se reintenta */ }
+  }, 600);
+  const suave = setInterval(() => {
+    const techo = pct + 0.95 * (hasta - pct);
+    mostrado = Math.max(mostrado, pct);
+    if (mostrado < techo) mostrado += (techo - mostrado) * 0.03;
+    poner(Math.floor(mostrado), etapa);
+  }, 150);
+  try { const r = await tarea(); clearInterval(suave); poner(100, "Listo"); return r; }
+  finally { clearInterval(reloj); clearInterval(suave); boton.disabled = false; setTimeout(() => caja.classList.add("oculto"), 1200); }
+}
+
 async function funAnalizar() {
   if (!sap.nombre) throw new Error("Elige un eje (pestaña 6)");
   await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
   $("#fun-estado").textContent = "Analizando la fundación…";
-  const d = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/fundacion`), { parametros: sapParametros().fundacion || {} });
+  const nombre = sap.nombre;
+  const d = await conAvance("fun", P(`/sap/${encodeURIComponent(nombre)}/fundacion/avance`), $("#btn-fundacion"),
+    () => api("POST", P(`/sap/${encodeURIComponent(nombre)}/fundacion`), { parametros: sapParametros().fundacion || {} }));
   funMostrar(d);
   $("#fun-estado").textContent = "Listo";
 }

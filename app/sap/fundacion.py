@@ -211,7 +211,11 @@ def _expandir(combos: dict, vientos: list[str]) -> list[tuple[str, dict, bool]]:
 
 # ------------------------------------------------------------------------------------- análisis y diseño
 
-def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf: ParametrosFundacion) -> dict:
+def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf: ParametrosFundacion, avance=None) -> dict:
+    def paso(pct, etapa, hasta=None):
+        if avance:
+            avance(round(pct), etapa, round(hasta if hasta is not None else pct))
+    paso(2, "Armando el modelo de la fundación")
     if not apoyos:
         raise ValueError("El análisis del eje no tiene apoyos: vuelve a analizar el eje")
     vientos = sorted({c for a in apoyos for c in a["casos"] if patrones.get(c) == "WIND"})
@@ -255,7 +259,9 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     # ---- suelo: combinaciones de servicio ----
     q_ev = pf.q_adm_eventual or 1.33 * pf.q_adm
     servicio = []
-    for nombre, fac, ev in _expandir(ASD, vientos):
+    lista_srv = _expandir(ASD, vientos)
+    for k_s, (nombre, fac, ev) in enumerate(lista_srv):
+        paso(5 + 50 * k_s / len(lista_srv), f"Suelo: combinación de servicio {k_s + 1} de {len(lista_srv)}")
         P, M, H = cargas(fac)
         r = _viga_sobre_resortes(xs, EI, k_lin, P, M)
         if not r["estable"]:
@@ -294,11 +300,13 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     c_ala = max((B - bp) / 2, 0.0)
     d_ala = hz_mm - rec - arm.fun_estribo_diametro_mm
     As_ala = _area_barra(arm.fun_estribo_diametro_mm) / (arm.fun_estribo_separacion_cm * 10) * 1000   # mm²/m
-    fl_ala = flexion(1000, hz_mm, d_ala, As_ala, pf.fc, pf.fy) if As_ala > 0 else {"phiMn_kNm": 0.0, "notas": []}
+    fl_ala = flexion(1000, hz_mm, d_ala, As_ala, pf.fc, pf.fy, losa=True) if As_ala > 0 else {"phiMn_kNm": 0.0, "notas": []}
     cv_ala = corte(1000, d_ala, pf.fc, pf.fy)
 
     peor = {"Mpos": (0.0, ""), "Mneg": (0.0, ""), "V": (0.0, ""), "qu": (0.0, ""), "H": (0.0, ""), "P_apoyo": {}}
-    for nombre, fac, _ in _expandir(combos_lrfd, vientos):
+    lista_lrfd = _expandir(combos_lrfd, vientos)
+    for k_l, (nombre, fac, _) in enumerate(lista_lrfd):
+        paso(55 + 40 * k_l / len(lista_lrfd), f"Hormigón: combinación mayorada {k_l + 1} de {len(lista_lrfd)}")
         P, M, H = cargas(fac)
         r = _viga_sobre_resortes(xs, EI, k_lin, P, M)
         if not r["estable"]:
@@ -321,12 +329,31 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
             if rz > peor["P_apoyo"].get(a["nudo"], (0.0, ""))[0]:
                 peor["P_apoyo"][a["nudo"]] = (rz, nombre)
 
+    paso(96, "Diseño del pedestal y de la zapata")
     kN = TONF_KN
+    # armadura mínima de la viga de fundación (9.6.1.2, con el alma bw = ancho del pedestal), y 9.6.1.3
+    from .diseno_hormigon import opciones_armadura
+    d_viga = Ht_mm - rec
+    As_min_v = max(0.25 * math.sqrt(pf.fc) / pf.fy, 1.4 / pf.fy) * bp_mm * d_viga
+    As_inf = arm.fun_barras_inferiores * _area_barra(arm.fun_diametro_mm)
+    As_sup = 2 * _area_barra(arm.ped_diametro_mm) if n_cara else 0.0           # capa superior del pedestal
+
+    def nota_min(As, Mu, phiMn, cara):
+        if As >= As_min_v:
+            return []
+        As_req = As * min(Mu * kN / phiMn, 1.0) if phiMn else As
+        txt = (f"As {cara} = {As:.0f} < As,min = {As_min_v:.0f} mm² (9.6.1.2, bw = {bp_mm:.0f} mm): para cumplir usar "
+               f"{opciones_armadura(As_min_v)}")
+        if As >= 4 / 3 * As_req:
+            txt += f"; o se acepta por 9.6.1.3 (As ≥ 4/3·As requerido = {4 / 3 * As_req:.0f} mm²)"
+        return [txt]
     viga = [
         {"verificacion": "Flexión, tracción abajo (Mu+)", "Mu_tonfm": peor["Mpos"][0], "combo": peor["Mpos"][1],
-         "phiMn_tonfm": mn_pos["phiMn_kNm"] / kN, "razon": peor["Mpos"][0] * kN / mn_pos["phiMn_kNm"] if mn_pos["phiMn_kNm"] else None},
+         "phiMn_tonfm": mn_pos["phiMn_kNm"] / kN, "razon": peor["Mpos"][0] * kN / mn_pos["phiMn_kNm"] if mn_pos["phiMn_kNm"] else None,
+         "notas": nota_min(As_inf, peor["Mpos"][0], mn_pos["phiMn_kNm"], "inferior")},
         {"verificacion": "Flexión, tracción arriba (Mu−)", "Mu_tonfm": peor["Mneg"][0], "combo": peor["Mneg"][1],
-         "phiMn_tonfm": mn_neg["phiMn_kNm"] / kN, "razon": peor["Mneg"][0] * kN / mn_neg["phiMn_kNm"] if mn_neg["phiMn_kNm"] else None},
+         "phiMn_tonfm": mn_neg["phiMn_kNm"] / kN, "razon": peor["Mneg"][0] * kN / mn_neg["phiMn_kNm"] if mn_neg["phiMn_kNm"] else None,
+         "notas": nota_min(As_sup, peor["Mneg"][0], mn_neg["phiMn_kNm"], "superior")},
         {"verificacion": "Corte (estribos del pedestal)", "Vu_tonf": peor["V"][0], "combo": peor["V"][1],
          "phiVn_tonf": cv["phiVn_kN"] / kN, "razon": peor["V"][0] * kN / cv["phiVn_kN"], "notas": cv["notas"]},
     ]

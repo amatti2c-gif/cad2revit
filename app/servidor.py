@@ -1980,14 +1980,25 @@ def fundacion_eje(pid: str, nombre: str, pedido: PedidoFundacion):
                                     and k != "armaduras" and v not in (None, "")})
         pf.armaduras = ArmadurasFundacion(**{k: v for k, v in arm.items() if k in ArmadurasFundacion.__dataclass_fields__
                                              and v not in (None, "")})
-        r = analizar_fundacion(res["apoyos"], res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf)
+        clave = f"{pid}/{nombre}/fundacion"
+        _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando", "hasta": 2}
+        r = analizar_fundacion(res["apoyos"], res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf,
+                               avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
+                                   clave, {"pct": pct, "etapa": etapa, "hasta": hasta}))
     except (ValueError, TypeError) as e:
         raise HTTPException(400, f"Parámetros no válidos: {e}")
+    finally:
+        _AVANCE_ANALISIS.pop(f"{pid}/{nombre}/fundacion", None)
     r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     r["analisis_eje"] = res.get("fecha")
     texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
     f.with_name(f.name.replace(".sap.json", ".fundacion.json")).write_text(texto, encoding="utf-8")
     return Response(texto, media_type="application/json")
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}/fundacion/avance")
+def avance_fundacion(pid: str, nombre: str):
+    return _AVANCE_ANALISIS.get(f"{pid}/{nombre}/fundacion") or {"pct": None, "etapa": ""}
 
 
 @app.get("/api/proyectos/{pid}/sap/{nombre}/fundacion")
