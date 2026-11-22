@@ -328,7 +328,6 @@ def test_fundacion_del_eje(tmp_path, monkeypatch):
 
 def test_detalle_de_armaduras_del_eje(tmp_path, monkeypatch):
     monkeypatch.setenv("CAD2REVIT_DATOS", str(tmp_path))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     from fastapi.testclient import TestClient
     from app.servidor import app
     cli = TestClient(app)

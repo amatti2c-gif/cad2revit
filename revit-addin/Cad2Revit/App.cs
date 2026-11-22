@@ -70,7 +70,7 @@ namespace Cad2Revit
             {
                 ToolTip = "Armaduras de pedestal y fundación: llenas las barras y estribos del croquis en un formulario " +
                           "(con la imagen al lado) y eliges el muro (pedestal) y su zapata corrida (fundación) para " +
-                          "crearlas. Opcional: leer el croquis con la app (IA, de pago)."
+                          "crearlas. La lectura queda guardada (.armaduras.json) y va con «Eje a análisis» a la app."
             });
             panel.AddItem(new PushButtonData("Cad2RevitEntramadoPiso", "Entramado\nde piso",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoEntramadoPiso).FullName)

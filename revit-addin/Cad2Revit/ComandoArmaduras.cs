@@ -54,11 +54,9 @@ namespace Cad2Revit
             modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Llenar a mano sin imagen");
             modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Abrir una lectura guardada (.armaduras.json)",
                                 "La que se guardó junto a la imagen la vez anterior");
-            modo.AddCommandLink(TaskDialogCommandLinkId.CommandLink4, "Leer el croquis con la app (IA, de pago)",
-                                "Requiere la clave de la API de Claude configurada en la app");
             var eleccion = modo.Show();
             if (eleccion != TaskDialogResult.CommandLink1 && eleccion != TaskDialogResult.CommandLink2 &&
-                eleccion != TaskDialogResult.CommandLink3 && eleccion != TaskDialogResult.CommandLink4)
+                eleccion != TaskDialogResult.CommandLink3)
                 return Result.Cancelled;
 
             string ruta = null;
@@ -80,8 +78,6 @@ namespace Cad2Revit
             {
                 if (eleccion == TaskDialogResult.CommandLink3)
                     lectura = JsonSerializer.Deserialize<LecturaArmaduras>(File.ReadAllText(ruta), Json);
-                else if (eleccion == TaskDialogResult.CommandLink4)
-                    lectura = LeerConApp(ruta);
                 else
                     lectura = new LecturaArmaduras
                     {
@@ -204,34 +200,6 @@ namespace Cad2Revit
             Directory.CreateDirectory(Path.GetDirectoryName(RutaConexion));
             File.WriteAllText(RutaConexion, JsonSerializer.Serialize(c, Json));
             return c;
-        }
-
-        private static LecturaArmaduras LeerConApp(string imagen)
-        {
-            var c = CargarConexion(false);
-            for (int intento = 0; c != null && intento < 3; intento++)
-            {
-                using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(4) };
-                if (!string.IsNullOrEmpty(c.Usuario))
-                    http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic",
-                        Convert.ToBase64String(Encoding.UTF8.GetBytes(c.Usuario + ":" + c.Clave)));
-                using var cuerpo = new MultipartFormDataContent();
-                var bytes = new ByteArrayContent(File.ReadAllBytes(imagen));
-                var ext = Path.GetExtension(imagen).ToLowerInvariant();
-                bytes.Headers.ContentType = new MediaTypeHeaderValue(ext == ".png" ? "image/png" : ext == ".webp" ? "image/webp" : "image/jpeg");
-                cuerpo.Add(bytes, "imagen", Path.GetFileName(imagen));
-                var resp = http.PostAsync(c.Url + "/api/armaduras/leer", cuerpo).GetAwaiter().GetResult();
-                var texto = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
-                if ((int)resp.StatusCode == 401) { c = CargarConexion(true); continue; }      // usuario o clave mal
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string detalle = texto;
-                    try { detalle = JsonDocument.Parse(texto).RootElement.GetProperty("detail").GetString(); } catch { }
-                    throw new Exception($"La app respondió {(int)resp.StatusCode}: {detalle}");
-                }
-                return JsonSerializer.Deserialize<LecturaArmaduras>(texto, Json);
-            }
-            return null;
         }
 
         // ---------------- revisión ----------------

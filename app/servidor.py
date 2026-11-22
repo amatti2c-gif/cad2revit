@@ -2037,23 +2037,6 @@ def verificar_hormigon(sec: SeccionHormigon):
     return out
 
 
-@app.post("/api/armaduras/leer")
-async def leer_armaduras(imagen: UploadFile = File(...)):
-    """Croquis de armaduras de pedestal y fundación (foto) → barras, para el botón «Armaduras» de Revit."""
-    from app.armaduras import leer_croquis
-    datos = await imagen.read()
-    if len(datos) > 8 * 1024 * 1024:
-        raise HTTPException(413, "La imagen pesa más de 8 MB; envía una más liviana")
-    tipo = (imagen.content_type or "").lower()
-    if tipo in ("", "application/octet-stream"):
-        n = (imagen.filename or "").lower()
-        tipo = "image/png" if n.endswith(".png") else "image/webp" if n.endswith(".webp") else "image/jpeg"
-    try:
-        return leer_croquis(datos, tipo)
-    except RuntimeError as e:
-        raise HTTPException(502, str(e))
-
-
 @app.get("/api/proyectos/{pid}/corridas/{a}/comparar/{b}")
 def comparar(pid: str, a: int, b: int):
     d = _proyecto(pid)

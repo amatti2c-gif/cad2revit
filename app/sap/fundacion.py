@@ -26,7 +26,7 @@ TONF_KN = G_ACC                     # 1 tonf = 9,80665 kN
 
 @dataclass
 class ArmadurasFundacion:
-    """Mismo esquema que la lectura de croquis (app/armaduras.py): pedestal y fundación."""
+    """Mismo esquema que la lectura .armaduras.json del botón «Armaduras» de Revit: pedestal y fundación."""
     ped_barras_por_cara: int = 3
     ped_diametro_mm: float = 10.0
     ped_estribo_diametro_mm: float = 8.0
