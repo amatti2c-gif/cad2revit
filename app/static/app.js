@@ -2252,7 +2252,9 @@ function sapMostrarNube(d) {
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
     `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
-    h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"), " · ",
+    h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"),
+    d.madera.some(m => m.falta_capacidad_union) ? h("span", { class: "nocumple" },
+      ` (${d.madera.filter(m => m.falta_capacidad_union).length} anclaje(s) al pilar sin verificar: falta la capacidad de la unión)`) : "", " · ",
     h("span", { class: dmalas ? "nocumple" : "cumple" }, dmalas ? `${dmalas} deformación(es) exceden el límite` : "Deformaciones: todas cumplen"));
   const casos = (d.casos || []).filter(c => c.reaccion_x != null || c.caso !== "E");
   const pm = x => x == null ? "—" : (x.envolvente ? "± " : "");
@@ -2303,8 +2305,10 @@ function sapMostrarNube(d) {
   const celdaAnc = m => m.anclajes ? (m.sin_traccion || (m.T_anclaje != null && m.T_anclaje <= 1e-9)
     ? h("td", { class: "cumple", title: "el peso que baja por el muro supera el volcamiento: el borde no se levanta" }, "0.00 · sin tracción")
     : m.falta_capacidad_union && !(m.FU_anclaje > 1)
-    ? h("td", { class: "nocumple", title: "hay tracción: indica en el panel de muros la tracción admisible de la unión al pilar (tonf)" },
-        `${f2(m.FU_anclaje)} · falta Tadm de la unión al pilar`)
+    ? h("td", { class: "pendiente" }, `sin verificar: el borde unido al pilar tracciona ${f2(m.T_anclaje)} tonf y falta la capacidad de esa unión. `,
+        h("a", { href: "#", onclick: ev => { ev.preventDefault(); const i = $('[data-sap="muro.t_union_pilar"]'); i.scrollIntoView({ block: "center" }); i.focus(); } },
+          "Ingrésala aquí"),
+        (m.anclajes || []).some(a => a.tipo === "hold-down" && a.T_adm) ? ` · hold-down: FU ${f2(Math.max(...m.anclajes.filter(a => a.tipo === "hold-down" && a.T_adm).map(a => a.FU)))}` : "")
     : celda(m.FU_anclaje)) : h("td", {}, "");
   $("#sap-nube-madera").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "FU corte = v/vadm", "v (tonf/m)", "vadm (tonf/m)", "Combinación",

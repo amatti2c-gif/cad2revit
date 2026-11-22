@@ -268,3 +268,5 @@ legend { padding: 0 4px; }
 #sap-avance-txt { font-size: 13px; white-space: nowrap; min-width: 260px; }
 
 #visor-lienzo { width: 100%; height: 460px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+
+td.pendiente { color: #8a5a00; background: #fff6e0; }
