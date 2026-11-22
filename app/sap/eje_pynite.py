@@ -20,7 +20,7 @@ from .eje_cargas import A0_ZONA, SUELOS_DS61, espectro_ds61
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 4
+VERSION_RESULTADO = 6
 # resistencia admisible al corte de muros (tonf/m), 1 tablero OSB 9,5 mm Sheathing y clavo 8d, según el clavado
 # perimetral (Manual de diseño de estructuras en madera, Tablas 45 y 46; SDPWS 4.3A, sismo). Viento: × 1,4 (SDPWS)
 VN_OSB_9_5_8D = {150: 0.33, 100: 0.48, 50: 0.79}
@@ -286,6 +286,25 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         Analysis._store_displacements(m, d1, D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
         modos_combo.append(nombre)
 
+    # reacciones basales por modo: las fuerzas de inercia M·Γ·φ·Sa (con el factor de corte), cambiadas de signo
+    xs_ap = [mod.nudos[n][0] for n in mod.apoyos] or [0.0]
+    zs_ap = [mod.nudos[n][1] for n in mod.apoyos] or [0.0]
+    ref = (min(xs_ap), min(zs_ap))
+    por_id = {n.ID: n for n in m.nodes.values()}
+    reac_modo = []
+    for i in range(nmod):
+        fi = np.asarray(M11 @ (factor * gam[i] * Sa(periodos[i]) * vecs[:, i])).ravel()
+        rx_ = ry_ = rm_ = 0.0
+        for k, g_ in enumerate(np.asarray(D1_idx).ravel()):
+            nd, comp = por_id[int(g_) // 6], int(g_) % 6
+            if comp == 0:
+                rx_ += fi[k]; rm_ -= (nd.Y - ref[1]) * fi[k]
+            elif comp == 1:
+                ry_ += fi[k]; rm_ += (nd.X - ref[0]) * fi[k]
+            elif comp == 5:
+                rm_ += fi[k]
+        reac_modo.append(np.array([-rx_, -ry_, -rm_]))
+
     # ---- fuerzas en las barras: casos estáticos y envolvente E (CQC), en n_puntos por barra ----
     def fuerzas(f, combo):
         mb = m.members[f]
@@ -384,13 +403,14 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     madera.sort(key=lambda r: -r["FU"])
 
     deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
-    casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), q0 * factor, factor)
+    casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, reac_modo, ref)
+    visor = _visor(m, mod, cargas, estaticos, modos_combo, periodos, m_ef / masa_tot if masa_tot else m_ef * 0)
 
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "version": VERSION_RESULTADO, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
+        "version": VERSION_RESULTADO, "visor": visor, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
         "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }
 
@@ -403,7 +423,34 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
 LIMITES_DEF = {"viga_total": 240, "viga_variable": 360, "lateral_viento": 200, "deriva_sismo": 0.002}
 
 
-def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, q_sismo, factor) -> list[dict]:
+def _visor(m, mod, cargas, estaticos, modos, periodos, part) -> dict:
+    """El modelo tal como quedó en PyNite, para dibujarlo en la app: nudos (incluidos los internos de los triángulos),
+    barras, cuadriláteros, apoyos, cargas distribuidas por caso, deformadas de cada caso y formas modales (normalizadas)."""
+    r6 = lambda v: round(float(v), 6)                                 # noqa: E731
+    nudos = {n.name: [r6(n.X), r6(n.Y)] for n in m.nodes.values()}
+
+    def campo(c, norm=False):
+        d = {n.name: [n.DX[c], n.DY[c]] for n in m.nodes.values()}
+        k = max((max(abs(a), abs(b)) for a, b in d.values()), default=0.0)
+        k = (1 / k) if (norm and k) else 1.0
+        return {n: [float(f"{a * k:.4g}"), float(f"{b * k:.4g}")] for n, (a, b) in d.items()}
+    carg = {}
+    for f, pat, d, v in cargas.distribuidas:
+        carg.setdefault(pat, []).append([f, d, r6(v)])
+    for f, a, b, sec in mod.barras:                                   # peso propio del acero (DEAD)
+        carg.setdefault("DEAD", []).append([f, "GRAV", r6(7.85 * m.sections[sec].A)])
+    return {
+        "nudos": nudos,
+        "barras": [[f, a, b, mod.origen.get(f), mod.roles.get(f), sec] for f, a, b, sec in mod.barras],
+        "quads": [[q.name, [q.i_node.name, q.j_node.name, q.m_node.name, q.n_node.name]] for q in m.quads.values()],
+        "apoyos": dict(mod.apoyos),
+        "cargas": carg,
+        "deformadas": {c: campo(c) for c in estaticos},
+        "modos": [{"T": float(periodos[i]), "masa_x": float(part[i]), "forma": campo(c, True)} for i, c in enumerate(modos)],
+    }
+
+
+def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, factor, reac_modo, ref) -> list[dict]:
     """Resumen de cada estado de carga sin mayorar: reacciones totales, desplazamientos máximos, esfuerzos máximos en
     las barras de acero y las cargas aplicadas a cada elemento de Revit (tonf/m)."""
     desc = {"DEAD": "Peso propio (acero y muros) + peso del techo", "LR": "Sobrecarga de techo Lr (NCh1537)"}
@@ -424,6 +471,8 @@ def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, q_sismo, f
     for c in estaticos:
         rx = sum(m.nodes[n].RxnFX[c] for n in apoyos)
         ry = sum(m.nodes[n].RxnFY[c] for n in apoyos)
+        mz = sum(m.nodes[n].RxnMZ[c] + (mod.nudos[n][0] - ref[0]) * m.nodes[n].RxnFY[c]
+                 - (mod.nudos[n][1] - ref[1]) * m.nodes[n].RxnFX[c] for n in apoyos)
         dx = max((abs(m.nodes[n].DX[c]) for n in nudos), default=0.0)
         dy = max((abs(m.nodes[n].DY[c]) for n in nudos), default=0.0)
         N = max((float(np.max(np.abs(e[c][0]))) for e, _ in res_barra.values()), default=0.0)
@@ -432,13 +481,15 @@ def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, q_sismo, f
         cargas_el = [{"elemento": o, "rol": rol, "direccion": d, "min": a[0], "max": a[1]}
                      for (pat, o, rol, d), a in aplic.items() if pat == c]
         out.append({"caso": c, "tipo": cargas.patrones.get(c, ""), "descripcion": desc.get(c, ""),
-                    "reaccion_x": float(rx), "reaccion_y": float(ry), "dx_max_mm": float(dx) * 1000, "dy_max_mm": float(dy) * 1000,
+                    "reaccion_x": float(rx), "reaccion_y": float(ry), "momento": float(mz), "dx_max_mm": float(dx) * 1000, "dy_max_mm": float(dy) * 1000,
                     "N_max": N, "V_max": V, "M_max": M, "cargas": cargas_el})
-    # sismo: envolvente CQC (sin signo)
+    # sismo: envolvente CQC (sin signo) de las reacciones de cada modo
+    rE = _cqc(reac_modo, omegas) if reac_modo else np.zeros(3)
     de = max((float(_cqc([np.array([m.nodes[n].DX[k]]) for k in modos], omegas)[0]) for n in nudos), default=0.0)
     ee = [e for _, e in res_barra.values()]
     out.append({"caso": "E", "tipo": "QUAKE", "descripcion": f"Sismo espectral NCh433 + DS61, CQC (factor de corte {factor:.2f})",
-                "reaccion_x": float(q_sismo), "reaccion_y": None, "dx_max_mm": de * 1000, "dy_max_mm": None,
+                "reaccion_x": float(rE[0]), "reaccion_y": float(rE[1]), "momento": float(rE[2]), "envolvente": True,
+                "dx_max_mm": de * 1000, "dy_max_mm": None,
                 "N_max": max((float(np.max(e[0])) for e in ee), default=0.0), "V_max": max((float(np.max(e[1])) for e in ee), default=0.0),
                 "M_max": max((float(np.max(e[2])) for e in ee), default=0.0), "cargas": []})
     return out

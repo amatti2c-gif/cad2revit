@@ -2233,6 +2233,8 @@ async function sapNube() {
 }
 
 function sapMostrarNube(d) {
+  sap.nube = d;
+  sapVisorOpciones(d);
   const f2 = x => x == null ? "" : Number(x).toFixed(2), f3 = x => x == null ? "" : Number(x).toFixed(3);
   const celda = r => h("td", { class: r > 1 ? "nocumple" : "cumple" }, f2(r));
   sap.razones = {};
@@ -2249,13 +2251,20 @@ function sapMostrarNube(d) {
     h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"), " · ",
     h("span", { class: dmalas ? "nocumple" : "cumple" }, dmalas ? `${dmalas} deformación(es) exceden el límite` : "Deformaciones: todas cumplen"));
   const casos = d.casos || [];
+  const pm = x => x == null ? "—" : (x.envolvente ? "± " : "");
+  $("#sap-nube-casos-nota").textContent = "Suma de las reacciones de todos los apoyos. Fx horizontal (+ hacia +X), Fz vertical " +
+    "(+ hacia arriba) y My momento basal respecto del apoyo de la izquierda (+ antihorario). Son reacciones: se oponen a la " +
+    "carga aplicada. El sismo es la envolvente CQC (±) de las reacciones de cada modo, ya con el factor de corte.";
   $("#sap-nube-casos").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Caso", "Descripción", "ΣFx reacción (tonf)", "ΣFy reacción (tonf)", "δx máx (mm)", "δy máx (mm)",
-      "|N| máx (tonf)", "|V| máx (tonf)", "|M| máx (tonf·m)"].map(t => h("th", {}, t)))),
+    h("thead", {}, h("tr", {}, ...["Caso", "Descripción", "ΣFx (tonf)", "ΣFz (tonf)", "ΣMy (tonf·m)"].map(t => h("th", {}, t)))),
     h("tbody", {}, casos.map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso)), h("td", {}, c.descripcion),
-      h("td", {}, c.reaccion_y == null ? `Q = ${f2(c.reaccion_x)}` : f2(c.reaccion_x)), h("td", {}, c.reaccion_y == null ? "—" : f2(c.reaccion_y)),
-      h("td", {}, f2(c.dx_max_mm)), h("td", {}, c.dy_max_mm == null ? "—" : f2(c.dy_max_mm)),
-      h("td", {}, f2(c.N_max)), h("td", {}, f2(c.V_max)), h("td", {}, f2(c.M_max))))));
+      h("td", {}, pm(c) + f2(c.reaccion_x)), h("td", {}, c.reaccion_y == null ? "—" : pm(c) + f2(c.reaccion_y)),
+      h("td", {}, c.momento == null ? "—" : pm(c) + f2(c.momento))))));
+  $("#sap-nube-casos-max").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Caso", "δx máx (mm)", "δy máx (mm)", "|N| máx (tonf)", "|V| máx (tonf)", "|M| máx (tonf·m)"]
+      .map(t => h("th", {}, t)))),
+    h("tbody", {}, casos.map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso)), h("td", {}, f2(c.dx_max_mm)),
+      h("td", {}, c.dy_max_mm == null ? "—" : f2(c.dy_max_mm)), h("td", {}, f2(c.N_max)), h("td", {}, f2(c.V_max)), h("td", {}, f2(c.M_max))))));
   const rango = (a, b) => Math.abs(a - b) < 5e-4 ? f3(a) : `${f3(a)} a ${f3(b)}`;
   $("#sap-nube-cargas").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Caso", "Elemento (Revit)", "Rol", "Dirección", "Carga (tonf/m)"].map(t => h("th", {}, t)))),
@@ -2280,6 +2289,91 @@ function sapMostrarNube(d) {
       celda(m.FU), h("td", {}, f3(m.v)), h("td", {}, f3(m.vn)), h("td", {}, m.combo), h("td", {}, f2(m.T_anclaje))))));
   sapDibujar();
 }
+
+// ---- visor del modelo PyNite: geometría, cargas por caso, deformadas y formas modales ----
+function sapVisorOpciones(d) {
+  const v = d.visor, sel = $("#visor-modo"), antes = sel.value;
+  if (!v) { sel.replaceChildren(); $("#visor-lienzo").replaceChildren(); return; }
+  const ops = [["geo", "Modelo (barras, shells y apoyos)"]];
+  for (const c of Object.keys(v.cargas)) ops.push([`carga:${c}`, `Cargas: ${c}`]);
+  for (const c of Object.keys(v.deformadas)) ops.push([`def:${c}`, `Deformada: ${c}`]);
+  v.modos.forEach((m, i) => ops.push([`modo:${i}`, `Modo ${i + 1}: T = ${m.T.toFixed(3)} s, masa X ${(100 * m.masa_x).toFixed(1)} %`]));
+  sel.replaceChildren(...ops.map(([k, t]) => h("option", { value: k }, t)));
+  sel.value = ops.some(o => o[0] === antes) ? antes : "geo";
+  sapVisor();
+}
+
+function sapVisor() {
+  const d = sap.nube, v = d && d.visor, svg = $("#visor-lienzo");
+  if (!v) return;
+  const modo = $("#visor-modo").value || "geo";
+  const N = v.nudos, xs = Object.values(N).map(p => p[0]), zs = Object.values(N).map(p => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const tam = Math.max(x1 - x0, z1 - z0, 1), mg = 0.12 * tam, k = tam / 500;
+  svg.setAttribute("viewBox", `${x0 - mg} ${-z1 - mg} ${x1 - x0 + 2 * mg} ${z1 - z0 + 2 * mg}`);
+  // desplazamientos a dibujar
+  let U = null, info = "";
+  const esc = Number($("#visor-escala").value) / 50;                 // 0 a 2
+  if (modo.startsWith("def:")) {
+    U = v.deformadas[modo.slice(4)];
+    const mx = Math.max(...Object.values(U).map(u => Math.hypot(u[0], u[1])), 1e-12);
+    const f = 0.08 * tam / mx * esc;
+    info = `desplazamiento máximo ${(mx * 1000).toFixed(2)} mm · dibujado × ${f.toFixed(0)}`;
+    U = Object.fromEntries(Object.entries(U).map(([n, u]) => [n, [u[0] * f, u[1] * f]]));
+  } else if (modo.startsWith("modo:")) {
+    const m = v.modos[Number(modo.slice(5))];
+    const f = 0.08 * tam * esc;
+    info = `forma modal normalizada (máx. = 1) · T = ${m.T.toFixed(4)} s · masa participante X ${(100 * m.masa_x).toFixed(1)} %`;
+    U = Object.fromEntries(Object.entries(m.forma).map(([n, u]) => [n, [u[0] * f, u[1] * f]]));
+  } else info = `${Object.keys(N).length} nudos, ${v.barras.length} barras, ${v.quads.length} shells (los triángulos van como 3 cuadriláteros)`;
+  const P = n => { const p = N[n], u = U ? U[n] || [0, 0] : [0, 0]; return [p[0] + u[0], -(p[1] + u[1])]; };
+  const hijos = [];
+  // shells: original tenue y deformada encima
+  for (const [q, ns] of v.quads) {
+    if (U) hijos.push(s("polygon", { points: ns.map(n => `${N[n][0]},${-N[n][1]}`).join(" "), fill: "none", stroke: "#ccc", "stroke-width": k * 0.5 }));
+    const pol = s("polygon", { points: ns.map(n => P(n).join(",")).join(" "), fill: "hsla(35,55%,70%,.55)", stroke: "#a08050", "stroke-width": k * 0.6 });
+    pol.append(Object.assign(s("title"), { textContent: `${q}: ${ns.join(", ")}` }));
+    hijos.push(pol);
+  }
+  const color = { pilar: "#1f4e9c", techo: "#c06000", viga: "#555", diagonal: "#7a3fb0" };
+  for (const [f, a, b, orig, rol, sec] of v.barras) {
+    if (U) hijos.push(s("line", { x1: N[a][0], y1: -N[a][1], x2: N[b][0], y2: -N[b][1], stroke: "#bbb", "stroke-width": k * 2 }));
+    const [xa, ya] = P(a), [xb, yb] = P(b);
+    const l = s("line", { x1: xa, y1: ya, x2: xb, y2: yb, stroke: color[rol] || "#333", "stroke-width": k * 3 });
+    l.append(Object.assign(s("title"), { textContent: `${f} · ${sec} · ${rol} · Revit ${orig ?? ""} · ${a} → ${b}` }));
+    hijos.push(l);
+  }
+  // cargas del caso: flechas a lo largo de cada barra, proporcionales a la carga (tonf/m)
+  if (modo.startsWith("carga:")) {
+    const lista = v.cargas[modo.slice(6)] || [], geo = Object.fromEntries(v.barras.map(b => [b[0], b]));
+    const qmax = Math.max(...lista.map(c => Math.abs(c[2])), 1e-12), largo = 0.07 * tam * Math.max(esc, 0.1);
+    info = `carga máxima ${qmax.toFixed(3)} tonf/m (${(qmax * 1000).toFixed(0)} kgf/m); flechas en la dirección de la carga`;
+    for (const [f, dir, q] of lista) {
+      const b = geo[f]; if (!b) continue;
+      const [xa, za] = N[b[1]], [xb, zb] = N[b[2]];
+      const L = Math.hypot(xb - xa, zb - za);
+      let ux = 0, uz = 0;
+      if (dir === "X") ux = Math.sign(q); else if (dir === "Z") uz = Math.sign(q); else uz = -Math.sign(q);
+      const lq = largo * Math.abs(q) / qmax * (dir === "GRAV_PROY" ? Math.abs(xb - xa) / L : 1);
+      const n = Math.max(2, Math.round(L / (0.04 * tam)));
+      for (let i = 0; i <= n; i++) {
+        const x = xa + (xb - xa) * i / n, z = za + (zb - za) * i / n;
+        const c = dir === "X" ? "#b00020" : (uz > 0 ? "#1b6e20" : "#2d6cdf");
+        hijos.push(s("line", { x1: x - ux * lq, y1: -(z - uz * lq), x2: x, y2: -z, stroke: c, "stroke-width": k * 1.2 }));
+        hijos.push(s("circle", { cx: x, cy: -z, r: k * 2, fill: c }));
+      }
+    }
+  }
+  for (const [n, t] of Object.entries(v.apoyos)) {
+    const [x, y] = [N[n][0], -N[n][1]], dd = k * 6;
+    hijos.push(t === "empotrado" ? s("rect", { x: x - dd, y, width: 2 * dd, height: dd, fill: "#222" })
+      : s("polygon", { points: `${x},${y} ${x - dd},${y + 1.6 * dd} ${x + dd},${y + 1.6 * dd}`, fill: "none", stroke: "#222", "stroke-width": k }));
+  }
+  svg.replaceChildren(...hijos);
+  $("#visor-info").textContent = info;
+}
+$("#visor-modo").addEventListener("change", sapVisor);
+$("#visor-escala").addEventListener("input", sapVisor);
 
 async function verificarHormigon() {
   const d = {};

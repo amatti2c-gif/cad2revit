@@ -283,8 +283,16 @@
         </div>
         <div class="panel oculto" id="sap-nube"><div class="panel-tit"><span>Análisis en la nube (PyNite) · NCh433 + DS61 espectral, NCh3171</span></div>
           <p id="sap-nube-resumen"></p>
-          <h3>Estados de carga puros (sin mayorar)</h3>
+          <h3>Modelo PyNite</h3>
+          <div class="fila-sap"><label>Ver <select id="visor-modo"></select></label>
+            <label>Escala <input id="visor-escala" type="range" min="0" max="100" value="50"></label>
+            <span id="visor-info" class="tenue"></span></div>
+          <svg id="visor-lienzo" viewBox="0 0 100 50"></svg>
+          <h3>Reacciones basales totales por estado de carga puro (sin mayorar)</h3>
+          <p class="tenue" id="sap-nube-casos-nota"></p>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-casos"></table></div>
+          <details><summary>Desplazamientos y esfuerzos máximos por estado de carga</summary>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-casos-max"></table></div></details>
           <details><summary>Cargas aplicadas a cada elemento por estado de carga (tonf/m)</summary>
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-cargas"></table></div></details>
           <h3>Acero AISC 360-16 LRFD (por elemento de Revit)</h3>
