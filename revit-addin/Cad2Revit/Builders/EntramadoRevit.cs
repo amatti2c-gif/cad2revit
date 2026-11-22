@@ -99,6 +99,8 @@ namespace Cad2Revit
             double largo = Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[1] - a[1], 2));
             double ux = (b[0] - a[0]) / largo, uy = (b[1] - a[1]) / largo;
             double baseOff = w.get_Parameter(BuiltInParameter.WALL_BASE_OFFSET)?.AsDouble() ?? 0;
+            // cota de la base del muro (pies) con que se generó: el seguimiento del muro mueve el entramado si cambia
+            string sufijoBase = " " + EntramadoMuroUpdater.EtiquetaBase + (nivel.Elevation + baseOff).ToString("R", System.Globalization.CultureInfo.InvariantCulture);
             double zBase = Mt(nivel.Elevation + baseOff);
             double alto;
             var tope = w.get_Parameter(BuiltInParameter.WALL_HEIGHT_TYPE)?.AsElementId();
@@ -291,8 +293,8 @@ namespace Cad2Revit
                 bool vertical = RolesVerticales.Contains(p.Rol);
                 if (Intentar($"muro {w.Id} {p.Rol}", () =>
                 {
-                    if (vertical) ColocarVertical(p, sv, nivel, angulo, mat, "", $"{marca} {p.Rol}");
-                    else ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}");
+                    if (vertical) ColocarVertical(p, sv, nivel, angulo, mat, "", $"{marca} {p.Rol}{sufijoBase}");
+                    else ColocarHorizontal(p, sh, nivel, mat, "", $"{marca} {p.Rol}{sufijoBase}");
                 }))
                 {
                     if (vertical) nv++; else nh++;

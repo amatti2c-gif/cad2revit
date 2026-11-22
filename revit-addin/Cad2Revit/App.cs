@@ -12,6 +12,7 @@ namespace Cad2Revit
         public Result OnStartup(UIControlledApplication app)
         {
             try { EntramadoPisoUpdater.Registrar(app.ActiveAddInId); } catch { /* sin seguimiento del piso */ }
+            try { EntramadoMuroUpdater.Registrar(app.ActiveAddInId); } catch { /* sin seguimiento del muro */ }
             const string pestana = "cad2revit";
             try { app.CreateRibbonTab(pestana); } catch { /* ya existe */ }
             var panel = app.CreateRibbonPanel(pestana, "Modelo desde CAD");
