@@ -285,3 +285,6 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 
 #fun-detalle-img { width: 100%; max-height: 380px; object-fit: contain; background: #fff; border: 1px solid var(--borde);
   border-radius: var(--radio); margin-bottom: 8px; }
+
+.fun-esquema-caja { margin-bottom: 10px; }
+#fun-esquema { width: 100%; height: 340px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); color: #222; }

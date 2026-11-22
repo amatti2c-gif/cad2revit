@@ -2460,6 +2460,7 @@ async function cargarFundacion() {
   $("#btn-arm-revit").title = sap.eje && sap.eje.fundacion ? (sap.eje.fundacion.nota || "") :
     "Este eje no trae la sección de fundación: vuelve a exportarlo con el botón «Eje a análisis» de Revit";
   fun.res = null;
+  funEsquema();
   $("#fun-res").classList.add("oculto");
   // imagen del detalle de armaduras exportada desde Revit
   const caja = $("#fun-detalle");
@@ -2576,9 +2577,92 @@ function funLlenarArmaduras(a) {
   pon("fun_estribo_separacion_cm", a.fundacion.estribo_separacion_cm);
   const rec = $('[data-sap="fundacion.recubrimiento"]');
   if (rec && a.recubrimiento_fundacion_cm) rec.value = String(a.recubrimiento_fundacion_cm);
+  funEsquema();
+}
+
+
+// ---- corte del sobrecimiento (pedestal + zapata) dibujado con los datos ingresados ----
+function funEsquema() {
+  const svg = $("#fun-esquema"); if (!svg) return;
+  const f = sapParametros().fundacion || {}, a = f.armaduras || {};
+  const v = (x, d) => (x == null || x === "" || isNaN(x)) ? d : Number(x);
+  // cm (los campos de geometría vienen en m)
+  const bp = v(f.b_pedestal, 0.20) * 100, hp = v(f.h_pedestal, 0.60) * 100, B = v(f.b_zapata, 0.60) * 100, hz = v(f.h_zapata, 0.25) * 100;
+  const Df = v(f.profundidad, 0.80) * 100, rec = v(f.recubrimiento, 0.05) * 100;
+  const nCara = Math.max(0, Math.round(v(a.ped_barras_por_cara, 3))), dP = v(a.ped_diametro_mm, 10) / 10;
+  const eP = v(a.ped_estribo_diametro_mm, 8) / 10, sP = v(a.ped_estribo_separacion_cm, 20);
+  const hastaFondo = a.ped_estribo_hasta_fondo !== false;
+  const nSup = Math.max(0, Math.round(v(a.fun_barras_superiores, 4))), nInf = Math.max(0, Math.round(v(a.fun_barras_inferiores, 4)));
+  const dF = v(a.fun_diametro_mm, 10) / 10, eF = v(a.fun_estribo_diametro_mm, 8) / 10, sF = v(a.fun_estribo_separacion_cm, 20);
+  // coordenadas: x desde el eje del muro, y hacia abajo desde la cara superior del pedestal
+  const Ht = hp + hz, xP0 = -bp / 2, xP1 = bp / 2, xZ0 = -B / 2, xZ1 = B / 2, yZ = hp, yF = Ht;
+  const yTerreno = yF - Df;
+  const mg = Math.max(B, Ht) * 0.32, ancho = B + 1.3 * mg + Math.max(B, Ht) * 1.07, alto = Ht + 2 * mg;
+  const x0 = xZ0 - 1.3 * mg - 12 * Math.max(B, Ht) / 100, y0 = Math.min(0, yTerreno) - mg * 0.6;
+  svg.setAttribute("viewBox", `${x0} ${y0} ${ancho} ${alto}`);
+  const k = Math.max(B, Ht) / 100;                                      // tamaño de textos y líneas
+  const T = (x, y, t, o = {}) => { const e = s("text", { x, y, "font-size": 3.2 * k, fill: "currentColor", ...o }); e.textContent = t; return e; };
+  const hijos = [];
+  // terreno y hormigón
+  hijos.push(s("line", { x1: x0, y1: yTerreno, x2: xZ1 + 10 * k, y2: yTerreno, stroke: "#7a5c2e", "stroke-width": 0.5 * k, "stroke-dasharray": `${2 * k} ${k}` }));
+  hijos.push(T(x0 + k, yTerreno - k, "N.T.", { fill: "#7a5c2e" }));
+  hijos.push(s("path", { d: `M${xP0},0 H${xP1} V${yZ} H${xZ1} V${yF} H${xZ0} V${yZ} H${xP0} Z`, fill: "rgba(160,160,160,.22)", stroke: "#666", "stroke-width": 0.4 * k }));
+  // estribos (línea al eje de la barra) y barras longitudinales
+  const radio = (d) => Math.max(2 * d, 0.8);
+  const rect = (xa, ya, xb, yb, d, color) => s("rect", { x: xa, y: ya, width: xb - xa, height: yb - ya, rx: radio(d), fill: "none", stroke: color, "stroke-width": Math.max(d, 0.25 * k) });
+  const eFx0 = xZ0 + rec + eF / 2, eFx1 = xZ1 - rec - eF / 2, eFy0 = yZ + rec + eF / 2, eFy1 = yF - rec - eF / 2;
+  if (eF > 0) hijos.push(rect(eFx0, eFy0, eFx1, eFy1, eF, "#c0392b"));
+  const ePx0 = xP0 + rec + eP / 2, ePx1 = xP1 - rec - eP / 2, ePy0 = rec + eP / 2;
+  const ePy1 = hastaFondo ? yF - rec - eF - eP / 2 : yZ + rec;
+  if (eP > 0) hijos.push(rect(ePx0, ePy0, ePx1, ePy1, eP, "#d35400"));
+  const barra = (x, y, d, color) => s("circle", { cx: x, cy: y, r: Math.max(d / 2, 0.35 * k), fill: color });
+  // pedestal: una barra por cara en cada nivel, de la esquina superior hacia abajo, sobre la zapata
+  const xpI = ePx0 + eP / 2 + dP / 2, xpD = ePx1 - eP / 2 - dP / 2, ypA = ePy0 + eP / 2 + dP / 2, ypB = yZ - dP / 2 - 1;
+  for (let i = 0; i < nCara; i++) {
+    const y = nCara > 1 ? ypA + (ypB - ypA) * i / (nCara - 1) : ypA;
+    hijos.push(barra(xpI, y, dP, "#1f4e9c"), barra(xpD, y, dP, "#1f4e9c"));
+  }
+  // zapata: superiores e inferiores repartidas en el ancho, por dentro del estribo
+  const fila = (n, y) => { const xa = eFx0 + eF / 2 + dF / 2, xb = eFx1 - eF / 2 - dF / 2;
+    for (let i = 0; i < n; i++) hijos.push(barra(n > 1 ? xa + (xb - xa) * i / (n - 1) : (xa + xb) / 2, y, dF, "#1f4e9c")); };
+  fila(nSup, eFy0 + eF / 2 + dF / 2);
+  fila(nInf, eFy1 - eF / 2 - dF / 2);
+  // cotas
+  const cota = (xa, ya, xb, yb, t, lado = 1) => {
+    const g = [s("line", { x1: xa, y1: ya, x2: xb, y2: yb, stroke: "#555", "stroke-width": 0.25 * k, "marker-start": "url(#fun-fl)", "marker-end": "url(#fun-fl)" })];
+    if (ya === yb) g.push(T((xa + xb) / 2, ya - 1.2 * k * lado, t, { "text-anchor": "middle" }));
+    else g.push(T(xa - 1.5 * k, (ya + yb) / 2, t, { "dominant-baseline": "middle", "text-anchor": "end" }));
+    return g;
+  };
+  const defs = s("defs"); const mk = s("marker", { id: "fun-fl", viewBox: "0 0 10 10", refX: 5, refY: 5, markerWidth: 4, markerHeight: 4, orient: "auto-start-reverse" });
+  mk.append(s("path", { d: "M0 0 L10 5 L0 10z", fill: "#555" })); defs.append(mk); hijos.unshift(defs);
+  hijos.push(...cota(xZ0, yF + 6 * k, xZ1, yF + 6 * k, `${B.toFixed(0)} cm`, -1.8));
+  hijos.push(...cota(xP0, -5 * k, xP1, -5 * k, `${bp.toFixed(0)} cm`));
+  hijos.push(...cota(xZ0 - 6 * k, 0, xZ0 - 6 * k, yZ, `${hp.toFixed(0)} cm`));
+  hijos.push(...cota(xZ0 - 6 * k, yZ, xZ0 - 6 * k, yF, `${hz.toFixed(0)} cm`));
+  hijos.push(...cota(xZ0 - 20 * k, yTerreno, xZ0 - 20 * k, yF, `Df ${Df.toFixed(0)} cm`));
+  // leyendas de armadura
+  // leyendas a la derecha, con una línea guía hasta la barra o el estribo
+  const xl = xZ1 + 22 * k, yFs = eFy0 + eF / 2 + dF / 2, yFi = eFy1 - eF / 2 - dF / 2;
+  const xUlt = eFx1 - eF / 2 - dF / 2;
+  const ley = [
+    [ypA + 2 * k, xpD, ypA, `${nCara} φ${(dP * 10).toFixed(0)} por cara (${2 * nCara} φ${(dP * 10).toFixed(0)})`, "#1f4e9c"],
+    [ypA + 12 * k, ePx1, ypA + 12 * k, `E φ${(eP * 10).toFixed(0)}@${sP} pedestal${hastaFondo ? ", hasta el fondo" : ""}`, "#d35400"],
+    [yZ - 3 * k, xUlt, yFs, `${nSup} φ${(dF * 10).toFixed(0)} sup. zapata`, "#1f4e9c"],
+    [yZ + hz / 2 + 1 * k, eFx1, yZ + hz / 2, `E φ${(eF * 10).toFixed(0)}@${sF} zapata`, "#c0392b"],
+    [yF + 4 * k, xUlt, yFi, `${nInf} φ${(dF * 10).toFixed(0)} inf. zapata`, "#1f4e9c"],
+  ];
+  for (const [y, xa, ya, t, c] of ley) {
+    hijos.push(s("polyline", { points: `${xa},${ya} ${xl - 2 * k},${y - k} ${xl - 0.5 * k},${y - k}`, fill: "none", stroke: c, "stroke-width": 0.2 * k, opacity: 0.8 }));
+    hijos.push(T(xl, y, t, { fill: c }));
+  }
+  hijos.push(T(xl, yF + 13 * k, `recubrimiento ${rec.toFixed(1).replace(".0", "")} cm`, { fill: "#555" }));
+  svg.replaceChildren(...hijos);
 }
 
 $("#btn-fundacion").addEventListener("click", () => intentar(funAnalizar));
+$$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("input", funEsquema));
+$$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("change", funEsquema));
 $("#fun-combo").addEventListener("change", funDibujar);
 $("#sel-eje-fun").addEventListener("change", ev => intentar(async () => { await abrirEjeSap(ev.target.value); await cargarFundacion(); }));
 $("#inp-lectura-fun").addEventListener("change", ev => intentar(async () => {
@@ -2597,6 +2681,7 @@ $("#btn-arm-revit").addEventListener("click", () => intentar(async () => {
   const g = fu.geometria || {};
   const pon = (k, v) => { const el = $(`[data-sap="fundacion.${k}"]`); if (el && v) el.value = String(+(v * 100).toFixed(1)); };
   pon("b_pedestal", g.b_pedestal); pon("h_pedestal", g.h_pedestal); pon("b_zapata", g.b_zapata); pon("h_zapata", g.h_zapata);
+  funEsquema();
   $("#fun-arm-nota").textContent = "Tomado de la sección de Revit" + (fu.nota ? `: ${fu.nota}` : "") + ". Revisa los valores.";
 }));
 
