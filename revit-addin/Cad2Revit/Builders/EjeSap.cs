@@ -138,13 +138,21 @@ namespace Cad2Revit
                         perfil, vanos,
                     });
                 }
+                // ancho tributario: mitad de la distancia a los ejes paralelos vecinos a cada lado
+                var dist = new FilteredElementCollector(_doc).OfClass(typeof(Grid)).Cast<Grid>()
+                    .Where(g => g.Id != eje.Id && g.Curve is Line gl && Math.Abs(gl.Direction.X * uy - gl.Direction.Y * ux) < 0.02)
+                    .Select(g => { var q = ((Line)g.Curve).GetEndPoint(0); return (Mt(q.X) - o[0]) * uy - (Mt(q.Y) - o[1]) * ux; })
+                    .Where(dd => Math.Abs(dd) > 0.05).ToList();
+                double? izq = dist.Where(dd => dd < 0).Select(dd => (double?)-dd).Min(), der = dist.Where(dd => dd > 0).Select(dd => (double?)dd).Min();
+                double anchoTrib = ((izq ?? 0) + (der ?? 0)) / 2;
+                if (izq == null || der == null) _inf.Advertencia($"Eje de borde: ancho tributario {anchoTrib:0.00} m (solo hacia un lado)");
                 var niveles = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation)
                     .Select(l => new { nombre = l.Name, z = R(Mt(l.Elevation)) }).ToList();
                 var archivo = new
                 {
                     tipo_archivo = "cad2revit-eje-sap", version = 1, unidades = "m", eje = eje.Name,
                     origen = new[] { R(o[0]), R(o[1]) }, direccion = new[] { Math.Round(ux, 6), Math.Round(uy, 6) },
-                    largo_eje = R(L), proyecto = _doc.Title, niveles, pilares, vigas, muros,
+                    largo_eje = R(L), ancho_tributario = R(anchoTrib), proyecto = _doc.Title, niveles, pilares, vigas, muros,
                 };
                 File.WriteAllText(ruta, JsonSerializer.Serialize(archivo, new JsonSerializerOptions { WriteIndented = true }));
                 _inf.Contar("Pilares en el eje", pilares.Count);

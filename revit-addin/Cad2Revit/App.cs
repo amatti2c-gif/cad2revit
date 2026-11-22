@@ -702,15 +702,94 @@ namespace Cad2Revit
                 if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return Result.Cancelled;
                 ruta = dlg.FileName;
             }
+            var datos = PedirDatos(eje.Name);
+            if (datos == null) return Result.Cancelled;
             var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ExportarEjeSap(eje, ruta);
+            if (informe.Errores.Count > 0)
+            {
+                new TaskDialog("cad2revit") { MainInstruction = "No se pudo exportar el eje", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
+                return Result.Failed;
+            }
+            // automático: sap2000-toolkit arma el modelo en SAP2000, lo carga, lo analiza y chequea el acero (AISC 360-16)
+            var sdb = System.IO.Path.ChangeExtension(ruta.Replace(".sap.json", ""), ".sdb");
+            var s2k = System.IO.Path.ChangeExtension(ruta.Replace(".sap.json", ""), ".s2k");
+            string args = $"-m sap2000_toolkit.eje_revit \"{ruta}\" --sap --guardar \"{sdb}\" --s2k \"{s2k}\" {datos}";
+            string python = BuscarPython();
+            if (python != null)
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "cmd.exe", UseShellExecute = true,
+                    Arguments = $"/k \"\"{python}\" {args}\"",
+                    WorkingDirectory = System.IO.Path.GetDirectoryName(ruta),
+                });
+            }
             new TaskDialog("cad2revit")
             {
-                MainInstruction = $"Eje {eje.Name} exportado para SAP2000",
-                MainContent = informe.Resumen() + "\n\nEn la PC con SAP2000: python -m sap2000_toolkit.eje_revit \"" + ruta + "\" --sap" +
-                              "\n(o --s2k salida.s2k para importar en SAP2000 con Archivo → Importar).",
+                MainInstruction = python != null ? $"Eje {eje.Name}: armando el modelo en SAP2000" : $"Eje {eje.Name} exportado (falta Python)",
+                MainContent = informe.Resumen() + (python != null
+                    ? $"\n\nSe abrió una ventana que arma el modelo en SAP2000, lo analiza y chequea el acero (AISC 360-16). Al terminar queda guardado en:\n{sdb}"
+                    : "\n\nPara que sea automático instala Python y sap2000-toolkit en esta PC:\n" +
+                      "pip install \"sap2000-toolkit @ git+https://github.com/amatti2c-gif/sap2000-toolkit@claude/eje-desde-revit\"\n" +
+                      $"Mientras tanto: python {args}"),
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
+        }
+
+        /// <summary>python.exe con sap2000-toolkit instalado (o null).</summary>
+        private static string BuscarPython()
+        {
+            foreach (var exe in new[] { "python", "py" })
+            {
+                try
+                {
+                    var psi = new System.Diagnostics.ProcessStartInfo(exe, "-c \"import sap2000_toolkit.eje_revit, sys; print(sys.executable)\"")
+                    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+                    using var p = System.Diagnostics.Process.Start(psi);
+                    var salida = p.StandardOutput.ReadToEnd().Trim();
+                    p.WaitForExit(20000);
+                    if (p.ExitCode == 0 && System.IO.File.Exists(salida)) return salida;
+                }
+                catch { /* no está */ }
+            }
+            return null;
+        }
+
+        /// <summary>Datos de cargas del lugar (viento, sismo, techo); devuelve los argumentos para sap2000-toolkit.</summary>
+        private static string PedirDatos(string eje)
+        {
+            var campos = new (string texto, string clave, string valor)[]
+            {
+                ("Velocidad básica del viento V (m/s, NCh432)", "--viento", "35"),
+                ("Exposición al viento (B, C o D)", "--exposicion", "C"),
+                ("Zona sísmica (1, 2 o 3, NCh433)", "--zona", "2"),
+                ("Tipo de suelo (A a E, DS61)", "--suelo", "C"),
+                ("Coeficiente de importancia sísmico I", "--importancia", "1.0"),
+                ("R0 (7 = muros arriostrados de madera)", "--r0", "7"),
+                ("Peso del techo (kgf/m²)", "--peso-techo", "30"),
+                ("Clavado perimetral del OSB (mm: 150, 100 o 50)", "--clavos", "100"),
+                ("Caras con OSB (1 o 2)", "--tableros", "1"),
+            };
+            using var f = new System.Windows.Forms.Form
+            {
+                Text = $"Eje {eje} a SAP2000: cargas", Width = 520, Height = 110 + 30 * campos.Length,
+                FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
+                StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
+            };
+            var cajas = new System.Collections.Generic.List<System.Windows.Forms.TextBox>();
+            for (int i = 0; i < campos.Length; i++)
+            {
+                f.Controls.Add(new System.Windows.Forms.Label { Text = campos[i].texto, Left = 12, Top = 15 + 30 * i, Width = 340 });
+                var c = new System.Windows.Forms.TextBox { Left = 360, Top = 12 + 30 * i, Width = 130, Text = campos[i].valor };
+                cajas.Add(c); f.Controls.Add(c);
+            }
+            int y = 20 + 30 * campos.Length;
+            var ok = new System.Windows.Forms.Button { Text = "Exportar", Left = 300, Top = y, Width = 90, DialogResult = System.Windows.Forms.DialogResult.OK };
+            var no = new System.Windows.Forms.Button { Text = "Cancelar", Left = 400, Top = y, Width = 90, DialogResult = System.Windows.Forms.DialogResult.Cancel };
+            f.Controls.Add(ok); f.Controls.Add(no); f.AcceptButton = ok; f.CancelButton = no;
+            if (f.ShowDialog() != System.Windows.Forms.DialogResult.OK) return null;
+            return string.Join(" ", campos.Select((c, i) => $"{c.clave} {cajas[i].Text.Trim().Replace(',', '.')}"));
         }
     }
 }
