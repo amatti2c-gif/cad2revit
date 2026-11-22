@@ -24,6 +24,62 @@ G_ACC = 9.80665
 VN_OSB_9_5_8D = {150: 0.33, 100: 0.48, 50: 0.79}
 
 
+def _masa_concentrada(m, peso_nudo):
+    import scipy.sparse as sps
+    diag = np.zeros(len(m.nodes) * 6)
+    for n, w in peso_nudo.items():
+        diag[m.nodes[n].ID * 6 + 0] = diag[m.nodes[n].ID * 6 + 1] = w / G_ACC
+    return sps.diags(diag).tocsr()
+
+
+def _masa_consistente(m, mod, peso_barra, peso_quad):
+    """Matriz de masa consistente (tonf·s²/m): barras con funciones de forma lineales (axial) y de Hermite
+    (transversal y giro), cuadriláteros bilineales integrados con 2×2 puntos de Gauss (DX y DY)."""
+    import scipy.sparse as sps
+    filas, cols, vals = [], [], []
+
+    def sumar(gdl, Me):
+        for i, gi in enumerate(gdl):
+            for j, gj in enumerate(gdl):
+                if Me[i, j]:
+                    filas.append(gi); cols.append(gj); vals.append(Me[i, j])
+    for f, a, b, _ in mod.barras:
+        mu = peso_barra.get(f, 0.0) / G_ACC
+        if mu <= 0:
+            continue
+        (xa, za), (xb, zb) = mod.nudos[a], mod.nudos[b]
+        L = math.hypot(xb - xa, zb - za)
+        c, s = (xb - xa) / L, (zb - za) / L
+        Ml = np.zeros((6, 6))                                          # local: u1 v1 θ1 u2 v2 θ2
+        Ml[np.ix_([0, 3], [0, 3])] = mu * L / 6 * np.array([[2, 1], [1, 2]])
+        Ml[np.ix_([1, 2, 4, 5], [1, 2, 4, 5])] = mu * L / 420 * np.array(
+            [[156, 22 * L, 54, -13 * L], [22 * L, 4 * L ** 2, 13 * L, -3 * L ** 2],
+             [54, 13 * L, 156, -22 * L], [-13 * L, -3 * L ** 2, -22 * L, 4 * L ** 2]])
+        Rn = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])              # local → global
+        R = np.zeros((6, 6)); R[:3, :3] = Rn; R[3:, 3:] = Rn
+        ia, ib = m.nodes[a].ID * 6, m.nodes[b].ID * 6
+        sumar([ia, ia + 1, ia + 5, ib, ib + 1, ib + 5], R @ Ml @ R.T)
+    gp = 1 / math.sqrt(3)
+    for qn, w in peso_quad.items():
+        q = m.quads[qn]
+        nodos = [q.i_node, q.j_node, q.m_node, q.n_node]
+        X = np.array([[n.X, n.Y] for n in nodos])
+        Me = np.zeros((4, 4))
+        for xi in (-gp, gp):
+            for eta in (-gp, gp):
+                N = 0.25 * np.array([(1 - xi) * (1 - eta), (1 + xi) * (1 - eta), (1 + xi) * (1 + eta), (1 - xi) * (1 + eta)])
+                dN = 0.25 * np.array([[-(1 - eta), (1 - eta), (1 + eta), -(1 + eta)],
+                                      [-(1 - xi), -(1 + xi), (1 + xi), (1 - xi)]])
+                detJ = abs(np.linalg.det(dN @ X))
+                Me += np.outer(N, N) * detJ
+        Me *= w / G_ACC
+        ids = [n.ID * 6 for n in nodos]
+        for k in (0, 1):                                               # DX y DY
+            sumar([i + k for i in ids], Me)
+    n = len(m.nodes) * 6
+    return sps.coo_matrix((vals, (filas, cols)), shape=(n, n)).tocsr()
+
+
 def _cmax(r: float) -> float:
     """NCh433 Tabla 6.4: Cmax / (S·A0/g) según R."""
     return float(np.interp(r, [2, 3, 4, 5.5, 6, 7], [0.90, 0.60, 0.55, 0.40, 0.35, 0.35]))
@@ -49,7 +105,7 @@ def _txy_global(q, combo) -> float:
 
 
 def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
-             avance=None, limites: dict | None = None) -> dict:
+             avance=None, limites: dict | None = None, masa: str = "concentrada") -> dict:
     """mod: eje_revit.ModeloEje; cargas: eje_cargas.CargasEje; pc: ParametrosCargas.
     avance(pct, etapa, hasta): opcional, se llama a medida que avanza el cálculo (pct de 0 a 100; hasta: el pct
     de la etapa siguiente, para que la barra avance sola durante una etapa larga, como el análisis estático)."""
@@ -119,18 +175,22 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         m.def_support(n, False, False, True, True, True, True)
 
     # ---- cargas ----
-    # peso sísmico concentrado en los nudos (tonf), a partir de las mismas cargas de DEAD: PyNite subestima la masa de
-    # las cargas distribuidas en barras (FEModel3D.M), así que la matriz de masa se arma aquí
-    peso_nudo: dict = {}
+    # La matriz de masa se arma aquí desde las mismas cargas de DEAD (PyNite, FEModel3D.M, subestima la masa de las
+    # cargas distribuidas en barras): concentrada en los nudos (por defecto, como SAP2000) o consistente.
+    peso_nudo: dict = {}                                              # concentrada: tonf por nudo
+    peso_barra: dict = {}                                             # consistente: tonf/m a lo largo de cada barra
 
-    def repartir(a, b, w):
+    def repartir(a, b, w, f=None):
         peso_nudo[a] = peso_nudo.get(a, 0.0) + w / 2
         peso_nudo[b] = peso_nudo.get(b, 0.0) + w / 2
+        if f is not None:
+            (xa, za), (xb, zb) = mod.nudos[a], mod.nudos[b]
+            peso_barra[f] = peso_barra.get(f, 0.0) + w / math.hypot(xb - xa, zb - za)
     for f, a, b, sec in mod.barras:                                   # peso propio del acero
         _, g = perfiles[sec]
         m.add_member_dist_load(f, "FY", -7.85 * g["A"], -7.85 * g["A"], case="DEAD")
         (xa, za), (xb, zb) = mod.nudos[a], mod.nudos[b]
-        repartir(a, b, 7.85 * g["A"] * math.hypot(xb - xa, zb - za))
+        repartir(a, b, 7.85 * g["A"] * math.hypot(xb - xa, zb - za), f)
     for nombre, ns, sec in mod.areas:                                 # peso de los muros a sus nudos
         a = mod.secciones_area[sec]
         pts = [mod.nudos[n] for n in ns]
@@ -156,7 +216,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
             m.add_member_dist_load(f, "FY", w, w, case=pat)
         if pat == "DEAD":
             peso = {"GRAV": abs(v) * L, "Z": abs(v) * L, "GRAV_PROY": abs(v) * abs(x1 - x0)}.get(d, 0.0)
-            repartir(*_extremos[f], peso)
+            repartir(*_extremos[f], peso, f)
     estaticos = [n for n, t in cargas.patrones.items() if t != "QUAKE"]
     for n in estaticos:
         m.add_load_combo(n, {n: 1.0})
@@ -167,11 +227,12 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
     K11, _, _, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
-    import scipy.sparse as sps
-    diag = np.zeros(len(m.nodes) * 6)
-    for n, w in peso_nudo.items():
-        diag[m.nodes[n].ID * 6 + 0] = diag[m.nodes[n].ID * 6 + 1] = w / G_ACC
-    M11, _, _, _ = Analysis._partition(m, sps.diags(diag).tocsr(), D1_idx, D2_idx)
+    if masa != "consistente":
+        Mg = _masa_concentrada(m, peso_nudo)
+    else:
+        peso_area = {sec: mod.materiales[a["material"]]["gamma"] * a["espesor"] for sec, a in mod.secciones_area.items()}
+        Mg = _masa_consistente(m, mod, peso_barra, {q: peso_area[sec] for nombre, _, sec in mod.areas for q in sub[nombre]})
+    M11, _, _, _ = Analysis._partition(m, Mg, D1_idx, D2_idx)
     import scipy.sparse.linalg as sla
     nmod = min(pc.modos, K11.shape[0] - 2)
     vals, vecs = sla.eigsh(K11.tocsc(), k=nmod, M=M11.tocsc(), sigma=0.0, which="LM")
@@ -326,7 +387,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
-        "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro,
+        "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
         "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
         "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }

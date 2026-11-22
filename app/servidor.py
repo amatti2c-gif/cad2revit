@@ -1902,7 +1902,8 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
         _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando el modelo", "hasta": 2}
         limites = {k: float(dis[k]) for k in ("viga_total", "viga_variable", "lateral_viento", "deriva_sismo")
                    if dis.get(k) not in (None, "")}
-        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb, limites=limites, avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
+        masa = "consistente" if dis.get("masa") == "consistente" else "concentrada"     # por defecto, como SAP2000
+        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb, limites=limites, masa=masa, avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
             clave, {"pct": pct, "etapa": etapa, "hasta": hasta}))
     except HTTPException:
         raise
@@ -1911,7 +1912,7 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
     finally:
         _AVANCE_ANALISIS.pop(f"{pid}/{nombre}", None)
     r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    r["nota"] = f"Análisis PyNite en la app (Fy {dis.get('fy_mpa') or 270} MPa" + (f", Lb {lb} m" if lb else ", Lb = largo del elemento") + ")"
+    r["nota"] = f"Análisis PyNite en la app (masa {masa}, Fy {dis.get('fy_mpa') or 270} MPa" + (f", Lb {lb} m" if lb else ", Lb = largo del elemento") + ")"
     f.with_name(f.name.replace(".sap.json", ".resultado.json")).write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
     return r
 

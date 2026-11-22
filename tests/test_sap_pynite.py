@@ -128,3 +128,16 @@ def test_casos_puros_y_peso_sismico():
     assert 0.9 < r["peso_sismico"] / casos["DEAD"]["reaccion_y"] <= 1.0
     assert abs(casos["E"]["reaccion_x"] - r["corte_basal"]) < 1e-9
     assert casos["W1"]["cargas"] and casos["W1"]["reaccion_x"] < 0
+
+
+def test_masa_concentrada_por_defecto_y_consistente_equivalente():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6)
+    c = cargas_eje(mod, pc)
+    a = analizar(mod, c, pc)
+    b = analizar(mod, c, pc, masa="consistente")
+    assert a["masa"] == "concentrada" and b["masa"] == "consistente"
+    assert abs(a["T"] / b["T"] - 1) < 0.05 and abs(a["peso_sismico"] / b["peso_sismico"] - 1) < 0.05

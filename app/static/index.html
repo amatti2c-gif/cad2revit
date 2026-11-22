@@ -261,6 +261,8 @@
               <label>Importancia sísmica I <input data-sap="cargas.importancia_sismo" type="number" step="any" value="1.0"></label>
               <label>R0 <input data-sap="cargas.r0" type="number" step="any" value="7"></label>
               <label>Modos <input data-sap="cargas.modos" type="number" step="1" value="12"></label>
+              <label>Matriz de masa <select data-sap="diseno.masa"><option value="concentrada" selected>concentrada en los nudos (como SAP2000)</option>
+                <option value="consistente">consistente</option></select></label>
               <label>Acero: Fy (MPa; A270ES = 270) <input data-sap="diseno.fy_mpa" type="number" step="any" value="270"></label>
               <label>Acero: Lb fuera del plano (m; vacío = largo del elemento) <input data-sap="diseno.lb" type="number" step="any"></label>
               <label>Flecha vigas, carga total: L / <input data-sap="diseno.viga_total" type="number" step="any" value="240"></label>
