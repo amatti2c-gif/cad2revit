@@ -258,3 +258,6 @@ legend { padding: 0 4px; }
 .sap-leyenda span { margin-right: 10px; }
 .nocumple { color: #b00020; font-weight: 600; }
 .cumple { color: #1b6e20; }
+
+#sap-borrador summary { cursor: pointer; }
+#sap-borrador[open] summary { margin-bottom: 8px; }

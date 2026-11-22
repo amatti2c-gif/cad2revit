@@ -9,8 +9,8 @@ using Autodesk.Revit.DB.Structure;
 namespace Cad2Revit
 {
     /// <summary>
-    /// Exporta lo que hay sobre un eje (grilla) del modelo de Revit a un archivo «eje-*.sap.json» para armar un modelo
-    /// 2D simplificado en SAP2000 con sap2000-toolkit: pilares y vigas de acero (con sus secciones) y muros (con su
+    /// Exporta lo que hay sobre un eje (grilla) del modelo de Revit a un archivo «eje-*.sap.json» para el modelo 2D
+    /// simplificado de la pestaña de análisis y diseño de la app (PyNite; SAP2000 opcional): pilares y vigas de acero (con sus secciones) y muros (con su
     /// borde superior y sus vanos), en coordenadas del plano del eje: x a lo largo del eje (m desde su inicio) y z (m).
     /// </summary>
     public partial class Constructor

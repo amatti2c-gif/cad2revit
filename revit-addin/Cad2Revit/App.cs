@@ -79,12 +79,13 @@ namespace Cad2Revit
                           "ellas a la separación pedida (luz corta) y cadenetas entre las vigas. Queda unido al piso. " +
                           "En los pisos seleccionados (o los eliges)."
             });
-            panel.AddItem(new PushButtonData("Cad2RevitEjeSap", "Eje a\nSAP2000",
+            panel.AddItem(new PushButtonData("Cad2RevitEjeSap", "Eje a\nanálisis",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoEjeSap).FullName)
             {
                 ToolTip = "Eliges un eje y se exporta lo que hay sobre él (pilares y vigas de acero con sus secciones, muros " +
-                          "con su borde superior y vanos) a un archivo .sap.json, para armar en SAP2000 un modelo 2D del eje " +
-                          "con sap2000-toolkit (muros de marco plataforma como shell con su rigidez lateral)."
+                          "con su borde superior y vanos) y se abre en la pestaña «6 · Análisis y diseño» de la app: modelo 2D " +
+                          "(muros de marco plataforma como shell con su rigidez lateral), análisis con PyNite (sismo espectral " +
+                          "NCh433 + DS61, viento NCh432, techo NCh1537) y verificación de acero AISC 360-16 y muros de madera."
             });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
@@ -686,7 +687,7 @@ namespace Cad2Revit
                 try
                 {
                     eje = doc.GetElement(uidoc.Selection.PickObject(Autodesk.Revit.UI.Selection.ObjectType.Element, new SoloEjes(),
-                                                                    "Elige el eje que quieres llevar a SAP2000")) as Grid;
+                                                                    "Elige el eje que quieres analizar")) as Grid;
                 }
                 catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
             }
@@ -694,8 +695,8 @@ namespace Cad2Revit
             string ruta;
             using (var dlg = new System.Windows.Forms.SaveFileDialog
             {
-                Title = $"Guardar el eje {eje.Name} para SAP2000",
-                Filter = "Eje para sap2000-toolkit (*.sap.json)|*.sap.json",
+                Title = $"Guardar el eje {eje.Name} para análisis",
+                Filter = "Eje de cad2revit (*.sap.json)|*.sap.json",
                 FileName = $"eje-{U.NombreSeguro(eje.Name)}.sap.json",
             })
             {
@@ -708,24 +709,24 @@ namespace Cad2Revit
                 new TaskDialog("cad2revit") { MainInstruction = "No se pudo exportar el eje", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
                 return Result.Failed;
             }
-            // el eje se sube a la app de cad2revit y se abre su pestaña SAP2000 (ahí se ajusta la modelación y se arma,
-            // analiza y diseña en SAP2000 con la app local de sap2000-toolkit)
+            // el eje se sube a la app de cad2revit y se abre su pestaña de análisis y diseño (ahí se ajusta la modelación y
+            // se analiza y diseña en la nube con PyNite; SAP2000 con sap2000-toolkit queda como borrador opcional)
             string abierto = null, falla = null;
             try { abierto = SubirEje(ruta); }
             catch (System.Exception ex) { falla = ex.Message; }
             new TaskDialog("cad2revit")
             {
-                MainInstruction = abierto != null ? $"Eje {eje.Name}: abierto en la pestaña SAP2000 de la app" : $"Eje {eje.Name} exportado",
+                MainInstruction = abierto != null ? $"Eje {eje.Name}: abierto en la pestaña de análisis y diseño de la app" : $"Eje {eje.Name} exportado",
                 MainContent = informe.Resumen() + (abierto != null
-                    ? "\n\nSe abrió la app en el navegador (pestaña 6 · SAP2000). Para armar en SAP2000 deja abierta en esta PC la " +
-                      "app de sap2000-toolkit (iniciar_app.bat)."
-                    : $"\n\nNo se pudo subir a la app ({falla}). Súbelo a mano en la pestaña SAP2000: {ruta}"),
+                    ? "\n\nSe abrió la app en el navegador (pestaña 6 · Análisis y diseño), que analiza y diseña el eje " +
+                      "automáticamente."
+                    : $"\n\nNo se pudo subir a la app ({falla}). Súbelo a mano en la pestaña 6 · Análisis y diseño: {ruta}"),
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;
         }
 
-        /// <summary>Sube el .sap.json a un proyecto de la app y abre su pestaña SAP2000. Devuelve la URL abierta (o null si
+        /// <summary>Sube el .sap.json a un proyecto de la app y abre su pestaña de análisis y diseño. Devuelve la URL abierta (o null si
         /// se canceló).</summary>
         private static string SubirEje(string ruta)
         {

@@ -1759,7 +1759,8 @@ def restaurar(pid: str, n: int):
     return {"restaurado": n, "errores": _validar_entradas(d)}
 
 
-# ------------------------------------------------------------------ SAP2000: ejes exportados desde Revit
+# ------------------------------------------------------------------ Análisis y diseño de ejes exportados desde Revit
+# (PyNite en la nube; el .s2k y el agente local de SAP2000 quedan como borrador)
 
 class AjustesEje(BaseModel):
     parametros: dict = {}
@@ -1795,14 +1796,14 @@ def listar_ejes_sap(pid: str):
 
 @app.post("/api/proyectos/{pid}/sap", status_code=201)
 async def subir_eje_sap(pid: str, archivo: UploadFile = File(...)):
-    """El .sap.json del botón «Eje a SAP2000» de Revit (lo sube el propio botón o se arrastra a la pestaña)."""
+    """El .sap.json del botón «Eje a análisis» de Revit (lo sube el propio botón o se arrastra a la pestaña)."""
     d = _proyecto(pid)
     try:
         e = json.loads((await archivo.read()).decode("utf-8"))
     except Exception:
         raise HTTPException(400, "El archivo no es JSON")
     if e.get("tipo_archivo") != "cad2revit-eje-sap":
-        raise HTTPException(400, "No es un archivo del botón «Eje a SAP2000» de Revit")
+        raise HTTPException(400, "No es un archivo del botón «Eje a análisis» de Revit")
     nombre = "eje-" + re.sub(r"[^\w.\-]", "_", str(e.get("eje") or "x"))
     (d / "sap").mkdir(exist_ok=True)
     (d / "sap" / f"{nombre}.sap.json").write_text(json.dumps(e, ensure_ascii=False, indent=1), encoding="utf-8")

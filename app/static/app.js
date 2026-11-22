@@ -1978,9 +1978,10 @@ async function comparar(a, b) {
 }
 $("#cerrar-comparacion").addEventListener("click", () => $("#comparacion").classList.add("oculto"));
 
-// ------------------------------------------------------------------ SAP2000 (ejes exportados desde Revit)
+// ------------------------------------------------------------------ Análisis y diseño de ejes exportados desde Revit
+// (PyNite en la nube; SAP2000 con el agente local queda como borrador opcional)
 const AGENTE = "http://127.0.0.1:8000";            // app local de sap2000-toolkit en la PC con SAP2000
-const sap = { nombre: null, eje: null, vista: null, opciones: { excluir: [], apoyos: {}, secciones: {}, muros: {} }, razones: {} };
+const sap = { auto: null, nombre: null, eje: null, vista: null, opciones: { excluir: [], apoyos: {}, secciones: {}, muros: {} }, razones: {} };
 
 function sapParametros() {
   const p = {};
@@ -2013,8 +2014,8 @@ async function cargarSap(elegir) {
   const sel = $("#sel-eje-sap");
   sel.replaceChildren(...(lista.length ? lista.map(e => h("option", { value: e.nombre },
     `Eje ${e.eje} · ${e.pilares} pilares, ${e.vigas} vigas, ${e.muros} muros · ${e.fecha.slice(0, 16).replace("T", " ")}`))
-    : [h("option", { value: "" }, "— sin ejes: usa el botón «Eje a SAP2000» de Revit o sube un .sap.json —")]));
-  sapAgente();
+    : [h("option", { value: "" }, "— sin ejes: usa el botón «Eje a análisis» de Revit o sube un .sap.json —")]));
+  if ($("#sap-borrador").open) sapAgente();
   const n = elegir || sap.nombre;
   if (lista.some(e => e.nombre === n)) sel.value = n;
   if (sel.value) await abrirEjeSap(sel.value);
@@ -2049,7 +2050,10 @@ async function abrirEjeSap(nombre) {
   $("#sap-leyenda-razon").classList.add("oculto");
   sapTablaElementos();
   await sapActualizar();
-  try { sapMostrarNube(await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`))); } catch { /* aún sin análisis */ }
+  let hay = false;
+  try { sapMostrarNube(await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`))); hay = true; } catch { /* aún sin análisis */ }
+  // recién llegado desde Revit y sin análisis: se analiza y diseña de inmediato
+  if (sap.auto === nombre) { sap.auto = null; if (!hay) await sapNube(); }
 }
 
 async function sapActualizar() {
@@ -2227,6 +2231,7 @@ async function verificarHormigon() {
   $("#res-hormigon").replaceChildren(h("ul", {}, items));
 }
 $("#btn-hormigon").addEventListener("click", () => intentar(verificarHormigon));
+$("#sap-borrador").addEventListener("toggle", ev => { if (ev.target.open) sapAgente(); });
 $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 
 $("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
@@ -2269,7 +2274,7 @@ fetch("/salud").then(r => r.json()).then(v => {
 intentar(async () => {
   // abierta desde Revit: ?proyecto=<id>&tab=sap&eje=<nombre>
   const q = new URLSearchParams(location.search);
-  if (q.get("eje")) sap.nombre = q.get("eje");
+  if (q.get("eje")) sap.nombre = sap.auto = q.get("eje");
   await cargarProyectos(q.get("proyecto") || undefined);
   let tab = q.get("tab");
   if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}
