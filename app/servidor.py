@@ -1914,8 +1914,10 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
         _AVANCE_ANALISIS.pop(f"{pid}/{nombre}", None)
     r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     r["nota"] = f"Análisis PyNite en la app (masa {masa}, Fy {dis.get('fy_mpa') or 270} MPa" + (f", Lb {lb} m" if lb else ", Lb = largo del elemento") + ")"
-    f.with_name(f.name.replace(".sap.json", ".resultado.json")).write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
-    return r
+    # numpy (np.float64, np.bool_, arreglos) → tipos de JSON, para guardar y responder sin errores
+    texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+    f.with_name(f.name.replace(".sap.json", ".resultado.json")).write_text(texto, encoding="utf-8")
+    return Response(texto, media_type="application/json")
 
 
 @app.get("/api/proyectos/{pid}/sap/{nombre}/resultado")

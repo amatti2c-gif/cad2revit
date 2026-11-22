@@ -204,3 +204,22 @@ def test_cqc_vectorizado_igual_al_de_doble_suma():
             rho = 8 * 0.05 ** 2 * (1 + r) * r ** 1.5 / ((1 - r ** 2) ** 2 + 4 * 0.05 ** 2 * r * (1 + r) ** 2)
             ref = ref + rho * v[i] * v[j]
     assert np.allclose(_cqc(v, w), np.sqrt(np.abs(ref)))
+
+
+def test_pandeo_en_el_plano_entre_elementos_que_llegan_y_fuera_del_plano_largo_completo():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    eje = dict(EJE)
+    eje["vigas"] = EJE["vigas"] + [{"id": "v9", "seccion": "W8X10", "material": "acero", "x0": 0, "z0": 1.5, "x1": 6, "z1": 1.5,
+                                    "dims": DIMS_W8X10}]
+    mod = mallar(eje)
+    # el pilar se parte donde llega la viga intermedia, y la viga queda unida al muro
+    assert any(mod.nudos[a] == (0.0, 1.5) for f, a, b, _ in mod.barras if mod.origen[f] == "p1")
+    assert len([f for f, *_ in mod.barras if mod.origen[f] == "v9"]) > 1
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    p1 = next(a for a in r["acero"] if a["origen"] == "p1")
+    assert abs(p1["L_plano"] - 1.5) < 1e-6 and abs(p1["L_fuera"] - 3.0) < 1e-6 and p1["arriostramientos_plano"] == 1
+    t1 = next(a for a in r["acero"] if a["origen"] == "t1")
+    assert abs(t1["L_plano"] - t1["L"]) < 1e-6

@@ -192,7 +192,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
 
     # el hormigón (fundaciones, sobrecimientos, pedestales) no entra en el modelo: solo acero y muros de madera
     pilares = [p for p in eje.get("pilares", []) if p.get("material") not in ("madera", "hormigon") and str(p.get("id")) not in excluir]
-    vigas = [v for v in eje.get("vigas", []) if v.get("material") not in ("madera", "hormigon") and str(v.get("id")) not in excluir]
+    vigas = [dict(v) for v in eje.get("vigas", []) if v.get("material") not in ("madera", "hormigon") and str(v.get("id")) not in excluir]
     xs_pilar = sorted({round((p["x0"] + p["x1"]) / 2, 4) for p in pilares})
 
     def a_pilar(x):
@@ -272,6 +272,10 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         # niveles HORIZONTALES comunes a todo el muro: base, bordes de vanos, alero (tope más bajo) y, hasta la
         # cumbrera, cada ≈ malla
         candz = [(z0, 0), (zmin_top, 1)] + [(min(max(v[k], z0), zmax_top), 3) for v in vanos for k in ("z0", "z1")]
+        # vigas horizontales que cruzan el muro a media altura: su nivel es una línea de la malla (quedan unidas al muro)
+        candz += [((v["z0"] + v["z1"]) / 2, 1) for v in vigas if abs(v["z1"] - v["z0"]) < 0.02
+                  and z0 + min_celda < (v["z0"] + v["z1"]) / 2 < zmin_top - min_celda
+                  and min(v["x0"], v["x1"]) < x1 - 1e-6 and max(v["x0"], v["x1"]) > x0 + 1e-6]
         ajz = _juntar(candz, min_celda)
         for v in vanos:
             v["z0"], v["z1"] = ajz(min(max(v["z0"], z0), zmax_top)), ajz(min(max(v["z1"], z0), zmax_top))
@@ -413,6 +417,21 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
             mod.roles[nombre] = rol
             mod.origen[nombre] = origen
 
+    # extremos de las vigas que llegan a un pilar: al eje del pilar (como los muros)
+    for v in vigas:
+        for kx, kz in (("x0", "z0"), ("x1", "z1")):
+            xp_ = a_pilar(v[kx])
+            if xp_ != v[kx] and any(abs(a_pilar((p["x0"] + p["x1"]) / 2) - xp_) < 1e-6
+                                    and min(p["z0"], p["z1"]) - tol_borde <= v[kz] <= max(p["z0"], p["z1"]) + tol_borde
+                                    for p in pilares):
+                v[kx] = xp_
+    # primero todos los nudos de los extremos, para que cada barra se parta donde le llega otra (p. ej. un pilar donde
+    # llega una viga intermedia)
+    for p in pilares:
+        x = a_pilar((p["x0"] + p["x1"]) / 2)
+        nudo(x, p["z0"]); nudo(x, p["z1"])
+    for v in vigas:
+        nudo(v["x0"], v["z0"]); nudo(v["x1"], v["z1"])
     for p in pilares:
         x = a_pilar((p["x0"] + p["x1"]) / 2)
         barra(x, p["z0"], x, p["z1"], _seccion(p, mod.secciones, mod.avisos, op.get("secciones")), "pilar", str(p.get("id")))

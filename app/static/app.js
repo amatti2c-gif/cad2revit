@@ -2290,9 +2290,11 @@ function sapMostrarNube(d) {
     h("tbody", {}, defs.map(x => h("tr", {}, h("td", {}, x.elemento), h("td", {}, x.tipo), h("td", {}, x.combo), h("td", {}, f2(x.delta_mm)),
       h("td", {}, f2(x.limite_mm)), h("td", {}, x.criterio), h("td", {}, f2(x.L)), celda(x.razon)))));
   $("#sap-nube-acero").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Id Revit", "Sección", "L (m)", "Razón", "Interacción", "Corte", "Ec.", "Combinación", "Pu (tonf)", "Mu (tonf·m)",
+    h("thead", {}, h("tr", {}, ...["Id Revit", "Sección", "L (m)", "L pandeo en el plano / fuera (m)", "Razón", "Interacción", "Corte", "Ec.", "Combinación", "Pu (tonf)", "Mu (tonf·m)",
       "Vu (tonf)", "φPn", "φMn", "φVn", "KL/r", "Notas"].map(t => h("th", {}, t)))),
-    h("tbody", {}, d.acero.map(a => h("tr", {}, h("td", {}, a.origen ?? ""), h("td", {}, a.seccion), h("td", {}, f2(a.L)), celda(a.razon),
+    h("tbody", {}, d.acero.map(a => h("tr", {}, h("td", {}, a.origen ?? ""), h("td", {}, a.seccion), h("td", {}, f2(a.L)),
+      h("td", { title: a.arriostramientos_plano != null ? `${a.arriostramientos_plano} punto(s) intermedio(s) arriostrado(s) en el plano` : "" },
+        a.L_plano != null ? `${f2(a.L_plano)} / ${f2(a.L_fuera)}` : ""), celda(a.razon),
       h("td", {}, f2(a.interaccion)), h("td", {}, f2(a.corte)), h("td", {}, a.ecuacion ?? ""), h("td", {}, a.combo ?? ""),
       h("td", {}, f2(a.Pu)), h("td", {}, f2(a.Mu)), h("td", {}, f2(a.Vu)), h("td", {}, f2(a.phiPn)), h("td", {}, f2(a.phiMn)),
       h("td", {}, f2(a.phiVn)), h("td", {}, a.KL_r ? a.KL_r.toFixed(0) : ""), h("td", {}, (a.notas || []).join("; "))))));

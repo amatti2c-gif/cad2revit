@@ -21,7 +21,7 @@ from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 9
+VERSION_RESULTADO = 10
 MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
 MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
@@ -377,17 +377,39 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         E = tuple(env_e(lambda c, k=k: comp(c, k))[2] for k in range(3))
         res_barra[f] = (est, E)
 
-    # ---- diseño de acero AISC 360-16 por elemento de Revit (largo total = largo no arriostrado) ----
+    # ---- diseño de acero AISC 360-16 por elemento de Revit ----
+    # Fuera del plano (pandeo en el eje débil y volcamiento): largo completo del elemento (o Lb dado). En el plano:
+    # arriostrado solo donde llegan otros elementos de acero del modelo 2D (vigas, pilares, diagonales) y en sus
+    # extremos: L en el plano = mayor tramo entre esos puntos. Los muros de madera no se cuentan como arriostramiento.
     por_elemento = {}
     for f, a, b, sec in mod.barras:
         por_elemento.setdefault((mod.origen.get(f), sec), []).append(f)
+    elem_de_nudo = {}
+    for f, a, b, sec in mod.barras:
+        for n in (a, b):
+            elem_de_nudo.setdefault(n, set()).add(mod.origen.get(f) or f)
+
+    def largo_en_plano(orig, fs):
+        ns = {n for f in fs for n in _extremos[f]}
+        pts = sorted(ns, key=lambda n: (mod.nudos[n][0], mod.nudos[n][1]))
+        ini, fin = pts[0], pts[-1]
+        (x0, z0), (x1, z1) = mod.nudos[ini], mod.nudos[fin]
+        Lt = math.hypot(x1 - x0, z1 - z0) or 1.0
+        u = ((x1 - x0) / Lt, (z1 - z0) / Lt)
+        s_ = lambda n: (mod.nudos[n][0] - x0) * u[0] + (mod.nudos[n][1] - z0) * u[1]      # noqa: E731
+        apoyos = sorted({s_(n) for n in ns if n in (ini, fin) or (elem_de_nudo.get(n, set()) - {orig or ""})
+                         or n in mod.apoyos})
+        tramos = [b_ - a_ for a_, b_ in zip(apoyos, apoyos[1:])] or [Lt]
+        return max(tramos), len(apoyos) - 2
     combos_lrfd = cargas.combos
     acero = []
     for k_e, ((orig, sec), fs) in enumerate(por_elemento.items()):
         paso(94 + 4 * k_e / max(len(por_elemento), 1), f"Diseño de acero AISC 360-16 ({k_e + 1} de {len(por_elemento)})")
         p, g = perfiles[sec]
         L = sum(m.members[f].L() for f in fs)
-        cap = capacidades(p, L, lb_fuera or L, lb_fuera or L, Fy=fy)
+        L_plano, n_arr = largo_en_plano(orig, fs)
+        L_fuera = lb_fuera or L
+        cap = capacidades(p, L_plano, L_fuera, L_fuera, Fy=fy)
         peor = None
         for cn, fac in combos_lrfd.items():
             for f in fs:
@@ -407,7 +429,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                         if peor is None or val > peor["razon"]:
                             peor = {"razon": val, "interaccion": rz["interaccion"], "corte": rz["corte"], "combo": cn,
                                     "Pu": float(Pu[k]), "Mu": float(Mk[k]), "Vu": float(Vk[k]), "ecuacion": rz["ecuacion"]}
-        acero.append({"origen": orig, "seccion": sec, "barras": fs, "L": L, **(peor or {"razon": 0.0}),
+        acero.append({"origen": orig, "seccion": sec, "barras": fs, "L": L, "L_plano": L_plano, "L_fuera": L_fuera,
+                      "arriostramientos_plano": n_arr, **(peor or {"razon": 0.0}),
                       "phiPn": cap["phiPn"], "phiMn": cap["phiMn"], "phiVn": cap["phiVn"], "KL_r": cap["KL/r"],
                       "notas": cap["notas"]})
     acero.sort(key=lambda r: -r["razon"])
@@ -490,8 +513,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         fu_anc = max((a["FU"] for a in anclajes if a["FU"] is not None), default=0.0)
         madera.append({"muro": seg["muro"], "x0": x0, "x1": x1, "L": L, "H": H, **peor, "T_anclaje": T,
                        "combo_anclaje": combo_t, "L_prima": Lp, "anclajes": anclajes, "FU_anclaje": fu_anc,
-                       "sin_traccion": T <= 1e-9,
-                       "falta_capacidad_union": T > 1e-9 and any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
+                       "sin_traccion": bool(T <= 1e-9),
+                       "falta_capacidad_union": bool(T > 1e-9) and any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
     madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
     deformaciones = _deformaciones(m, mod, cargas, modos_x_esc, om_a, sub, {**LIMITES_DEF, **(limites or {})})
