@@ -333,34 +333,27 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
 
     paso(96, "Diseño del pedestal y de la zapata")
     kN = TONF_KN
-    # armadura mínima de la viga de fundación (9.6.1.2, con el alma bw = ancho del pedestal), y 9.6.1.3
+    # armadura mínima longitudinal: en la sección rectangular de la zapata sola (B × h_zapata), con sus barras, sin el
+    # pedestal (9.6.1.2 con bw = B y el d de cada cara)
     from .diseno_hormigon import opciones_armadura
-    d_viga = Ht_mm - rec
-    As_min_v = max(0.25 * math.sqrt(pf.fc) / pf.fy, 1.4 / pf.fy) * bp_mm * d_viga
-    # armadura traccionada de cada sentido: todas las capas al lado traccionado del centro de gravedad de la sección
-    # (con tracción abajo, las barras inferiores y superiores de la zapata; con tracción arriba, las del pedestal)
-    yc_mm = yc * 1000
-    As_inf = sum(a_ for a_, y in capas if y > yc_mm)
-    As_sup = sum(a_ for a_, y in capas if y < yc_mm)
+    rho_min = max(0.25 * math.sqrt(pf.fc) / pf.fy, 1.4 / pf.fy)
+    As_zi = arm.fun_barras_inferiores * _area_barra(arm.fun_diametro_mm)
+    As_zs = arm.fun_barras_superiores * _area_barra(arm.fun_diametro_mm)
+    d_zap = hz_mm - rec - arm.fun_estribo_diametro_mm - arm.fun_diametro_mm / 2
 
-    def nota_min(As, Mu, phiMn, cara):
-        if As >= As_min_v:
-            return []
-        As_req = As * min(Mu * kN / phiMn, 1.0) if phiMn else As
-        txt = (f"As traccionada {cara} = {As:.0f} < As,min = {As_min_v:.0f} mm² (9.6.1.2, bw = {bp_mm:.0f} mm): para cumplir usar "
-               f"{opciones_armadura(As_min_v)}")
-        if As >= 4 / 3 * As_req:
-            txt += f"; o se acepta por 9.6.1.3 (As ≥ 4/3·As requerido = {4 / 3 * As_req:.0f} mm²)"
-        return [txt]
+    def minimo_zapata(As, cara, n):
+        As_min = rho_min * B_mm * d_zap
+        txt = (f"{n} φ{arm.fun_diametro_mm:g} = {As:.0f} mm² frente a As,min = {rho_min:.5f}·{B_mm:.0f}·{d_zap:.0f} = {As_min:.0f} mm² "
+               f"(9.6.1.2; sección {B_mm / 10:.0f}×{hz_mm / 10:.0f} cm)")
+        if As < As_min:
+            txt += f": para cumplir usar {opciones_armadura(As_min)}"
+        return {"verificacion": f"Armadura mínima longitudinal de la zapata, cara {cara}", "valor": As / (B_mm * d_zap),
+                "minimo": round(rho_min, 5), "razon": As_min / As if As > 0 else None, "notas": [txt]}
     viga = [
         {"verificacion": "Flexión, tracción abajo (Mu+)", "Mu_tonfm": peor["Mpos"][0], "combo": peor["Mpos"][1],
-         "phiMn_tonfm": mn_pos["phiMn_kNm"] / kN, "razon": peor["Mpos"][0] * kN / mn_pos["phiMn_kNm"] if mn_pos["phiMn_kNm"] else None,
-         "notas": nota_min(As_inf, peor["Mpos"][0], mn_pos["phiMn_kNm"], "abajo") or
-                  [f"As traccionada abajo = {As_inf:.0f} mm² (barras de la zapata) ≥ As,min = {As_min_v:.0f} mm²"]},
+         "phiMn_tonfm": mn_pos["phiMn_kNm"] / kN, "razon": peor["Mpos"][0] * kN / mn_pos["phiMn_kNm"] if mn_pos["phiMn_kNm"] else None},
         {"verificacion": "Flexión, tracción arriba (Mu−)", "Mu_tonfm": peor["Mneg"][0], "combo": peor["Mneg"][1],
-         "phiMn_tonfm": mn_neg["phiMn_kNm"] / kN, "razon": peor["Mneg"][0] * kN / mn_neg["phiMn_kNm"] if mn_neg["phiMn_kNm"] else None,
-         "notas": nota_min(As_sup, peor["Mneg"][0], mn_neg["phiMn_kNm"], "arriba") or
-                  [f"As traccionada arriba = {As_sup:.0f} mm² (barras del pedestal) ≥ As,min = {As_min_v:.0f} mm²"]},
+         "phiMn_tonfm": mn_neg["phiMn_kNm"] / kN, "razon": peor["Mneg"][0] * kN / mn_neg["phiMn_kNm"] if mn_neg["phiMn_kNm"] else None},
         {"verificacion": "Corte (estribos del pedestal)", "Vu_tonf": peor["V"][0], "combo": peor["V"][1],
          "phiVn_tonf": cv["phiVn_kN"] / kN, "razon": peor["V"][0] * kN / cv["phiVn_kN"], "notas": cv["notas"]},
     ]
@@ -368,6 +361,8 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     Mu_ala = qu * c_ala ** 2 / 2                                         # tonf·m/m
     Vu_ala = qu * max(c_ala - d_ala / 1000, 0.0)
     zapata = [
+        minimo_zapata(As_zi, "inferior", arm.fun_barras_inferiores),
+        minimo_zapata(As_zs, "superior", arm.fun_barras_superiores),
         {"verificacion": "Ala de la zapata: flexión transversal (por m)", "Mu_tonfm": Mu_ala, "combo": peor["qu"][1],
          "phiMn_tonfm": fl_ala["phiMn_kNm"] / kN, "razon": Mu_ala * kN / fl_ala["phiMn_kNm"] if fl_ala["phiMn_kNm"] else None,
          "notas": fl_ala.get("notas", [])},
