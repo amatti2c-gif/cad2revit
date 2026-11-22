@@ -123,10 +123,10 @@ def test_casos_puros_y_peso_sismico():
     pc = ParametrosCargas(modos=6)
     r = analizar(mod, cargas_eje(mod, pc), pc)
     casos = {c["caso"]: c for c in r["casos"]}
-    assert {"DEAD", "LR", "W1", "E"} <= set(casos)
+    assert {"DEAD", "LR", "W1", "EX+"} <= set(casos)
     # el peso sísmico es el peso propio (menos lo que cae directo en los apoyos), no el doble ni la mitad
     assert 0.9 < r["peso_sismico"] / casos["DEAD"]["reaccion_y"] <= 1.0
-    assert abs(casos["E"]["reaccion_x"] - r["corte_basal"]) < 1e-9
+    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"]) < 1e-9
     assert casos["W1"]["cargas"] and casos["W1"]["reaccion_x"] < 0
 
 
@@ -162,3 +162,21 @@ def test_anclaje_por_defecto_unido_al_pilar_y_hold_down_en_vanos():
     mod2 = mallar(EJE, opciones={"muros": {"f": {"anclaje": "hold_down", "hold_down": "HD5B"}}})
     a = mod2.resumen_muros[0]["anclaje"]
     assert a["bordes"] == ["hold_down", "hold_down"] and abs(a["k"] - 1.90 / 0.0038) < 1
+
+
+def test_sismo_ex_ez_columna_fuerte_y_signo_axial():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    casos = {c["caso"]: c for c in r["casos"]}
+    assert {"EX+", "EX−", "EZ+", "EZ−", "E"} <= set(casos)
+    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"]) < 1e-9
+    assert casos["EX+"]["reaccion_x"] == -casos["EX−"]["reaccion_x"]
+    assert abs(casos["EZ+"]["reaccion_y"]) > 0                       # el sismo vertical produce reacción vertical
+    # PyNite: axial + = compresión; los pilares bajo peso propio van comprimidos (Pu > 0 en el diseño)
+    assert all(a["Pu"] > 0 for a in r["acero"] if a["origen"] in ("p1", "p2"))
+    cf = r["columna_fuerte"]
+    assert len(cf) == 2 and all(c["razon"] > 1 and c["Puc_rel"] > 0 for c in cf)

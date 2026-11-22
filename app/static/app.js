@@ -2247,16 +2247,18 @@ function sapMostrarNube(d) {
   $("#sap-leyenda-razon").classList.remove("oculto");
   $("#sap-nube-resumen").replaceChildren(
     `${d.nota} · ${d.fecha.slice(0, 16).replace("T", " ")} · T* = ${f3(d.T)} s (masa participante X ${(100 * d.masa_participante_x).toFixed(0)} %) · ` +
+    `masa participante Z ${d.masa_participante_z != null ? (100 * d.masa_participante_z).toFixed(0) + " % (resto: masa faltante con Sa(0))" : "—"} · ` +
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
     `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
     h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"), " · ",
     h("span", { class: dmalas ? "nocumple" : "cumple" }, dmalas ? `${dmalas} deformación(es) exceden el límite` : "Deformaciones: todas cumplen"));
-  const casos = d.casos || [];
+  const casos = (d.casos || []).filter(c => c.reaccion_x != null || c.caso !== "E");
   const pm = x => x == null ? "—" : (x.envolvente ? "± " : "");
   $("#sap-nube-casos-nota").textContent = "Suma de las reacciones de todos los apoyos. Fx horizontal (+ hacia +X), Fz vertical " +
     "(+ hacia arriba) y My momento basal respecto del apoyo de la izquierda (+ antihorario). Son reacciones: se oponen a la " +
-    "carga aplicada. El sismo es la envolvente CQC (±) de las reacciones de cada modo, ya con el factor de corte.";
+    "carga aplicada. EX y EZ: CQC de las reacciones de cada modo (EX ya con el factor de corte), en ambos sentidos. " +
+    (d.criterio_sismo ? "Diseño: " + d.criterio_sismo + "." : "");
   $("#sap-nube-casos").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Caso", "Descripción", "ΣFx (tonf)", "ΣFz (tonf)", "ΣMy (tonf·m)"].map(t => h("th", {}, t)))),
     h("tbody", {}, casos.map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso)), h("td", {}, c.descripcion),
@@ -2265,13 +2267,22 @@ function sapMostrarNube(d) {
   $("#sap-nube-casos-max").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Caso", "δx máx (mm)", "δy máx (mm)", "|N| máx (tonf)", "|V| máx (tonf)", "|M| máx (tonf·m)"]
       .map(t => h("th", {}, t)))),
-    h("tbody", {}, casos.map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso)), h("td", {}, f2(c.dx_max_mm)),
-      h("td", {}, c.dy_max_mm == null ? "—" : f2(c.dy_max_mm)), h("td", {}, f2(c.N_max)), h("td", {}, f2(c.V_max)), h("td", {}, f2(c.M_max))))));
+    h("tbody", {}, (d.casos || []).filter(c => !/^E[XZ]−$/.test(c.caso)).map(c => h("tr", {}, h("td", {}, h("strong", {}, c.caso.replace(/\+$/, " (±)"))),
+      h("td", {}, c.dx_max_mm == null ? "—" : f2(c.dx_max_mm)), h("td", {}, c.dy_max_mm == null ? "—" : f2(c.dy_max_mm)),
+      h("td", {}, c.N_max == null ? "—" : f2(c.N_max)), h("td", {}, c.V_max == null ? "—" : f2(c.V_max)), h("td", {}, c.M_max == null ? "—" : f2(c.M_max))))));
   const rango = (a, b) => Math.abs(a - b) < 5e-4 ? f3(a) : `${f3(a)} a ${f3(b)}`;
   $("#sap-nube-cargas").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Caso", "Elemento (Revit)", "Rol", "Dirección", "Carga (tonf/m)"].map(t => h("th", {}, t)))),
     h("tbody", {}, casos.flatMap(c => c.cargas.map(x => h("tr", {}, h("td", {}, c.caso), h("td", {}, x.elemento), h("td", {}, x.rol),
       h("td", {}, x.direccion), h("td", {}, rango(x.min, x.max)))))));
+  const cf = d.columna_fuerte || [];
+  $("#sap-nube-cfvd").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Nudo", "x, z (m)", "Pilares", "Vigas", "ΣM*pc (tonf·m)", "ΣM*pb (tonf·m)", "ΣM*pc/ΣM*pb",
+      "Puc/(Fy·Ag)", "Estado"].map(t => h("th", {}, t)))),
+    h("tbody", {}, cf.map(c => h("tr", {}, h("td", {}, c.nudo), h("td", {}, `${f2(c.x)}, ${f2(c.z)}`), h("td", {}, c.pilares.join(", ")),
+      h("td", {}, c.vigas.join(", ")), h("td", {}, f2(c.sum_Mpc)), h("td", {}, f2(c.sum_Mpb)),
+      h("td", { class: c.cumple ? "cumple" : (c.excepcion ? "" : "nocumple") }, f2(c.razon)), h("td", {}, f2(c.Puc_rel)),
+      h("td", { title: c.detalle }, c.cumple ? "cumple" : (c.excepcion ? "no cumple; aplica excepción E3.4a(a)" : "NO cumple"))))));
   $("#sap-nube-deform").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Elemento", "Verificación", "Combinación", "δ (mm)", "Límite (mm)", "Criterio", "L o H (m)", "Razón"]
       .map(t => h("th", {}, t)))),
@@ -2305,7 +2316,8 @@ function sapVisorOpciones(d) {
   const ops = [["geo", "Modelo (barras, shells y apoyos)"]];
   for (const c of Object.keys(v.cargas)) ops.push([`carga:${c}`, `Cargas: ${c}`]);
   for (const c of Object.keys(v.deformadas)) ops.push([`def:${c}`, `Deformada: ${c}`]);
-  v.modos.forEach((m, i) => ops.push([`modo:${i}`, `Modo ${i + 1}: T = ${m.T.toFixed(3)} s, masa X ${(100 * m.masa_x).toFixed(1)} %`]));
+  v.modos.forEach((m, i) => ops.push([`modo:${i}`, `Modo ${i + 1}: T = ${m.T.toFixed(3)} s, masa X ${(100 * m.masa_x).toFixed(1)} %` +
+    (m.masa_z != null ? `, Z ${(100 * m.masa_z).toFixed(1)} %` : "")]));
   sel.replaceChildren(...ops.map(([k, t]) => h("option", { value: k }, t)));
   sel.value = ops.some(o => o[0] === antes) ? antes : "geo";
   sapVisor();

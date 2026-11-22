@@ -1903,7 +1903,8 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
         limites = {k: float(dis[k]) for k in ("viga_total", "viga_variable", "lateral_viento", "deriva_sismo")
                    if dis.get(k) not in (None, "")}
         masa = "consistente" if dis.get("masa") == "consistente" else "concentrada"     # por defecto, como SAP2000
-        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb, limites=limites, masa=masa, avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
+        ry = float(dis.get("ry") or 1.5)
+        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb, limites=limites, masa=masa, ry=ry, avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
             clave, {"pct": pct, "etapa": etapa, "hasta": hasta}))
     except HTTPException:
         raise

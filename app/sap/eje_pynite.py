@@ -21,7 +21,9 @@ from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 7
+VERSION_RESULTADO = 8
+# sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
+FACTOR_VERTICAL = 2 / 3
 # resistencia admisible al corte de muros (tonf/m), 1 tablero OSB 9,5 mm Sheathing y clavo 8d, según el clavado
 # perimetral (Manual de diseño de estructuras en madera, Tablas 45 y 46; SDPWS 4.3A, sismo). Viento: × 1,4 (SDPWS)
 VN_OSB_9_5_8D = {150: 0.33, 100: 0.48, 50: 0.79}
@@ -111,7 +113,7 @@ def _txy_global(q, combo) -> float:
 
 
 def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
-             avance=None, limites: dict | None = None, masa: str = "concentrada") -> dict:
+             avance=None, limites: dict | None = None, masa: str = "concentrada", ry: float = 1.5) -> dict:
     """mod: eje_revit.ModeloEje; cargas: eje_cargas.CargasEje; pc: ParametrosCargas.
     avance(pct, etapa, hasta): opcional, se llama a medida que avanza el cálculo (pct de 0 a 100; hasta: el pct
     de la etapa siguiente, para que la barra avance sola durante una etapa larga, como el análisis estático)."""
@@ -290,14 +292,45 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         Analysis._store_displacements(m, d1, D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
         modos_combo.append(nombre)
 
+    # ---- sismo vertical EZ: espectro vertical = 2/3 del horizontal, mismos modos con su participación vertical, y
+    # la masa vertical que no alcanzan los modos calculados (modos rígidos) como respuesta estática con Sa(T = 0) ----
+    infl_z = np.zeros(len(m.nodes) * 6)
+    for n in m.nodes.values():
+        infl_z[n.ID * 6 + 1] = 1.0
+    rz = infl_z[D1_idx]
+    Mrz = M11 @ rz
+    masa_z = float(rz @ Mrz)
+    gam_z = np.array([vecs[:, i] @ Mrz / (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
+    m_ef_z = np.array([gam_z[i] ** 2 * (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
+    Sv = lambda T: FACTOR_VERTICAL * Sa(T)                              # noqa: E731
+    modos_z = []
+    for i in range(nmod):
+        nombre = f"_MODOZ{i + 1}"
+        m.add_load_combo(nombre, {})
+        d1 = (gam_z[i] * Sv(periodos[i]) / omegas[i] ** 2 * vecs[:, i]).reshape(-1, 1)
+        Analysis._store_displacements(m, d1, D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
+        modos_z.append(nombre)
+    r_res = rz - vecs @ gam_z                                             # parte de la masa vertical sin modo
+    f_res = np.asarray(M11 @ r_res).ravel() * Sv(0.0)
+    from scipy.sparse.linalg import spsolve
+    d_res = spsolve(K11.tocsc(), f_res).reshape(-1, 1)
+    m.add_load_combo("_RESZ", {})
+    Analysis._store_displacements(m, d_res, D2 * 0, D1_idx, D2_idx, m.load_combos["_RESZ"])
+
+    def env_e(val):
+        """val(combo) → array. Devuelve (EX, EZ, E): EX CQC de los modos horizontales; EZ CQC de los verticales más
+        la masa faltante (SRSS); E = máx(EX + 0,3·EZ, 0,3·EX + EZ) (100 % / 30 %). Todo sin signo (±)."""
+        ex = _cqc([np.asarray(val(c), float) for c in modos_combo], list(omegas))
+        ez = np.sqrt(_cqc([np.asarray(val(c), float) for c in modos_z], list(omegas)) ** 2 + np.asarray(val("_RESZ"), float) ** 2)
+        return ex, ez, np.maximum(ex + 0.3 * ez, 0.3 * ex + ez)
+
     # reacciones basales por modo: las fuerzas de inercia M·Γ·φ·Sa (con el factor de corte), cambiadas de signo
     xs_ap = [mod.nudos[n][0] for n in mod.apoyos] or [0.0]
     zs_ap = [mod.nudos[n][1] for n in mod.apoyos] or [0.0]
     ref = (min(xs_ap), min(zs_ap))
     por_id = {n.ID: n for n in m.nodes.values()}
-    reac_modo = []
-    for i in range(nmod):
-        fi = np.asarray(M11 @ (factor * gam[i] * Sa(periodos[i]) * vecs[:, i])).ravel()
+
+    def reaccion(fi):
         rx_ = ry_ = rm_ = 0.0
         for k, g_ in enumerate(np.asarray(D1_idx).ravel()):
             nd, comp = por_id[int(g_) // 6], int(g_) % 6
@@ -307,7 +340,15 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                 ry_ += fi[k]; rm_ += (nd.X - ref[0]) * fi[k]
             elif comp == 5:
                 rm_ += fi[k]
-        reac_modo.append(np.array([-rx_, -ry_, -rm_]))
+        return np.array([-rx_, -ry_, -rm_])
+    reac_modo = [reaccion(np.asarray(M11 @ (factor * gam[i] * Sa(periodos[i]) * vecs[:, i])).ravel()) for i in range(nmod)]
+    reac_z = [reaccion(np.asarray(M11 @ (gam_z[i] * Sv(periodos[i]) * vecs[:, i])).ravel()) for i in range(nmod)]
+    reac_z_res = reaccion(f_res)
+    signo_x = np.sign(reac_modo[i_fund]) if reac_modo else np.ones(3)
+    i_fz = int(np.argmax(m_ef_z)) if nmod else 0
+    signo_z = np.sign(reac_z[i_fz] if np.abs(reac_z[i_fz]).sum() > np.abs(reac_z_res).sum() else reac_z_res)
+    signo_x[signo_x == 0] = 1
+    signo_z[signo_z == 0] = 1
 
     # ---- fuerzas en las barras: casos estáticos y envolvente E (CQC), en n_puntos por barra ----
     def fuerzas(f, combo):
@@ -321,8 +362,13 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     for k_b, (f, *_) in enumerate(mod.barras):
         paso(82 + 12 * k_b / max(len(mod.barras), 1), f"Esfuerzos en las barras ({k_b + 1} de {len(mod.barras)})")
         est = {c: fuerzas(f, c) for c in estaticos}
-        modal = [fuerzas(f, c) for c in modos_combo]
-        E = tuple(_cqc([mm[k] for mm in modal], list(omegas)) for k in range(3))
+        cache = {}
+
+        def comp(c, k, f=f):
+            if c not in cache:
+                cache[c] = fuerzas(f, c)
+            return cache[c][k]
+        E = tuple(env_e(lambda c, k=k: comp(c, k))[2] for k in range(3))
         res_barra[f] = (est, E)
 
     # ---- diseño de acero AISC 360-16 por elemento de Revit (largo total = largo no arriostrado) ----
@@ -348,7 +394,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                     Nk = N + s[0] * fe * E[0]
                     Mk = np.abs(M) + abs(fe) * E[2] if fe else np.abs(M)
                     Vk = np.abs(V) + abs(fe) * E[1] if fe else np.abs(V)
-                    Pu = -Nk                                               # PyNite: axial + = tracción
+                    Pu = Nk                                                # PyNite: axial + = compresión
                     for k in range(n_puntos):
                         rz = razon(float(Pu[k]), float(Mk[k]), float(Vk[k]), cap)
                         val = max(rz["interaccion"], rz["corte"])
@@ -359,6 +405,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                       "phiPn": cap["phiPn"], "phiMn": cap["phiMn"], "phiVn": cap["phiVn"], "KL_r": cap["KL/r"],
                       "notas": cap["notas"]})
     acero.sort(key=lambda r: -r["razon"])
+    columna_fuerte = _columna_fuerte(mod, perfiles, res_barra, combos_lrfd, estaticos, fy, ry)
 
     # ---- muros de madera: corte por segmento y tracción en el anclaje (tensiones admisibles, NCh3171 9.2) ----
     asd = {"D+W": {"DEAD": 1.0, "W": 1.0}, "D+E": {"DEAD": 1.0, "E": 1.0}, "D+0,75W+0,75Lr": {"DEAD": 1.0, "W": 0.75, "LR": 0.75},
@@ -389,7 +436,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         Vest = {c: V_fila(c) for c in ["DEAD", "LR"] + vientos}
         # carga gravitacional que baja por el segmento (compresión a media altura, tonf): estabiliza el volcamiento
         Nest = {c: -V_fila(c, (1, 1)) for c in ("DEAD", "LR")}
-        VE = float(_cqc([np.array([V_fila(c)]) for c in modos_combo], list(omegas))[0])
+        VE = float(env_e(lambda c: np.array([V_fila(c)]))[2][0])
+        # sismo vertical: resta (o suma) carga gravitacional al segmento; para el volcamiento se toma la resta
+        NEz = float(env_e(lambda c: np.array([V_fila(c, (1, 1))]))[1][0])
         pm = seg.get("parametros", {})
         esp = int(pm.get("espaciamiento_clavos", 100))
         vn = VN_OSB_9_5_8D.get(esp, 0.48) * int(pm.get("tableros", 1))
@@ -414,7 +463,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
             for w in (vientos if "W" in fac else [None]):
                 V = abs(sum(fac.get(c, 0) * Vest[c] for c in ("DEAD", "LR")) + (fac.get("W", 0) * Vest[w] if w else 0.0)) \
                     + fac.get("E", 0) * VE
-                Ngrav = max(sum(fac.get(c, 0) * Nest[c] for c in ("DEAD", "LR")), 0.0)
+                Ngrav = max(sum(fac.get(c, 0) * Nest[c] for c in ("DEAD", "LR")) - fac.get("E", 0) * NEz, 0.0)
                 T = V * H / Lp - Ngrav * L / (2 * Lp)
                 if T > peor_t[0]:
                     peor_t = (T, cn + (f" ({w})" if w else ""))
@@ -439,14 +488,21 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
     deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
-    casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, reac_modo, ref)
-    visor = _visor(m, mod, cargas, estaticos, modos_combo, periodos, m_ef / masa_tot if masa_tot else m_ef * 0)
+    sismo = {"reac_x": _cqc(reac_modo, list(omegas)) if reac_modo else np.zeros(3), "signo_x": signo_x,
+             "reac_z": np.sqrt(_cqc(reac_z, list(omegas)) ** 2 + reac_z_res ** 2) if reac_z else np.abs(reac_z_res),
+             "signo_z": signo_z, "env": env_e, "masa_z": float(m_ef_z.sum() / masa_z) if masa_z else 0.0}
+    casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, sismo, ref)
+    visor = _visor(m, mod, cargas, estaticos, modos_combo, periodos, m_ef / masa_tot if masa_tot else m_ef * 0,
+                   m_ef_z / masa_z if masa_z else m_ef_z * 0)
 
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "version": VERSION_RESULTADO, "visor": visor, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
+        "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL,
+        "criterio_sismo": "E = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±); EX: espectro NCh433 + DS61 con CQC; "
+                          "EZ: espectro vertical = 2/3 del horizontal, CQC + masa vertical no captada por los modos (Sa(0))",
+        "version": VERSION_RESULTADO, "visor": visor, "columna_fuerte": columna_fuerte, "ry": ry, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
         "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }
 
@@ -459,7 +515,52 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
 LIMITES_DEF = {"viga_total": 240, "viga_variable": 360, "lateral_viento": 200, "deriva_sismo": 0.002}
 
 
-def _visor(m, mod, cargas, estaticos, modos, periodos, part) -> dict:
+def _columna_fuerte(mod, perfiles, res_barra, combos, estaticos, fy, ry) -> list[dict]:
+    """Columna fuerte–viga débil, AISC 341-16 E3.4a (marcos especiales a momento), en cada nudo donde se unen pilares
+    y vigas: ΣM*pc / ΣM*pb > 1,0 con M*pc = Zc·(Fyc − Puc/Ag) y M*pb = 1,1·Ry·Fyb·Zb (sin el término Muv por la
+    excentricidad de la rótula). Puc: la mayor compresión del pilar en las combinaciones con sismo."""
+    inc = {}
+    for f, a, b, sec in mod.barras:
+        rol = mod.roles.get(f)
+        if rol in ("pilar", "viga", "techo"):
+            for n, extremo in ((a, 0), (b, -1)):
+                inc.setdefault(n, []).append((f, sec, rol, extremo))
+    con_e = {cn: fac for cn, fac in combos.items() if fac.get("E")}
+    out = []
+    for n, lista in inc.items():
+        pil = [x for x in lista if x[2] == "pilar"]
+        vig = [x for x in lista if x[2] in ("viga", "techo")]
+        if not pil or not vig:
+            continue
+        x, z = mod.nudos[n]
+        smpc, smpb, detalle, p_rel = 0.0, 0.0, [], 0.0
+        for f, sec, _, ext in pil:
+            g = perfiles[sec][1]
+            est, E = res_barra[f]
+            puc = 0.0
+            for fac in con_e.values():
+                N = sum(fac.get(c, 0) * est[c][0][ext] for c in estaticos if c in fac)
+                puc = max(puc, N + fac["E"] * E[0][ext])                   # PyNite: axial + = compresión
+            smpc += g["Zx"] * max(fy - puc / g["A"], 0.0)
+            p_rel = max(p_rel, puc / (fy * g["A"]))
+            detalle.append(f"{mod.origen.get(f) or f} ({sec}, Puc {puc:.2f} tonf)")
+        for f, sec, _, _ in vig:
+            g = perfiles[sec][1]
+            smpb += 1.1 * ry * fy * g["Zx"]
+            detalle.append(f"{mod.origen.get(f) or f} ({sec})")
+        tope = not any(mod.nudos[o][1] > z + 1e-6 for f, sec, _, ext in pil
+                       for o in [next(bb if ext == 0 else aa for ff, aa, bb, _ in mod.barras if ff == f)])
+        razon = smpc / smpb if smpb else float("inf")
+        out.append({"nudo": n, "x": x, "z": z, "pilares": [mod.origen.get(f) or f for f, *_ in pil],
+                    "vigas": [mod.origen.get(f) or f for f, *_ in vig], "sum_Mpc": float(smpc), "sum_Mpb": float(smpb), "razon": float(razon),
+                    "cumple": bool(razon > 1.0), "Puc_rel": float(p_rel),
+                    "excepcion": bool(tope and p_rel < 0.3),
+                    "detalle": "; ".join(detalle)})
+    out.sort(key=lambda r: r["razon"])
+    return out
+
+
+def _visor(m, mod, cargas, estaticos, modos, periodos, part, part_z=None) -> dict:
     """El modelo tal como quedó en PyNite, para dibujarlo en la app: nudos (incluidos los internos de los triángulos),
     barras, cuadriláteros, apoyos, cargas distribuidas por caso, deformadas de cada caso y formas modales (normalizadas)."""
     r6 = lambda v: round(float(v), 6)                                 # noqa: E731
@@ -482,11 +583,12 @@ def _visor(m, mod, cargas, estaticos, modos, periodos, part) -> dict:
         "apoyos": dict(mod.apoyos),
         "cargas": carg,
         "deformadas": {c: campo(c) for c in estaticos},
-        "modos": [{"T": float(periodos[i]), "masa_x": float(part[i]), "forma": campo(c, True)} for i, c in enumerate(modos)],
+        "modos": [{"T": float(periodos[i]), "masa_x": float(part[i]), "masa_z": float(part_z[i]) if part_z is not None else 0.0,
+                   "forma": campo(c, True)} for i, c in enumerate(modos)],
     }
 
 
-def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, factor, reac_modo, ref) -> list[dict]:
+def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, factor, sismo, ref) -> list[dict]:
     """Resumen de cada estado de carga sin mayorar: reacciones totales, desplazamientos máximos, esfuerzos máximos en
     las barras de acero y las cargas aplicadas a cada elemento de Revit (tonf/m)."""
     desc = {"DEAD": "Peso propio (acero y muros) + peso del techo", "LR": "Sobrecarga de techo Lr (NCh1537)"}
@@ -519,13 +621,25 @@ def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, factor, re
         out.append({"caso": c, "tipo": cargas.patrones.get(c, ""), "descripcion": desc.get(c, ""),
                     "reaccion_x": float(rx), "reaccion_y": float(ry), "momento": float(mz), "dx_max_mm": float(dx) * 1000, "dy_max_mm": float(dy) * 1000,
                     "N_max": N, "V_max": V, "M_max": M, "cargas": cargas_el})
-    # sismo: envolvente CQC (sin signo) de las reacciones de cada modo
-    rE = _cqc(reac_modo, omegas) if reac_modo else np.zeros(3)
-    de = max((float(_cqc([np.array([m.nodes[n].DX[k]]) for k in modos], omegas)[0]) for n in nudos), default=0.0)
+    # sismo: horizontal EX y vertical EZ, cada uno en ambos sentidos. Reacciones: CQC (sin signo) de las de cada modo,
+    # con el signo del modo dominante de esa dirección
+    env = sismo["env"]
+    nodo = lambda n, gdl: (lambda c: np.array([getattr(m.nodes[n], gdl)[c]]))     # noqa: E731
+    dx_e = max((float(env(nodo(n, "DX"))[0][0]) for n in nudos), default=0.0)
+    dy_ez = max((float(env(nodo(n, "DY"))[1][0]) for n in nudos), default=0.0)
     ee = [e for _, e in res_barra.values()]
-    out.append({"caso": "E", "tipo": "QUAKE", "descripcion": f"Sismo espectral NCh433 + DS61, CQC (factor de corte {factor:.2f})",
-                "reaccion_x": float(rE[0]), "reaccion_y": float(rE[1]), "momento": float(rE[2]), "envolvente": True,
-                "dx_max_mm": de * 1000, "dy_max_mm": None,
+    for nombre, clave, sg, desc_ in (
+            ("EX", "reac_x", "signo_x", f"Sismo horizontal NCh433 + DS61, espectral CQC (factor de corte {factor:.2f})"),
+            ("EZ", "reac_z", "signo_z", "Sismo vertical: espectro = 2/3 del horizontal, CQC + masa no captada por los modos")):
+        r_ = sismo[clave] * sismo[sg]
+        for s_, txt in ((1, "+"), (-1, "−")):
+            out.append({"caso": nombre + txt, "tipo": "QUAKE", "descripcion": desc_ + f", sentido {txt}",
+                        "reaccion_x": float(s_ * r_[0]), "reaccion_y": float(s_ * r_[1]), "momento": float(s_ * r_[2]),
+                        "dx_max_mm": dx_e * 1000 if nombre == "EX" else None,
+                        "dy_max_mm": dy_ez * 1000 if nombre == "EZ" else None,
+                        "N_max": None, "V_max": None, "M_max": None, "cargas": []})
+    out.append({"caso": "E", "tipo": "QUAKE", "descripcion": "Sismo de diseño: máx(EX + 0,3·EZ ; 0,3·EX + EZ), ±",
+                "reaccion_x": None, "reaccion_y": None, "momento": None, "envolvente": True, "dx_max_mm": None, "dy_max_mm": None,
                 "N_max": max((float(np.max(e[0])) for e in ee), default=0.0), "V_max": max((float(np.max(e[1])) for e in ee), default=0.0),
                 "M_max": max((float(np.max(e[2])) for e in ee), default=0.0), "cargas": []})
     return out

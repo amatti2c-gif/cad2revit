@@ -270,6 +270,7 @@
                 <option value="consistente">consistente</option></select></label>
               <label>Acero: Fy (MPa; A270ES = 270) <input data-sap="diseno.fy_mpa" type="number" step="any" value="270"></label>
               <label>Acero: Lb fuera del plano (m; vacío = largo del elemento) <input data-sap="diseno.lb" type="number" step="any"></label>
+              <label>Ry del acero (AISC 341; A36/A270ES ≈ 1,5, A572 Gr50 = 1,1) <input data-sap="diseno.ry" type="number" step="any" value="1.5"></label>
               <label>Flecha vigas, carga total: L / <input data-sap="diseno.viga_total" type="number" step="any" value="240"></label>
               <label>Flecha vigas, Lr o W sola: L / <input data-sap="diseno.viga_variable" type="number" step="any" value="360"></label>
               <label>Lateral pilares y muros con viento: H / <input data-sap="diseno.lateral_viento" type="number" step="any" value="200"></label>
@@ -305,6 +306,11 @@
           <h3>Muros de madera: corte y anclaje al volcamiento (Manual, Ec. 3.29–3.31; tensiones admisibles NCh3171 §9.2)</h3>
           <p class="tenue">T = V·H/L′ − (carga gravitacional)·L/(2·L′), con la peor combinación de servicio (controla 0,6D + W o 0,6D + E). Bordes unidos al pilar: el pilar de acero toma T a través de la unión; bordes en un vano: hold-down del catálogo del Manual.</p>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-madera"></table></div>
+          <h3>Columna fuerte – viga débil (AISC 341-16 E3.4a)</h3>
+          <p class="tenue">ΣM*pc / ΣM*pb &gt; 1,0 en cada nudo pilar–viga, con M*pc = Zc·(Fyc − Puc/Ag) y M*pb = 1,1·Ry·Fy·Zb (sin el
+            término Muv). Exigido en marcos especiales a momento; la excepción E3.4a(a) aplica a pilares del último piso o de
+            edificios de un piso con Puc &lt; 0,3·Fy·Ag.</p>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-cfvd"></table></div>
           <h3>Deformaciones (servicio): flecha de vigas, desplazamiento lateral de pilares y muros</h3>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-deform"></table></div></div>
         <div class="panel"><div class="panel-tit"><span>Verificación de hormigón armado ACI 318-19 (viga o columna rectangular)</span>
