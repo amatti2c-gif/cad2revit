@@ -4,3 +4,4 @@ python-multipart>=0.0.9
 httpx>=0.27
 ruamel.yaml>=0.18
 anthropic>=2.8,<3
+PyNiteFEA==3.2.1

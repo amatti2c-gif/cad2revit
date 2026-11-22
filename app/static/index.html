@@ -222,6 +222,7 @@
           <div class="panel-tit"><span id="sap-estado"></span>
             <span class="acciones"><button class="sec" id="btn-sap-guardar">Guardar ajustes</button>
               <button class="sec" id="btn-sap-s2k">Descargar .s2k</button>
+              <button class="pri" id="btn-sap-nube">▶ Analizar y diseñar en la nube (PyNite)</button>
               <button class="pri" id="btn-sap-correr">▶ Armar, analizar y diseñar en SAP2000</button></span></div>
           <svg id="sap-lienzo" viewBox="0 0 100 50"></svg>
           <div class="tenue sap-leyenda"><span style="color:#1f4e9c">━ pilar</span> <span style="color:#c06000">━ techo</span>
@@ -260,6 +261,8 @@
               <label>Importancia sísmica I <input data-sap="cargas.importancia_sismo" type="number" step="any" value="1.0"></label>
               <label>R0 <input data-sap="cargas.r0" type="number" step="any" value="7"></label>
               <label>Modos <input data-sap="cargas.modos" type="number" step="1" value="12"></label>
+              <label>Acero: Fy (MPa; A270ES = 270) <input data-sap="diseno.fy_mpa" type="number" step="any" value="270"></label>
+              <label>Acero: Lb fuera del plano (m; vacío = largo del elemento) <input data-sap="diseno.lb" type="number" step="any"></label>
             </div></div>
         </div>
         <div class="panel"><div class="panel-tit"><span>Elementos del eje</span></div>
@@ -275,6 +278,29 @@
         <div class="panel oculto" id="sap-resultados"><div class="panel-tit"><span>Diseño de acero AISC 360-16</span></div>
           <p id="sap-res-resumen"></p>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-razones"></table></div></div>
+        <div class="panel oculto" id="sap-nube"><div class="panel-tit"><span>Análisis en la nube (PyNite) · NCh433 + DS61 espectral, NCh3171</span></div>
+          <p id="sap-nube-resumen"></p>
+          <h3>Acero AISC 360-16 LRFD (por elemento de Revit)</h3>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-acero"></table></div>
+          <h3>Muros de madera (Manual de diseño en madera, tensiones admisibles NCh3171 §9.2)</h3>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-madera"></table></div></div>
+        <div class="panel"><div class="panel-tit"><span>Verificación de hormigón armado ACI 318-19 (viga o columna rectangular)</span>
+            <span class="acciones"><button class="sec" id="btn-hormigon">Verificar</button></span></div>
+          <div class="sap-form" id="form-hormigon">
+            <label>b (mm) <input data-h="b" type="number" step="any" value="300"></label>
+            <label>h (mm) <input data-h="h" type="number" step="any" value="500"></label>
+            <label>Recubrimiento al centro de barra (mm) <input data-h="recubrimiento" type="number" step="any" value="50"></label>
+            <label>f'c (MPa) <input data-h="fc" type="number" step="any" value="25"></label>
+            <label>fy (MPa) <input data-h="fy" type="number" step="any" value="420"></label>
+            <label>As inferior / tracción (mm²) <input data-h="as_inf" type="number" step="any" value="942"></label>
+            <label>As superior (mm²) <input data-h="as_sup" type="number" step="any" value="0"></label>
+            <label>Av estribo, todas las ramas (mm²) <input data-h="av" type="number" step="any" value="157"></label>
+            <label>s estribos (mm) <input data-h="s" type="number" step="any" value="150"></label>
+            <label>Mu (kN·m) <input data-h="Mu" type="number" step="any" value="0"></label>
+            <label>Vu (kN) <input data-h="Vu" type="number" step="any" value="0"></label>
+            <label>Pu (kN, + compresión; columna) <input data-h="Pu" type="number" step="any" value="0"></label>
+          </div>
+          <div id="res-hormigon"></div></div>
       </div>
     </section>
 

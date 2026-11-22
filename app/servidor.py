@@ -1819,9 +1819,10 @@ def leer_eje_sap(pid: str, nombre: str):
 def borrar_eje_sap(pid: str, nombre: str):
     f = _eje_sap(_proyecto(pid), nombre)
     f.unlink()
-    a = f.with_name(f.name.replace(".sap.json", ".ajustes.json"))
-    if a.is_file():
-        a.unlink()
+    for ext in (".ajustes.json", ".resultado.json"):
+        a = f.with_name(f.name.replace(".sap.json", ext))
+        if a.is_file():
+            a.unlink()
 
 
 @app.put("/api/proyectos/{pid}/sap/{nombre}/ajustes")
@@ -1875,6 +1876,75 @@ def s2k_eje_sap(pid: str, nombre: str, aj: AjustesEje):
         escribir_s2k(mod, str(ruta), cargas)
         return Response(ruta.read_text(encoding="utf-8"), media_type="text/plain",
                         headers={"Content-Disposition": f'attachment; filename="{nombre}.s2k"'})
+
+
+@app.post("/api/proyectos/{pid}/sap/{nombre}/analizar")
+def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
+    """Análisis en la nube con PyNite (estático + modal espectral NCh433/DS61) y verificación de los elementos:
+    acero AISC 360-16 LRFD y muros de madera (Manual, tensiones admisibles). Guarda el resultado junto al eje."""
+    from app.sap.eje_pynite import analizar
+    f = _eje_sap(_proyecto(pid), nombre)
+    mod, pc, cargas = _modelo_eje(json.loads(f.read_text(encoding="utf-8")), aj)
+    dis = (aj.parametros or {}).get("diseno") or {}
+    try:
+        fy = float(dis.get("fy_mpa") or 270) * 1000 / 9.80665
+        lb = float(dis["lb"]) if dis.get("lb") not in (None, "") else None
+        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"No se pudo analizar el eje: {e}")
+    r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    r["nota"] = f"Análisis PyNite en la app (Fy {dis.get('fy_mpa') or 270} MPa" + (f", Lb {lb} m" if lb else ", Lb = largo del elemento") + ")"
+    f.with_name(f.name.replace(".sap.json", ".resultado.json")).write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
+    return r
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}/resultado")
+def resultado_eje_pynite(pid: str, nombre: str):
+    f = _eje_sap(_proyecto(pid), nombre)
+    r = f.with_name(f.name.replace(".sap.json", ".resultado.json"))
+    if not r.is_file():
+        raise HTTPException(404, "El eje aún no se ha analizado")
+    return json.loads(r.read_text(encoding="utf-8"))
+
+
+class SeccionHormigon(BaseModel):
+    b: float                      # mm
+    h: float                      # mm
+    recubrimiento: float = 40     # mm al centro de la barra
+    fc: float = 25                # MPa
+    fy: float = 420               # MPa
+    as_inf: float = 0             # mm² (tracción en vigas)
+    as_sup: float = 0             # mm²
+    av: float = 0                 # mm², ramas del estribo
+    s: float = 0                  # mm
+    capas: list[list[float]] = [] # columna: [[As mm², d mm], ...]
+    Mu: float = 0                 # kN·m
+    Vu: float = 0                 # kN
+    Pu: float = 0                 # kN, + compresión
+
+
+@app.post("/api/hormigon/verificar")
+def verificar_hormigon(sec: SeccionHormigon):
+    """Viga o columna rectangular según ACI 318-19: φMn, φVn y, si hay Pu o capas, el diagrama P–M."""
+    from app.sap import diseno_hormigon as dh
+    if sec.b <= 0 or sec.h <= 0 or sec.fc <= 0 or sec.fy <= 0:
+        raise HTTPException(400, "b, h, f'c y fy deben ser positivos")
+    d = sec.h - sec.recubrimiento
+    out = {}
+    if sec.as_inf:
+        out["flexion"] = dh.flexion(sec.b, sec.h, d, sec.as_inf, sec.fc, sec.fy, sec.as_sup, sec.recubrimiento)
+        out["flexion"]["razon"] = abs(sec.Mu) / out["flexion"]["phiMn_kNm"] if out["flexion"]["phiMn_kNm"] else None
+    out["corte"] = dh.corte(sec.b, d, sec.fc, sec.fy, sec.av, sec.s, Nu_kN=max(sec.Pu, 0), Ag=sec.b * sec.h)
+    out["corte"]["razon"] = abs(sec.Vu) / out["corte"]["phiVn_kN"] if out["corte"]["phiVn_kN"] else None
+    capas = [tuple(c) for c in sec.capas if len(c) == 2 and c[0] > 0]
+    if not capas and (sec.Pu or not sec.as_inf) and (sec.as_inf or sec.as_sup):
+        capas = [(sec.as_sup, sec.recubrimiento), (sec.as_inf, d)]
+    if capas:
+        pts = dh.interaccion(sec.b, sec.h, capas, sec.fc, sec.fy)
+        out["interaccion"] = {"puntos": pts, **dh.dentro_de_interaccion(pts, sec.Pu, sec.Mu)}
+    return out
 
 
 @app.post("/api/armaduras/leer")

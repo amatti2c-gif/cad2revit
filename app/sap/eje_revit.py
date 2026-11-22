@@ -299,7 +299,9 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                                               "f22": e / pmw.e_ppdd, "f12": g / g0, "peso": 1}
                 mod.resumen_muros.append({"muro": w["id"], "x0": round(seg[0], 3), "x1": round(seg[1], 3), "L": round(L, 3),
                                           "H": round(H, 3), "K_eq_tonf_m": round(r["K"], 1), "E_shell": round(e, 1),
-                                          "G_shell": round(g, 1), "seccion": nombre})
+                                          "G_shell": round(g, 1), "seccion": nombre,
+                                          "parametros": {"espaciamiento_clavos": pmw.espaciamiento_clavos,
+                                                         "tableros": pmw.tableros}})
             return nombre
 
         nudos_muro = set()

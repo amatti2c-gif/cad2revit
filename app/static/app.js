@@ -2045,9 +2045,11 @@ async function abrirEjeSap(nombre) {
   $("#sap-ancho").placeholder = r.eje.ancho_tributario != null ? r.eje.ancho_tributario + " (tributario de Revit)" : "1";
   $("#sap-contenido").classList.remove("oculto");
   $("#sap-resultados").classList.add("oculto");
+  $("#sap-nube").classList.add("oculto");
   $("#sap-leyenda-razon").classList.add("oculto");
   sapTablaElementos();
   await sapActualizar();
+  try { sapMostrarNube(await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`))); } catch { /* aún sin análisis */ }
 }
 
 async function sapActualizar() {
@@ -2170,6 +2172,62 @@ async function sapCorrer() {
   $("#sap-estado").textContent = "Listo: diseño AISC 360-16";
   sapDibujar();
 }
+
+async function sapNube() {
+  await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
+  $("#sap-estado").textContent = "Analizando en la nube con PyNite (estático, modal y espectral)…";
+  const d = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/analizar`), sapAjustes());
+  sapMostrarNube(d);
+  $("#sap-estado").textContent = "Listo: análisis PyNite, acero AISC 360-16 y muros de madera";
+}
+
+function sapMostrarNube(d) {
+  const f2 = x => x == null ? "" : Number(x).toFixed(2), f3 = x => x == null ? "" : Number(x).toFixed(3);
+  const celda = r => h("td", { class: r > 1 ? "nocumple" : "cumple" }, f2(r));
+  sap.razones = {};
+  for (const a of d.acero) for (const b of a.barras) sap.razones[b] = a.razon;
+  const malas = d.acero.filter(a => a.razon > 1).length, mmalas = d.madera.filter(m => m.FU > 1).length;
+  $("#sap-nube").classList.remove("oculto");
+  $("#sap-leyenda-razon").classList.remove("oculto");
+  $("#sap-nube-resumen").replaceChildren(
+    `${d.nota} · ${d.fecha.slice(0, 16).replace("T", " ")} · T* = ${f3(d.T)} s (masa participante X ${(100 * d.masa_participante_x).toFixed(0)} %) · ` +
+    `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
+    `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
+    h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
+    h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"));
+  $("#sap-nube-acero").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Id Revit", "Sección", "L (m)", "Razón", "Interacción", "Corte", "Ec.", "Combinación", "Pu (tonf)", "Mu (tonf·m)",
+      "Vu (tonf)", "φPn", "φMn", "φVn", "KL/r", "Notas"].map(t => h("th", {}, t)))),
+    h("tbody", {}, d.acero.map(a => h("tr", {}, h("td", {}, a.origen ?? ""), h("td", {}, a.seccion), h("td", {}, f2(a.L)), celda(a.razon),
+      h("td", {}, f2(a.interaccion)), h("td", {}, f2(a.corte)), h("td", {}, a.ecuacion ?? ""), h("td", {}, a.combo ?? ""),
+      h("td", {}, f2(a.Pu)), h("td", {}, f2(a.Mu)), h("td", {}, f2(a.Vu)), h("td", {}, f2(a.phiPn)), h("td", {}, f2(a.phiMn)),
+      h("td", {}, f2(a.phiVn)), h("td", {}, a.KL_r ? a.KL_r.toFixed(0) : ""), h("td", {}, (a.notas || []).join("; "))))));
+  $("#sap-nube-madera").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "FU = v/vadm", "v (tonf/m)", "vadm (tonf/m)", "Combinación",
+      "Tracción anclaje T (tonf)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, d.madera.map(m => h("tr", {}, h("td", {}, m.muro), h("td", {}, `${m.x0}–${m.x1}`), h("td", {}, f2(m.L)), h("td", {}, f2(m.H)),
+      celda(m.FU), h("td", {}, f3(m.v)), h("td", {}, f3(m.vn)), h("td", {}, m.combo), h("td", {}, f2(m.T_anclaje))))));
+  sapDibujar();
+}
+
+async function verificarHormigon() {
+  const d = {};
+  $$("[data-h]").forEach(el => { if (el.value !== "") d[el.dataset.h] = Number(el.value); });
+  const r = await api("POST", "/api/hormigon/verificar", d);
+  const f = x => x == null ? "—" : Number(x).toFixed(2);
+  const linea = (t, cap, raz, notas) => h("li", {}, `${t}: ${cap}`,
+    raz != null ? h("span", { class: raz > 1 ? "nocumple" : "cumple" }, ` · razón ${f(raz)}`) : "",
+    notas && notas.length ? ` · ${notas.join("; ")}` : "");
+  const items = [];
+  if (r.flexion) items.push(linea("Flexión", `φMn = ${f(r.flexion.phiMn_kNm)} kN·m (φ ${f(r.flexion.phi)}, εt ${r.flexion.et.toFixed(4)})`,
+    d.Mu ? r.flexion.razon : null, r.flexion.notas));
+  items.push(linea("Corte", `φVn = ${f(r.corte.phiVn_kN)} kN (Vc ${f(r.corte.Vc_kN)}, Vs ${f(r.corte.Vs_kN)})`, d.Vu ? r.corte.razon : null, r.corte.notas));
+  if (r.interaccion) items.push(linea("Flexo-compresión (diagrama P–M)", `φMn a Pu = ${f(r.interaccion.phiMn_kNm)} kN·m`,
+    (d.Pu || d.Mu) ? r.interaccion.razon : null, []));
+  $("#res-hormigon").replaceChildren(h("ul", {}, items));
+}
+$("#btn-hormigon").addEventListener("click", () => intentar(verificarHormigon));
+$("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 
 $("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
 $$("[data-sap]").forEach(el => el.addEventListener("change", () => intentar(sapActualizar)));
