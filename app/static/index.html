@@ -32,7 +32,7 @@
     <button data-tab="resultado">4 · Resultado</button>
     <button data-tab="historial">5 · Historial</button>
     <button data-tab="sap">6 · Análisis y diseño</button>
-    <button data-tab="lineamientos">Lineamientos (avanzado) <span id="badge-errores" class="badge oculto"></span></button>
+    <span id="badge-errores" class="badge oculto" hidden></span>
   </nav>
 
   <main>
@@ -66,7 +66,7 @@
       <div class="panel" id="panel-capas">
         <div class="panel-tit"><span>Capas de tu plano</span><span id="capas-estado" class="tenue"></span></div>
         <p class="tenue">Marca qué capas de tus plantas son muros, ejes, puertas, etc. Se guarda al marcar y vale solo para
-          este proyecto. Si no marcas nada se usa la regla general (Lineamientos → capas_cad.yaml).</p>
+          este proyecto. Si no marcas nada se usa la regla general de la app.</p>
         <div id="lista-capas"></div>
       </div>
       <div id="vista-plano" class="panel oculto">
@@ -98,8 +98,7 @@
       </div>
 
       <h3>Catálogo de legos</h3>
-      <p class="tenue">Piezas prearmadas disponibles para todos los proyectos. Para crear o modificar uno, usa
-        <em>Lineamientos (avanzado) → materialidades.yaml</em>.</p>
+      <p class="tenue">Piezas prearmadas disponibles para todos los proyectos.</p>
       <div id="catalogo"></div>
     </section>
 
@@ -134,7 +133,7 @@
     </section>
 
     <!-- ===================== LINEAMIENTOS ===================== -->
-    <section id="tab-lineamientos" class="tab">
+    <section id="tab-lineamientos" class="tab" hidden>
       <div id="errores-entradas" class="aviso error oculto"></div>
       <div class="editor-wrap">
         <aside class="lista-archivos" id="lista-archivos"></aside>
@@ -268,6 +267,7 @@
               <label>Sistema de madera (Tabla 5) <select data-sap="cargas.sistema_madera"><option value="marco_plataforma" selected>marco plataforma (R 6,5; R0 7; 0,0025·h)</option><option value="madera_general">muros y sistemas arriostrados generales (R 5,5; R0 7; 0,002·h)</option><option value="CLT">CLT (R 2; R0 2)</option><option value="ninguno">ninguno</option></select></label>
               <label>R0 (vacío = Tabla 5; manda el subsistema de menor R0, 5.7.2) <input data-sap="cargas.r0" type="number" step="any" placeholder="según sistema"></label>
               <label>R (vacío = Tabla 5; para Cmáx) <input data-sap="cargas.r" type="number" step="any" placeholder="según sistema"></label>
+              <label>Torsión accidental: distancia del eje al centro de masas (m; usa B de arriba; vacío = eje de borde, × 1,3) <input data-sap="cargas.distancia_cm" type="number" step="any"></label>
               <label>Modos (mínimo; se agregan hasta 90 % de masa en X y Z) <input data-sap="cargas.modos" type="number" step="1" value="12"></label>
               <label>Matriz de masa <select data-sap="diseno.masa"><option value="concentrada" selected>concentrada en los nudos (como SAP2000)</option>
                 <option value="consistente">consistente</option></select></label>
@@ -370,7 +370,7 @@
       <h3>Nuevo proyecto</h3>
       <label>Nombre <input id="nuevo-nombre" required placeholder="Edificio Los Aromos"></label>
       <label class="fila"><input id="nuevo-ejemplo" type="checkbox" checked> Incluir planos de ejemplo (casa de 2 pisos)</label>
-      <p class="tenue">El proyecto usa los lineamientos comunes de la app (pestaña 2). Solo los niveles y planos son propios del proyecto.</p>
+      <p class="tenue">El proyecto usa las reglas comunes de la app. Solo los niveles y planos son propios del proyecto.</p>
       <div class="acciones"><button value="cancel" class="sec">Cancelar</button><button id="btn-crear" value="ok" class="pri">Crear</button></div>
     </form>
   </dialog>

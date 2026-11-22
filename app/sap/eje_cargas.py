@@ -115,6 +115,24 @@ class ParametrosCargas:
     r0: float | None = None             # si se da, reemplaza al de la Tabla 5
     r: float | None = None
     modos: int = 12
+    # torsión accidental (NCh433:2026 6.3.3): distancia del eje al centro de masas de la planta (m), medida en la
+    # dirección perpendicular al eje; None = eje de borde (y = B/2). B = ancho_edificio.
+    distancia_cm: float | None = None
+
+
+def factor_torsion(p: "ParametrosCargas") -> dict:
+    """Torsión accidental en el modelo 2D de un eje (NCh433:2026 6.3.3): momento Q·e con e = ±0,05·B, repartido entre
+    planos resistentes parejos en planta (ΣK·y² = K·B²/12): el eje a una distancia y del centro de masas toma
+    1 + 12·e·|y|/B² = 1 + 0,6·|y|/B del sismo horizontal. Sin la distancia, eje de borde (y = B/2): 1,3."""
+    B = float(p.ancho_edificio) if p.ancho_edificio else None
+    if B and p.distancia_cm is not None:
+        y = min(abs(float(p.distancia_cm)), B / 2)
+        f = 1 + 0.6 * y / B
+        txt = f"torsión accidental ±0,05·B (6.3.3): B = {B:.2f} m, eje a {y:.2f} m del centro de masas → × {f:.3f}"
+    else:
+        f = 1.3
+        txt = "torsión accidental ±0,05·B (6.3.3): sin la posición del eje, se supone eje de borde → × 1,30"
+    return {"factor": f, "texto": txt}
 
 
 def sistema_sismico(p: "ParametrosCargas") -> dict:

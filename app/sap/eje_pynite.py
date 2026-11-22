@@ -16,12 +16,12 @@ import math
 import numpy as np
 
 from .diseno_acero import FY_A270ES, Perfil, capacidades, razon
-from .eje_cargas import A0_ZONA, OMEGA0, SUELOS_DS61, cmax, espectro_ds61, sistema_sismico
+from .eje_cargas import A0_ZONA, OMEGA0, SUELOS_DS61, cmax, espectro_ds61, factor_torsion, sistema_sismico
 from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 12
+VERSION_RESULTADO = 13
 MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
 MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
@@ -310,7 +310,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         Analysis._store_displacements(m, vecs[:, i].reshape(-1, 1), D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
         modos_combo.append(nombre)
     om_a = [float(omegas[i]) for i in aporta]
-    cx, cz = coef_x_all[aporta], coef_z_all[aporta]
+    # torsión accidental (6.3.3): amplifica el sismo horizontal que toma este eje (fuerzas y desplazamientos)
+    tor = factor_torsion(pc)
+    cx, cz = coef_x_all[aporta] * tor["factor"], coef_z_all[aporta]
     factor_d = max(factor, 1.0)                                           # 6.3.6.2: Qmáx no reduce desplazamientos
     modos_x_esc = list(zip(modos_combo, cx * (factor_d / factor)))        # (combo, coeficiente) para desplazamientos X
     r_res = rz - vecs @ gam_z                                             # parte de la masa vertical sin modo
@@ -344,7 +346,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     def reaccion(fi):
         return -(A @ np.asarray(fi).ravel())
     MF = np.asarray(M11 @ vecs)                                           # M·φ de todos los modos
-    reac_modo = list((-(A @ MF) * (factor * gam * np.array([Sa(t) for t in periodos]))).T)
+    reac_modo = list((-(A @ MF) * (tor["factor"] * factor * gam * np.array([Sa(t) for t in periodos]))).T)
     reac_z = list((-(A @ MF) * (gam_z * np.array([Sv(t) for t in periodos]))).T)
     reac_z_res = reaccion(f_res)
     signo_x = np.sign(reac_modo[i_fund]) if reac_modo else np.ones(3)
@@ -541,7 +543,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "norma_sismo": "NCh433:2026", "sistema": sis, "sistema_acero": pc.sistema_acero, "R_estrella": r_est, "R1": r1, "separacion_m": sep,
+        "norma_sismo": "NCh433:2026", "sistema": sis, "sistema_acero": pc.sistema_acero, "torsion": tor, "R_estrella": r_est, "R1": r1, "separacion_m": sep,
         "factor_desplazamientos": factor_d, "omega0": omega, "limites_deformacion": lim_def,
         "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL, "n_modos": int(nmod),
         "n_modos_usados": len(aporta),

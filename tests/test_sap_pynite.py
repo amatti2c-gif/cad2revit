@@ -126,7 +126,7 @@ def test_casos_puros_y_peso_sismico():
     assert {"DEAD", "LR", "W1", "EX+"} <= set(casos)
     # el peso sísmico es el peso propio (menos lo que cae directo en los apoyos), no el doble ni la mitad
     assert 0.9 < r["peso_sismico"] / casos["DEAD"]["reaccion_y"] <= 1.0
-    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"]) < 1e-9
+    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"] * r["torsion"]["factor"]) < 1e-9
     assert casos["W1"]["cargas"] and casos["W1"]["reaccion_x"] < 0
 
 
@@ -173,7 +173,7 @@ def test_sismo_ex_ez_columna_fuerte_y_signo_axial():
     r = analizar(mod, cargas_eje(mod, pc), pc)
     casos = {c["caso"]: c for c in r["casos"]}
     assert {"EX+", "EX−", "EZ+", "EZ−", "E"} <= set(casos)
-    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"]) < 1e-9
+    assert abs(abs(casos["EX+"]["reaccion_x"]) - r["corte_basal"] * r["torsion"]["factor"]) < 1e-9
     assert casos["EX+"]["reaccion_x"] == -casos["EX−"]["reaccion_x"]
     assert abs(casos["EZ+"]["reaccion_y"]) > 0                       # el sismo vertical produce reacción vertical
     # PyNite: axial + = compresión; los pilares bajo peso propio van comprimidos (Pu > 0 en el diseño)
@@ -260,3 +260,18 @@ def test_nch433_2026_sistema_cmax_y_desplazamientos():
     assert r["norma_sismo"] == "NCh433:2026" and r["separacion_m"] >= 0.015
     assert r["factor_desplazamientos"] >= 1.0                            # Qmáx no reduce desplazamientos
     assert any("0.0025" in d["criterio"] for d in r["deformaciones"])
+
+
+def test_torsion_accidental_amplifica_el_sismo_del_eje():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje, factor_torsion
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    assert factor_torsion(ParametrosCargas())["factor"] == 1.3
+    assert abs(factor_torsion(ParametrosCargas(ancho_edificio=10, distancia_cm=2.5))["factor"] - 1.15) < 1e-12
+    assert factor_torsion(ParametrosCargas(ancho_edificio=10, distancia_cm=0))["factor"] == 1.0
+    mod = mallar(EJE)
+    r1 = analizar(mod, cargas_eje(mod, ParametrosCargas(modos=6, ancho_edificio=10, distancia_cm=0)),
+                  ParametrosCargas(modos=6, ancho_edificio=10, distancia_cm=0))
+    r2 = analizar(mod, cargas_eje(mod, ParametrosCargas(modos=6)), ParametrosCargas(modos=6))
+    ex = lambda r: next(c for c in r["casos"] if c["caso"] == "EX+")["reaccion_x"]      # noqa: E731
+    assert abs(ex(r2) / ex(r1) - 1.3) < 1e-6 and abs(r1["corte_basal"] - r2["corte_basal"]) < 1e-9

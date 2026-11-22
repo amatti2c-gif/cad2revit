@@ -2251,6 +2251,7 @@ function sapMostrarNube(d) {
     `masa participante Z ${d.masa_participante_z != null ? (100 * d.masa_participante_z).toFixed(0) + " %" : "—"}` +
     (d.n_modos ? ` (${d.n_modos} modos calculados, ${d.n_modos_usados} con masa)` : "") + " · " +
     (d.sistema ? `${d.norma_sismo || "NCh433"}: ${d.sistema.texto}; R* = ${f2(d.R_estrella)}; deriva máx. ${d.sistema.deriva}·h · ` : "") +
+    (d.torsion ? `${d.torsion.texto} · ` : "") +
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
     `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf` +
     (d.factor_corte < 1 ? " (los desplazamientos no se reducen, 6.3.6.2)" : "") +
@@ -2483,6 +2484,7 @@ intentar(async () => {
   await cargarProyectos(q.get("proyecto") || undefined);
   let tab = q.get("tab");
   if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}
+  if (tab === "lineamientos") tab = "planos";                        // pestaña retirada
   if (tab && $(`#tab-${tab}`)) irA(tab);
   if (q.toString()) history.replaceState(null, "", location.pathname);
 });
