@@ -64,6 +64,7 @@ function irA(tab) {
   try { localStorage.setItem("c2r-tab", tab); } catch {}
   if (tab === "resultado") dibujarVisor();
   if (tab === "estructura") intentar(cargarEstructura);
+  if (tab === "sap") intentar(cargarSap);
 }
 $$(".pestanas button").forEach(b => b.addEventListener("click", () => irA(b.dataset.tab)));
 
@@ -96,6 +97,7 @@ async function abrirProyecto(id) {
   estado.cadCache = {};
   try { localStorage.setItem("c2r-proyecto", id); } catch {}
   await Promise.all([cargarPlanos(), cargarEntradas(), cargarCorridas(), cargarLegos()]);
+  if ($("#tab-sap").classList.contains("activa")) intentar(cargarSap);
 }
 
 $("#sel-proyecto").addEventListener("change", e => intentar(() => abrirProyecto(e.target.value)));
@@ -1976,6 +1978,225 @@ async function comparar(a, b) {
 }
 $("#cerrar-comparacion").addEventListener("click", () => $("#comparacion").classList.add("oculto"));
 
+// ------------------------------------------------------------------ SAP2000 (ejes exportados desde Revit)
+const AGENTE = "http://127.0.0.1:8000";            // app local de sap2000-toolkit en la PC con SAP2000
+const sap = { nombre: null, eje: null, vista: null, opciones: { excluir: [], apoyos: {}, secciones: {}, muros: {} }, razones: {} };
+
+function sapParametros() {
+  const p = {};
+  $$("[data-sap]").forEach(el => {
+    let v = el.value;
+    if (v === "") return;
+    if (el.type === "number" || (el.tagName === "SELECT" && /^\d+(\.\d+)?$/.test(v))) v = Number(v);
+    if (el.dataset.f) v = Number(v) * Number(el.dataset.f);
+    const ruta = el.dataset.sap.split(".");
+    let o = p;
+    for (let i = 0; i < ruta.length - 1; i++) o = o[ruta[i]] = o[ruta[i]] || {};
+    o[ruta.at(-1)] = v;
+  });
+  return p;
+}
+function sapPonerParametros(p) {
+  $$("[data-sap]").forEach(el => {
+    let o = p;
+    for (const k of el.dataset.sap.split(".")) o = o == null ? undefined : o[k];
+    if (o === undefined || o === null) return;
+    el.value = el.dataset.f ? +(o / Number(el.dataset.f)).toPrecision(6) : o;
+  });
+}
+const sapAjustes = () => ({ parametros: sapParametros(), opciones: sap.opciones });
+
+async function cargarSap(elegir) {
+  if (!estado.proyecto) return;
+  const lista = await api("GET", P("/sap"));
+  const sel = $("#sel-eje-sap");
+  sel.replaceChildren(...(lista.length ? lista.map(e => h("option", { value: e.nombre },
+    `Eje ${e.eje} · ${e.pilares} pilares, ${e.vigas} vigas, ${e.muros} muros · ${e.fecha.slice(0, 16).replace("T", " ")}`))
+    : [h("option", { value: "" }, "— sin ejes: usa el botón «Eje a SAP2000» de Revit o sube un .sap.json —")]));
+  sapAgente();
+  const n = elegir || sap.nombre;
+  if (lista.some(e => e.nombre === n)) sel.value = n;
+  if (sel.value) await abrirEjeSap(sel.value);
+  else $("#sap-contenido").classList.add("oculto");
+}
+
+async function sapAgente() {
+  const el = $("#sap-agente");
+  try {
+    const r = await fetch(AGENTE + "/api/eje/estado", { cache: "no-store" });
+    const v = await r.json();
+    el.textContent = `● agente SAP2000 en esta PC: conectado (sap2000-toolkit ${v.version || ""})`;
+    el.style.color = "#1b6e20";
+    return true;
+  } catch {
+    el.textContent = "● agente SAP2000 no encontrado: abre la app de sap2000-toolkit en esta PC (iniciar_app.bat) para armar en SAP2000; mientras tanto puedes descargar el .s2k";
+    el.style.color = "";
+    return false;
+  }
+}
+
+async function abrirEjeSap(nombre) {
+  const r = await api("GET", P(`/sap/${encodeURIComponent(nombre)}`));
+  sap.nombre = nombre; sap.eje = r.eje; sap.razones = {};
+  sap.opciones = Object.assign({ excluir: [], apoyos: {}, secciones: {}, muros: {} }, r.ajustes.opciones || {});
+  sapPonerParametros(r.ajustes.parametros || {});
+  $("#sap-contenido").classList.remove("oculto");
+  $("#sap-resultados").classList.add("oculto");
+  $("#sap-leyenda-razon").classList.add("oculto");
+  sapTablaElementos();
+  await sapActualizar();
+}
+
+async function sapActualizar() {
+  if (!sap.nombre) return;
+  $("#sap-estado").textContent = "Armando el modelo…";
+  sap.vista = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/vista`), sapAjustes());
+  const v = sap.vista;
+  $("#sap-estado").textContent = `${v.nombre}: ${v.conteo.nudos} nudos, ${v.conteo.barras} barras, ${v.conteo.shells} shells · ` +
+    `ancho tributario ${v.ancho_tributario} m`;
+  sapDibujar(); sapTablaSecciones(); sapTablaMuros();
+  $("#sap-cargas").replaceChildren(...v.cargas.map(x => h("li", {}, x)),
+    h("li", {}, `${v.combos.length} combinaciones: ${v.combos.join(", ")}`));
+  $("#sap-avisos").replaceChildren(...v.avisos.map(x => h("li", {}, x)));
+}
+
+function sapDibujar() {
+  const svg = $("#sap-lienzo"), v = sap.vista;
+  const xs = Object.values(v.nudos).map(n => n[0]), zs = Object.values(v.nudos).map(n => n[1]);
+  if (!xs.length) { svg.replaceChildren(); return; }
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const m = 0.6, w = x1 - x0 + 2 * m, hh = z1 - z0 + 2 * m, k = Math.max(w, hh) / 400;
+  svg.setAttribute("viewBox", `${x0 - m} ${-z1 - m} ${w} ${hh}`);
+  const Pn = n => v.nudos[n];
+  const tonos = {}; Object.keys(v.secciones_area).forEach((n, i) => { tonos[n] = 30 + (i * 37) % 60; });
+  const hijos = [];
+  for (const a of v.areas) {
+    const p = s("polygon", { points: a.nudos.map(n => `${Pn(n)[0]},${-Pn(n)[1]}`).join(" "),
+      fill: `hsl(${tonos[a.seccion] || 35},55%,72%)`, stroke: "#a08050", "stroke-width": k * 0.4 });
+    p.append(Object.assign(s("title"), { textContent: `${a.seccion} (muro ${a.origen})` }));
+    hijos.push(p);
+  }
+  const color = { pilar: "#1f4e9c", techo: "#c06000", viga: "#555", diagonal: "#7a3fb0" };
+  for (const b of v.barras) {
+    const [xa, za] = Pn(b.ni), [xb, zb] = Pn(b.nj), r = sap.razones[b.nombre];
+    const c = r != null ? (r > 1 ? "#b00020" : r > 0.7 ? "#e0a000" : "#1b6e20") : (color[b.rol] || "#333");
+    const l = s("line", { x1: xa, y1: -za, x2: xb, y2: -zb, stroke: c, "stroke-width": k * 3 });
+    l.append(Object.assign(s("title"), { textContent: `${b.seccion} · ${b.rol} · Revit ${b.origen}${r != null ? " · razón " + r.toFixed(2) : ""}` }));
+    hijos.push(l);
+  }
+  for (const [n, t] of Object.entries(v.apoyos)) {
+    const [x, z] = Pn(n), d = k * 6;
+    hijos.push(t === "empotrado"
+      ? s("rect", { x: x - d, y: -z, width: 2 * d, height: d, fill: "#222" })
+      : s("polygon", { points: `${x},${-z} ${x - d},${-z + 1.6 * d} ${x + d},${-z + 1.6 * d}`, fill: "none", stroke: "#222", "stroke-width": k }));
+  }
+  svg.replaceChildren(...hijos);
+}
+
+function sapTablaElementos() {
+  const e = sap.eje, o = sap.opciones;
+  const incluir = id => h("input", { type: "checkbox", checked: !o.excluir.includes(String(id)), onchange: ev => {
+    o.excluir = o.excluir.filter(x => x !== String(id));
+    if (!ev.target.checked) o.excluir.push(String(id));
+    intentar(sapActualizar);
+  } });
+  const selector = (opciones, valor, cambio) => {
+    const sel = h("select", { onchange: ev => { cambio(ev.target.value); intentar(sapActualizar); } },
+      ...opciones.map(([v, t]) => h("option", { value: v }, t)));
+    sel.value = valor ?? "";
+    return sel;
+  };
+  const filas = [];
+  for (const p of e.pilares || []) {
+    filas.push(h("tr", {}, h("td", {}, incluir(p.id)), h("td", {}, "Pilar"), h("td", {}, p.id), h("td", {}, p.seccion),
+      h("td", {}, `x ${((p.x0 + p.x1) / 2).toFixed(2)} · z ${p.z0.toFixed(2)}–${p.z1.toFixed(2)}`),
+      h("td", {}, selector([["", "base por defecto"], ["rotula", "rotulada"], ["empotrado", "empotrada"]], o.apoyos[p.id],
+        v => { if (v) o.apoyos[p.id] = v; else delete o.apoyos[p.id]; }))));
+  }
+  for (const b of e.vigas || []) {
+    filas.push(h("tr", {}, h("td", {}, incluir(b.id)), h("td", {}, b.tipo === "diagonal" ? "Diagonal" : "Viga"), h("td", {}, b.id),
+      h("td", {}, b.seccion), h("td", {}, `(${b.x0.toFixed(2)}, ${b.z0.toFixed(2)}) → (${b.x1.toFixed(2)}, ${b.z1.toFixed(2)})`), h("td", {})));
+  }
+  for (const w of e.muros || []) {
+    const mw = o.muros[w.id] || {};
+    const fija = (k, v) => { const x = o.muros[w.id] = o.muros[w.id] || {}; if (v === "") delete x[k]; else x[k] = Number(v); };
+    filas.push(h("tr", {}, h("td", {}, incluir(w.id)), h("td", {}, `Muro (${w.material})`), h("td", {}, w.id), h("td", {}, w.tipo),
+      h("td", {}, `x ${w.x0.toFixed(2)}–${w.x1.toFixed(2)} · ${(w.vanos || []).length} vano(s)`),
+      h("td", {}, "clavos ", selector([["", "def."], ["150", "150"], ["100", "100"], ["50", "50"]], mw.espaciamiento_clavos, v => fija("espaciamiento_clavos", v)),
+        " caras ", selector([["", "def."], ["1", "1"], ["2", "2"]], mw.tableros, v => fija("tableros", v)),
+        " Ga ", h("input", { type: "number", step: "any", placeholder: "def.", value: mw.ga ?? "", onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }))));
+  }
+  $("#sap-elementos").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Incluir", "Elemento", "Id Revit", "Sección / tipo", "Posición (m)", "Ajuste"].map(t => h("th", {}, t)))),
+    h("tbody", {}, filas));
+}
+
+function sapTablaSecciones() {
+  const filas = Object.entries(sap.vista.secciones).map(([n, sc]) => h("tr", {}, h("td", {}, n), h("td", {}, sc.forma),
+    ...["d", "bf", "tw", "tf", "t"].map(k => h("td", {}, sc[k] == null ? "" : h("input", { type: "number", step: "any", value: sc[k],
+      onchange: ev => { (sap.opciones.secciones[n] = sap.opciones.secciones[n] || {})[k] = Number(ev.target.value); intentar(sapActualizar); } })))));
+  $("#sap-secciones").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Sección", "Forma", "d", "bf", "tw", "tf", "t (cajón)"].map(t => h("th", {}, t)))), h("tbody", {}, filas));
+}
+
+function sapTablaMuros() {
+  $("#sap-muros").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "K_eq (tonf/m)", "E shell", "G shell (tonf/m²)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, sap.vista.muros.map(m => h("tr", {}, ...[m.muro, `${m.x0}–${m.x1}`, m.L, m.H, m.K_eq_tonf_m, m.E_shell, m.G_shell].map(x => h("td", {}, x))))));
+}
+
+async function sapCorrer() {
+  if (!(await sapAgente())) { toast("No se encontró el agente SAP2000 en esta PC (app de sap2000-toolkit)", true); return; }
+  await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
+  $("#sap-estado").textContent = "SAP2000: armando, analizando y diseñando… (puede tardar unos minutos)";
+  const r = await fetch(AGENTE + "/api/eje/sap", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eje: sap.eje, ...sapAjustes() }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { $("#sap-estado").textContent = "Error en SAP2000"; throw new Error(d.detail || `el agente respondió ${r.status}`); }
+  sap.razones = {};
+  for (const x of d.razones) sap.razones[x.barra] = Math.max(sap.razones[x.barra] || 0, x.razon);
+  const malas = d.razones.filter(x => x.razon > 1).length;
+  $("#sap-resultados").classList.remove("oculto");
+  $("#sap-leyenda-razon").classList.remove("oculto");
+  $("#sap-res-resumen").replaceChildren(`Modelo guardado en ${d.guardado}. T* = ${d.T.toFixed(3)} s. `,
+    h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} barra(s) no cumplen` : "Todas las barras cumplen"));
+  $("#sap-razones").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Barra", "Id Revit", "Sección", "Razón", "Combinación"].map(t => h("th", {}, t)))),
+    h("tbody", {}, d.razones.map(x => h("tr", {}, h("td", {}, x.barra), h("td", {}, x.origen ?? ""), h("td", {}, x.seccion ?? ""),
+      h("td", { class: x.razon > 1 ? "nocumple" : "cumple" }, x.razon.toFixed(2)), h("td", {}, x.combo)))));
+  $("#sap-estado").textContent = "Listo: diseño AISC 360-16";
+  sapDibujar();
+}
+
+$("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
+$$("[data-sap]").forEach(el => el.addEventListener("change", () => intentar(sapActualizar)));
+$("#btn-sap-guardar").addEventListener("click", () => intentar(async () => {
+  await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
+  toast("Ajustes guardados");
+}));
+$("#btn-sap-s2k").addEventListener("click", () => intentar(async () => {
+  const r = await fetch(P(`/sap/${encodeURIComponent(sap.nombre)}/s2k`), { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(sapAjustes()) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "No se pudo generar el .s2k");
+  const a = h("a", { href: URL.createObjectURL(await r.blob()), download: `${sap.nombre}.s2k` });
+  a.click();
+}));
+$("#btn-sap-correr").addEventListener("click", () => intentar(sapCorrer));
+$("#btn-borrar-eje-sap").addEventListener("click", () => intentar(async () => {
+  if (!sap.nombre || !confirm(`¿Eliminar ${sap.nombre} de este proyecto?`)) return;
+  await api("DELETE", P(`/sap/${encodeURIComponent(sap.nombre)}`));
+  sap.nombre = null;
+  await cargarSap();
+}));
+$("#inp-eje-sap").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append("archivo", f);
+  const r = await api("POST", P("/sap"), fd);
+  ev.target.value = "";
+  await cargarSap(r.nombre);
+}));
+
 // ------------------------------------------------------------------ inicio
 fetch("/salud").then(r => r.json()).then(v => {
   if (!v.dwg) $("#nota-dwg").textContent = "Este servidor aún no tiene el convertidor de DWG: por ahora sube los planos como DXF " +
@@ -1985,8 +2206,12 @@ fetch("/salud").then(r => r.json()).then(v => {
 }).catch(() => {});
 
 intentar(async () => {
-  await cargarProyectos();
-  let tab = null;
-  try { tab = localStorage.getItem("c2r-tab"); } catch {}
+  // abierta desde Revit: ?proyecto=<id>&tab=sap&eje=<nombre>
+  const q = new URLSearchParams(location.search);
+  if (q.get("eje")) sap.nombre = q.get("eje");
+  await cargarProyectos(q.get("proyecto") || undefined);
+  let tab = q.get("tab");
+  if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}
   if (tab && $(`#tab-${tab}`)) irA(tab);
+  if (q.toString()) history.replaceState(null, "", location.pathname);
 });
