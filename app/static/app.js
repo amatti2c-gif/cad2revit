@@ -2250,8 +2250,11 @@ function sapMostrarNube(d) {
     `${d.nota} · ${d.fecha.slice(0, 16).replace("T", " ")} · T* = ${f3(d.T)} s (masa participante X ${(100 * d.masa_participante_x).toFixed(0)} %) · ` +
     `masa participante Z ${d.masa_participante_z != null ? (100 * d.masa_participante_z).toFixed(0) + " %" : "—"}` +
     (d.n_modos ? ` (${d.n_modos} modos calculados, ${d.n_modos_usados} con masa)` : "") + " · " +
+    (d.sistema ? `${d.norma_sismo || "NCh433"}: ${d.sistema.texto}; R* = ${f2(d.R_estrella)}; deriva máx. ${d.sistema.deriva}·h · ` : "") +
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
-    `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
+    `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf` +
+    (d.factor_corte < 1 ? " (los desplazamientos no se reducen, 6.3.6.2)" : "") +
+    (d.separacion_m != null ? ` · separación mínima a deslindes ${(100 * d.separacion_m).toFixed(1)} cm (5.10.1; entre cuerpos, el doble)` : "") + ". ",
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
     h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"),
     d.madera.some(m => m.falta_capacidad_union) ? h("span", { class: "nocumple" },
@@ -2279,6 +2282,13 @@ function sapMostrarNube(d) {
     h("thead", {}, h("tr", {}, ...["Caso", "Elemento (Revit)", "Rol", "Dirección", "Carga (tonf/m)"].map(t => h("th", {}, t)))),
     h("tbody", {}, casos.flatMap(c => c.cargas.map(x => h("tr", {}, h("td", {}, c.caso), h("td", {}, x.elemento), h("td", {}, x.rol),
       h("td", {}, x.direccion), h("td", {}, rango(x.min, x.max)))))));
+  const om = d.omega0 || [];
+  $("#sap-nube-omega").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Pilar", "Sección", "Pu con E (tonf)", "Pu/φPn", "¿Aplica?", "Pu con Ω0·E (tonf)", "Tu con Ω0·E (tonf)",
+      "φPn (tonf)", "Razón Ω0"].map(t => h("th", {}, t)))),
+    h("tbody", {}, om.map(o => h("tr", {}, h("td", {}, o.origen), h("td", {}, o.seccion), h("td", {}, f2(o.Pu_E)), h("td", {}, f2(o.Pu_E_rel)),
+      h("td", {}, o.aplica ? "sí" : "no (≤ 0,4)"), h("td", {}, f2(o.Pu_omega)), h("td", {}, f2(o.Tu_omega)), h("td", {}, f2(o.phiPn)),
+      o.aplica ? celda(o.razon) : h("td", { class: "tenue" }, f2(o.razon))))));
   const cf = d.columna_fuerte || [];
   $("#sap-nube-cfvd").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Nudo", "x, z (m)", "Pilares", "Vigas", "ΣM*pc (tonf·m)", "ΣM*pb (tonf·m)", "ΣM*pc/ΣM*pb",

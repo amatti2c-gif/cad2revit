@@ -4,7 +4,7 @@
   como cuadriláteros MITC4 (los triángulos bajo el techo van como cuadriláteros con un nudo repetido), con el E y G
   calibrados de cada segmento de muro.
 - Casos estáticos: DEAD (peso propio + peso del techo), LR y los casos de viento.
-- Sismo E: análisis modal con la masa de DEAD y espectro NCh433 + DS61 (R* con el T* del modelo), combinación
+- Sismo E: análisis modal con la masa de DEAD y espectro NCh433:2026 (R* con el T* del modelo), combinación
   modal CQC; las fuerzas de E son envolventes (±).
 - Combinaciones NCh3171 por resistencia (acero, AISC 360-16) y por tensiones admisibles (muros de madera).
 """
@@ -16,12 +16,12 @@ import math
 import numpy as np
 
 from .diseno_acero import FY_A270ES, Perfil, capacidades, razon
-from .eje_cargas import A0_ZONA, SUELOS_DS61, espectro_ds61
+from .eje_cargas import A0_ZONA, OMEGA0, SUELOS_DS61, cmax, espectro_ds61, sistema_sismico
 from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 11
+VERSION_RESULTADO = 12
 MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
 MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
@@ -85,11 +85,6 @@ def _masa_consistente(m, mod, peso_barra, peso_quad):
             sumar([i + k for i in ids], Me)
     n = len(m.nodes) * 6
     return sps.coo_matrix((vals, (filas, cols)), shape=(n, n)).tocsr()
-
-
-def _cmax(r: float) -> float:
-    """NCh433 Tabla 6.4: Cmax / (S·A0/g) según R."""
-    return float(np.interp(r, [2, 3, 4, 5.5, 6, 7], [0.90, 0.60, 0.55, 0.40, 0.35, 0.35]))
 
 
 def _cqc(valores: list[np.ndarray], omegas: list[float], amort: float = 0.05) -> np.ndarray:
@@ -233,7 +228,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     for n in estaticos:
         m.add_load_combo(n, {n: 1.0})
 
-    # ---- modal (masa = DEAD) y espectro DS61 con CQC ----
+    # ---- modal (masa = DEAD) y espectro NCh433:2026 con CQC ----
     paso(5, f"Análisis estático: {len(estaticos)} casos de carga", 75)
     m.analyze_linear(check_statics=False)
     paso(75, "Análisis modal (masa del peso propio)", 80)
@@ -283,13 +278,14 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     def Sa(T):
         return float(np.interp(T, tn, sa)) * G_ACC
 
-    # corte basal por modo (Γ·Lᵢ·Sa) combinado con CQC y llevado entre Qmín y Qmáx (NCh433 6.3.7)
+    # corte basal por modo (Γ·Lᵢ·Sa) combinado con CQC y llevado entre Qmín y Qmáx (NCh433:2026 6.3.6)
     q_modo = [float(gam[i] * (vecs[:, i] @ Mr) * Sa(periodos[i])) for i in range(nmod)]
     q0 = float(_cqc([np.array([q]) for q in q_modo], list(omegas))[0])
     peso = masa_tot * G_ACC
     s_suelo = SUELOS_DS61[pc.suelo][0]
     a0g = A0_ZONA[pc.zona]
-    c_max = _cmax(pc.r0) * s_suelo * a0g
+    sis = sistema_sismico(pc)
+    c_max = cmax(sis["R"]) * s_suelo * a0g
     q_min = pc.importancia_sismo * s_suelo * a0g * peso / 6
     q_max = pc.importancia_sismo * c_max * peso
     factor = 1.0
@@ -297,7 +293,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         factor = q_min / q0
     elif q0 > q_max:
         factor = q_max / q0
-    paso(80, f"Espectro NCh433 + DS61 (T* = {t_est:.3f} s) y corte basal")
+    paso(80, f"Espectro NCh433:2026 (T* = {t_est:.3f} s) y corte basal")
     # Cada modo se guarda una vez con su forma φ (sin escalar); la respuesta del modo i al sismo horizontal es
     # coef_x[i]·(respuesta a φ) y al vertical coef_z[i]·(respuesta a φ). Se usan los modos que aportan masa.
     # EZ: espectro vertical = 2/3 del horizontal; la masa vertical que no alcanzan los modos va como respuesta
@@ -315,7 +311,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         modos_combo.append(nombre)
     om_a = [float(omegas[i]) for i in aporta]
     cx, cz = coef_x_all[aporta], coef_z_all[aporta]
-    modos_x_esc = list(zip(modos_combo, cx))                              # (combo, coeficiente) para el sismo X
+    factor_d = max(factor, 1.0)                                           # 6.3.6.2: Qmáx no reduce desplazamientos
+    modos_x_esc = list(zip(modos_combo, cx * (factor_d / factor)))        # (combo, coeficiente) para desplazamientos X
     r_res = rz - vecs @ gam_z                                             # parte de la masa vertical sin modo
     f_res = np.asarray(M11 @ r_res).ravel() * Sv(0.0)
     from scipy.sparse.linalg import spsolve
@@ -517,7 +514,19 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                        "falta_capacidad_union": bool(T > 1e-9) and any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
     madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
-    deformaciones = _deformaciones(m, mod, cargas, modos_x_esc, om_a, sub, {**LIMITES_DEF, **(limites or {})})
+    lim_def = {**LIMITES_DEF, "deriva_sismo": sis["deriva"], **(limites or {})}
+    deformaciones = _deformaciones(m, mod, cargas, modos_x_esc, om_a, sub, lim_def)
+    # separación a deslindes (5.10.1): máx(2·R1/3·δ, 0,002·h, 1,5 cm), R1 = R*·Q0/Qmín si Q0/Qmín ≤ 1, si no R*
+    r_est = 1 + t_est / (0.10 * SUELOS_DS61[pc.suelo][1] + t_est / sis["R0"])
+    r1 = r_est * min(q0 / q_min, 1.0) if q_min else r_est
+    sep = 0.0
+    for n_, (x_, z_) in mod.nudos.items():
+        if n_ in m.nodes:
+            dxe = float(_cqc([np.array([k * m.nodes[n_].DX[c]]) for c, k in modos_x_esc], om_a)[0])
+            h_ = z_ - ref[1]
+            sep = max(sep, 2 * r1 / 3 * dxe, 0.002 * h_)
+    sep = max(sep, 0.015)
+    omega = _omega0_columnas(acero, res_barra, combos_lrfd, estaticos, OMEGA0.get(pc.sistema_acero), mod, perfiles, fy)
     sismo = {"reac_x": _cqc(reac_modo, list(omegas)) if reac_modo else np.zeros(3), "signo_x": signo_x,
              "reac_z": np.sqrt(_cqc(reac_z, list(omegas)) ** 2 + reac_z_res ** 2) if reac_z else np.abs(reac_z_res),
              "signo_z": signo_z, "env": env_e, "masa_z": float(m_ef_z.sum() / masa_z) if masa_z else 0.0}
@@ -532,19 +541,21 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
+        "norma_sismo": "NCh433:2026", "sistema": sis, "R_estrella": r_est, "R1": r1, "separacion_m": sep,
+        "factor_desplazamientos": factor_d, "omega0": omega, "limites_deformacion": lim_def,
         "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL, "n_modos": int(nmod),
         "n_modos_usados": len(aporta),
-        "criterio_sismo": "E = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±); EX: espectro NCh433 + DS61 con CQC; "
+        "criterio_sismo": "E = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±); EX: espectro NCh433:2026 con CQC; "
                           "EZ: espectro vertical = 2/3 del horizontal, CQC + masa vertical no captada por los modos (Sa(0))",
         "version": VERSION_RESULTADO, "visor": visor, "columna_fuerte": columna_fuerte, "ry": ry, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
-        "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
+
     }
 
 
 # límites de deformación por defecto (servicio, cargas sin mayorar):
 # - vigas y costaneras de techo, flecha relativa a la cuerda: L/240 con cargas totales (D+Lr, D+W, D+0,75Lr+0,75W) y
 #   L/360 con la carga variable sola (Lr o W)  [criterio usual, AISC Design Guide 3 / IBC Tabla 1604.3]
-# - pilares y muros, desplazamiento lateral relativo: H/200 con viento (D+W) y 0,002·H con sismo (NCh433 5.9.2, con
+# - pilares y muros, desplazamiento lateral relativo: H/200 con viento (D+W) y 0,002·H con sismo (NCh433:2026 5.9.2, con
 #   los desplazamientos del análisis espectral reducido)
 LIMITES_DEF = {"viga_total": 240, "viga_variable": 360, "lateral_viento": 200, "deriva_sismo": 0.002}
 
@@ -591,6 +602,32 @@ def _columna_fuerte(mod, perfiles, res_barra, combos, estaticos, fy, ry) -> list
                     "excepcion": bool(tope and p_rel < 0.3),
                     "detalle": "; ".join(detalle)})
     out.sort(key=lambda r: r["razon"])
+    return out
+
+
+def _omega0_columnas(acero, res_barra, combos, estaticos, omega0, mod, perfiles, fy) -> list[dict]:
+    """AISC 341-22 D1.4a (NCh433:2026 5.3.3, Ω0 = 3 marcos a momento, 2 arriostrados): pilares con Pu/φPn > 0,4 en las
+    combinaciones con sismo se verifican a carga axial (sin momentos) con la carga sísmica amplificada Ω0·E."""
+    if not omega0:
+        return []
+    from .diseno_acero import Perfil, capacidades
+    out = []
+    con_e = {cn: fac for cn, fac in combos.items() if fac.get("E")}
+    for a in acero:
+        fs = a["barras"]
+        if not fs or mod.roles.get(fs[0]) != "pilar":
+            continue
+        pu_e = pu_om = pt_om = 0.0
+        for fac in con_e.values():
+            for f in fs:
+                est, E = res_barra[f]
+                N = sum(fac.get(c, 0) * est[c][0] for c in estaticos if c in fac)
+                pu_e = max(pu_e, float(np.max(N + fac["E"] * E[0])))
+                pu_om = max(pu_om, float(np.max(N + omega0 * E[0])))
+                pt_om = max(pt_om, float(np.max(omega0 * E[0] - N)))
+        rel = pu_e / a["phiPn"] if a["phiPn"] else 0.0
+        out.append({"origen": a["origen"], "seccion": a["seccion"], "Pu_E": pu_e, "Pu_E_rel": rel, "aplica": rel > 0.4,
+                    "Pu_omega": pu_om, "Tu_omega": pt_om, "phiPn": a["phiPn"], "razon": pu_om / a["phiPn"] if a["phiPn"] else 0.0})
     return out
 
 
@@ -663,7 +700,7 @@ def _casos_puros(m, mod, cargas, estaticos, res_barra, modos, omegas, factor, si
     dy_ez = max((float(env(nodo(n, "DY"))[1][0]) for n in nudos), default=0.0)
     ee = [e for _, e in res_barra.values()]
     for nombre, clave, sg, desc_ in (
-            ("EX", "reac_x", "signo_x", f"Sismo horizontal NCh433 + DS61, espectral CQC (factor de corte {factor:.2f})"),
+            ("EX", "reac_x", "signo_x", f"Sismo horizontal NCh433:2026, espectral CQC (factor de corte {factor:.2f})"),
             ("EZ", "reac_z", "signo_z", "Sismo vertical: espectro = 2/3 del horizontal, CQC + masa no captada por los modos")):
         r_ = sismo[clave] * sismo[sg]
         for s_, txt in ((1, "+"), (-1, "−")):
@@ -743,7 +780,7 @@ def _deformaciones(m, mod, cargas, modos, omegas, sub, lim) -> list[dict]:
         if res_e[1]:
             d, h = res_e
             out.append({"elemento": nombre, "tipo": f"{tipo} (deriva sísmica)", "combo": "E (espectral, CQC)", "delta_mm": float(d) * 1000,
-                        "limite_mm": h * lim["deriva_sismo"] * 1000, "criterio": f"{lim['deriva_sismo']:g}·H (NCh433 5.9.2)",
+                        "limite_mm": h * lim["deriva_sismo"] * 1000, "criterio": f"{lim['deriva_sismo']:g}·H (NCh433:2026 5.9.2 y Tabla 5)",
                         "L": h, "razon": float(d) / (h * lim["deriva_sismo"])})
 
     pil = {}

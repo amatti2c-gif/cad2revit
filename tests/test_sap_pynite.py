@@ -242,3 +242,21 @@ def test_muro_solidario_con_el_pilar_lleva_el_volcamiento_al_pilar():
     pu = lambda r: next(a["Pu"] for a in r["acero"] if a["origen"] == "p1")        # noqa: E731
     # el pilar toma el par del volcamiento del muro (antes, con toda la base del muro apoyada, Pu ≈ 0,32 tonf)
     assert pu(r_sol) > 0.6 and pu(r_hd) > 0
+
+
+def test_nch433_2026_sistema_cmax_y_desplazamientos():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje, cmax, sistema_sismico
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    assert cmax(6.5) == 0.35 and cmax(5.5) == 0.40 and abs(cmax(3.5) - 2.5 / 4.3) < 1e-12
+    s = sistema_sismico(ParametrosCargas())                              # OMF + marco plataforma: manda OMF (5.7.2)
+    assert (s["R"], s["R0"], s["deriva"]) == (3.5, 3.5, 0.0025)
+    s = sistema_sismico(ParametrosCargas(sistema_acero="ninguno"))
+    assert (s["R"], s["R0"], s["deriva"]) == (6.5, 7.0, 0.0025)
+    assert ParametrosCargas().zona == 3                                  # Ancud y Castro
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6, sistema_acero="ninguno")
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    assert r["norma_sismo"] == "NCh433:2026" and r["separacion_m"] >= 0.015
+    assert r["factor_desplazamientos"] >= 1.0                            # Qmáx no reduce desplazamientos
+    assert any("0.0025" in d["criterio"] for d in r["deformaciones"])

@@ -682,7 +682,7 @@ def main(argv=None):
     ap.add_argument("--zona", type=int, default=2, choices=[1, 2, 3], help="zona sísmica (NCh433)")
     ap.add_argument("--suelo", default="C", choices=list("ABCDE"), help="tipo de suelo (DS61)")
     ap.add_argument("--importancia", type=float, default=1.0, help="coeficiente de importancia sísmico I")
-    ap.add_argument("--r0", type=float, default=7.0, help="R0 de NCh433 (7 = muros arriostrados de madera)")
+    ap.add_argument("--r0", type=float, default=None, help="R0 de NCh433:2026 (vacío = según el sistema, Tabla 5)")
     ap.add_argument("--sin-diseno", action="store_true", help="no correr el chequeo de acero AISC 360-16")
     ap.add_argument("--sin-reduccion-lr", action="store_true", help="sobrecarga de techo Lo sin la reducción de NCh1537 §8.2")
     a = ap.parse_args(argv)

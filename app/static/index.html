@@ -212,7 +212,7 @@
           <span class="acciones"><label class="link">Subir .sap.json<input id="inp-eje-sap" type="file" accept=".json" hidden></label></span></div>
         <p class="tenue">En Revit, el botón <strong>Eje a análisis</strong> exporta un eje (pilares y vigas de acero, muros
           con sus vanos) y lo sube aquí. Ajusta la modelación y las cargas; el análisis (PyNite: estático y modal espectral
-          NCh433 + DS61) y las verificaciones de acero (AISC 360-16), muros de madera (Manual) y hormigón (ACI 318-19) se
+          NCh433:2026) y las verificaciones de acero (AISC 360-16), muros de madera (Manual) y hormigón (ACI 318-19) se
           hacen aquí mismo, en la nube.</p>
         <div class="fila-sap"><label>Eje <select id="sel-eje-sap"></select></label>
           <button class="sec" id="btn-borrar-eje-sap">Eliminar eje</button></div>
@@ -249,7 +249,7 @@
               <label>Tamaño de malla (m) <input data-sap="malla" type="number" step="any" value="0.5"></label>
               <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">rotulada</option><option value="empotrado">empotrada</option></select></label>
             </div></div>
-          <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432, NCh433 + DS61)</span></div>
+          <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432, NCh433:2026)</span></div>
             <div class="sap-form">
               <label>Ancho colaborante (m; carga/m² → carga/m) <input data-sap="cargas.ancho_colaborante" id="sap-ancho" type="number" step="any"></label>
               <label>Peso del techo (kgf/m²) <input data-sap="cargas.peso_techo" data-f="0.001" type="number" step="any" value="30"></label>
@@ -261,10 +261,13 @@
               <label>B: ancho del edificio normal al viento (m) <input data-sap="cargas.ancho_edificio" type="number" step="any" placeholder="≤ L: Cp −0,5"></label>
               <label>Kzt <input data-sap="cargas.kzt" type="number" step="any" value="1"></label>
               <label>GCpi (±) <input data-sap="cargas.gcpi" type="number" step="any" value="0.18"></label>
-              <label>Zona sísmica <select data-sap="cargas.zona"><option>1</option><option selected>2</option><option>3</option></select></label>
-              <label>Suelo (DS61) <select data-sap="cargas.suelo"><option>A</option><option>B</option><option selected>C</option><option>D</option><option>E</option></select></label>
-              <label>Importancia sísmica I <input data-sap="cargas.importancia_sismo" type="number" step="any" value="1.0"></label>
-              <label>R0 <input data-sap="cargas.r0" type="number" step="any" value="7"></label>
+              <label>Zona sísmica (NCh433:2026 Tabla 1; Ancud y Castro: 3) <select data-sap="cargas.zona"><option>1</option><option>2</option><option selected>3</option></select></label>
+              <label>Suelo (NCh433:2026 Tabla 2) <select data-sap="cargas.suelo"><option>A</option><option>B</option><option selected>C</option><option>D</option><option>E</option></select></label>
+              <label>I (Tabla 6: categoría I 0,6; II 1,0; III y IV 1,2) <input data-sap="cargas.importancia_sismo" type="number" step="any" value="1.0"></label>
+              <label>Sistema de acero (Tabla 5) <select data-sap="cargas.sistema_acero"><option value="ninguno">solo gravitacional</option><option value="OMF" selected>OMF: marcos corrientes a momento (R 3,5; R0 3,5)</option><option value="IMF">IMF: marcos intermedios (R 5; R0 6)</option><option value="SMF">SMF: marcos especiales (R 7; R0 11)</option><option value="OCBF">OCBF: concéntricos corrientes (R 3; R0 3)</option><option value="SCBF">SCBF: concéntricos especiales (R 5,5; R0 8)</option><option value="EBF">EBF: excéntricos (R 6; R0 10)</option></select></label>
+              <label>Sistema de madera (Tabla 5) <select data-sap="cargas.sistema_madera"><option value="marco_plataforma" selected>marco plataforma (R 6,5; R0 7; 0,0025·h)</option><option value="madera_general">muros y sistemas arriostrados generales (R 5,5; R0 7; 0,002·h)</option><option value="CLT">CLT (R 2; R0 2)</option><option value="ninguno">ninguno</option></select></label>
+              <label>R0 (vacío = Tabla 5; manda el subsistema de menor R0, 5.7.2) <input data-sap="cargas.r0" type="number" step="any" placeholder="según sistema"></label>
+              <label>R (vacío = Tabla 5; para Cmáx) <input data-sap="cargas.r" type="number" step="any" placeholder="según sistema"></label>
               <label>Modos (mínimo; se agregan hasta 90 % de masa en X y Z) <input data-sap="cargas.modos" type="number" step="1" value="12"></label>
               <label>Matriz de masa <select data-sap="diseno.masa"><option value="concentrada" selected>concentrada en los nudos (como SAP2000)</option>
                 <option value="consistente">consistente</option></select></label>
@@ -274,7 +277,7 @@
               <label>Flecha vigas, carga total: L / <input data-sap="diseno.viga_total" type="number" step="any" value="240"></label>
               <label>Flecha vigas, Lr o W sola: L / <input data-sap="diseno.viga_variable" type="number" step="any" value="360"></label>
               <label>Lateral pilares y muros con viento: H / <input data-sap="diseno.lateral_viento" type="number" step="any" value="200"></label>
-              <label>Deriva sísmica (NCh433 5.9.2): ·H <input data-sap="diseno.deriva_sismo" type="number" step="any" value="0.002"></label>
+              <label>Deriva sísmica (NCh433:2026 5.9.2 y Tabla 5): ·H <input data-sap="diseno.deriva_sismo" type="number" step="any" placeholder="según sistema (Tabla 5)"></label>
             </div></div>
         </div>
         <div class="panel"><div class="panel-tit"><span>Elementos del eje</span></div>
@@ -287,7 +290,7 @@
           <div class="panel"><div class="panel-tit"><span>Cargas y combinaciones (NCh3171)</span></div>
             <ul id="sap-cargas"></ul><ul id="sap-avisos" class="advertencias"></ul></div>
         </div>
-        <div class="panel oculto" id="sap-nube"><div class="panel-tit"><span>Análisis en la nube (PyNite) · NCh433 + DS61 espectral, NCh3171</span></div>
+        <div class="panel oculto" id="sap-nube"><div class="panel-tit"><span>Análisis en la nube (PyNite) · NCh433:2026 espectral, NCh3171</span></div>
           <p id="sap-nube-resumen"></p>
           <h3>Modelo PyNite</h3>
           <div class="fila-sap"><label>Ver <select id="visor-modo"></select></label>
@@ -306,6 +309,10 @@
           <h3>Muros de madera: corte y anclaje al volcamiento (Manual, Ec. 3.29–3.31; tensiones admisibles NCh3171 §9.2)</h3>
           <p class="tenue">T = V·H/L′ − (carga gravitacional)·L/(2·L′), con la peor combinación de servicio (controla 0,6D + W o 0,6D + E). Bordes unidos al pilar: el pilar de acero toma T a través de la unión; bordes en un vano: hold-down del catálogo del Manual.</p>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-madera"></table></div>
+          <h3>Pilares con la carga sísmica amplificada Ω0·E (NCh433:2026 5.3.3; AISC 341-22 D1.4a)</h3>
+          <p class="tenue">Ω0 = 3 en marcos a momento y 2 en arriostrados. Se exige cuando Pu/φPn &gt; 0,4 con las combinaciones
+            con sismo; la verificación es a carga axial, sin momentos.</p>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-nube-omega"></table></div>
           <h3>Columna fuerte – viga débil (AISC 341-16 E3.4a)</h3>
           <p class="tenue">ΣM*pc / ΣM*pb &gt; 1,0 en cada nudo pilar–viga, con M*pc = Zc·(Fyc − Puc/Ag) y M*pb = 1,1·Ry·Fy·Zb (sin el
             término Muv). Exigido en marcos especiales a momento; la excepción E3.4a(a) aplica a pilares del último piso o de

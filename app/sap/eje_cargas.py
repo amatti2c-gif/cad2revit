@@ -7,8 +7,9 @@
   [N/m²] (ec. 21), p = q·(G·Cp − GCpi). GCpi ±0,18 (Tabla 13, cerrado); muros Tabla 14 (barlovento 0,8 con q_z,
   sotavento según L/B); techo Tabla 15 (θ y h/L, los dos valores de Cp; θ < 10° por zonas). Ocho casos: ±X × valor
   de Cp × ±GCpi.
-- Sismo E, NCh433 con el espectro del DS61: Sa = S·A0·α/(R*/I), α = (1 + 4,5(Tn/T0)^p)/(1 + (Tn/T0)³),
-  R* = 1 + T*/(0,10·T0 + T*/R0).
+- Sismo E, NCh433:2026 (6.3.4): Sa = I·S·A0·α/R*, α = (1 + 4,5(Tn/T0)^p)/(1 + (Tn/T0)³),
+  R* = 1 + T*/(0,10·T0 + T*/R0). R, R0 y la deriva máxima según el sistema estructural (Tabla 5); en sistemas mixtos,
+  los del subsistema con menor R0 (5.7.2). Cmáx según Tabla 9 (con R), Qmín = I·S·A0·P/6g (6.3.6.1).
 - Combinaciones por resistencia de la NCh3171:2010 §9.1.1 (sin L de pisos, sin nieve).
 """
 
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 
 G_ACC = 9.80665
 
-# DS61 (NCh433): tipo de suelo → (S, T0, T', n, p)
+# NCh433:2026 Tabla 8 (igual al DS61): tipo de suelo → (S, T0, T', n, p)
 SUELOS_DS61 = {
     "A": (0.90, 0.15, 0.20, 1.00, 2.0),
     "B": (1.00, 0.30, 0.35, 1.33, 1.5),
@@ -27,7 +28,35 @@ SUELOS_DS61 = {
     "D": (1.20, 0.75, 0.85, 1.80, 1.0),
     "E": (1.30, 1.20, 1.35, 1.80, 1.0),
 }
-A0_ZONA = {1: 0.20, 2: 0.30, 3: 0.40}           # en g
+A0_ZONA = {1: 0.20, 2: 0.30, 3: 0.40}           # en g, NCh433:2026 Tabla 7
+# NCh433:2026 Tabla 6: categoría de ocupación → I
+IMPORTANCIA = {"I": 0.6, "II": 1.0, "III": 1.2, "IV": 1.2}
+# NCh433:2026 Tabla 5 (sistemas que puede tener este tipo de edificio): clave → (descripción, R, R0, deriva máxima / h)
+SISTEMAS = {
+    "ninguno": ("solo gravitacional (no forma parte del sistema sismorresistente)", None, None, None),
+    "OMF": ("acero: marcos corrientes a momento (OMF)", 3.5, 3.5, 0.0025),
+    "IMF": ("acero: marcos intermedios a momento (IMF)", 5.0, 6.0, 0.0025),
+    "SMF": ("acero: marcos especiales a momento (SMF)", 7.0, 11.0, 0.0025),
+    "OCBF": ("acero: marcos concéntricos corrientes (OCBF)", 3.0, 3.0, 0.0025),
+    "SCBF": ("acero: marcos concéntricos especiales (SCBF)", 5.5, 8.0, 0.0025),
+    "EBF": ("acero: marcos excéntricos (EBF)", 6.0, 10.0, 0.0025),
+    "madera_general": ("madera: muros y sistemas arriostrados generales", 5.5, 7.0, 0.0020),
+    "marco_plataforma": ("madera: sistema marco plataforma (NCh1198:2024 cl. 12)", 6.5, 7.0, 0.0025),
+    "CLT": ("madera: muros de madera contralaminada (CLT)", 2.0, 2.0, 0.0020),
+}
+# Ω0 de NCh433:2026 5.3.3 (acero): 3 en marcos a momento, 2 en sistemas arriostrados
+OMEGA0 = {"OMF": 3.0, "IMF": 3.0, "SMF": 3.0, "OCBF": 2.0, "SCBF": 2.0, "EBF": 2.0}
+
+
+def cmax(r: float) -> float:
+    """NCh433:2026 Tabla 9: Cmáx / (S·A0/g) según R; fuera de la tabla, 2,5/(R + 0,8)."""
+    tabla = {2.0: 0.90, 3.0: 0.60, 4.0: 0.55, 5.5: 0.40}
+    if r >= 6:
+        return 0.35
+    for k, v in tabla.items():
+        if abs(r - k) < 1e-9:
+            return v
+    return 2.5 / (r + 0.8)
 
 # exposición → (alfa, zg [m]) del perfil de Kz
 EXPOSICION = {"B": (7.0, 365.76), "C": (9.5, 274.32), "D": (11.5, 213.36)}
@@ -77,12 +106,28 @@ class ParametrosCargas:
     cp_barlovento_muro: float = 0.8     # NCh432 Tabla 14 (con q_z)
     ancho_edificio: float | None = None # B: dimensión del edificio normal al viento (m), para Cp del muro a
                                         # sotavento según L/B; None = L/B ≤ 1 (Cp −0,5)
-    # sismo
-    zona: int = 2
+    # sismo, NCh433:2026
+    zona: int = 3                       # Tabla 1: Ancud y Castro (Los Lagos) en zona 3
     suelo: str = "C"
-    importancia_sismo: float = 1.0      # categoría II
-    r0: float = 7.0                     # NCh433 Tabla 5.1: muros y sistemas arriostrados de madera
+    importancia_sismo: float = 1.0      # Tabla 6: categoría II
+    sistema_acero: str = "OMF"          # Tabla 5; en sistemas mixtos manda el de menor R0 (5.7.2)
+    sistema_madera: str = "marco_plataforma"
+    r0: float | None = None             # si se da, reemplaza al de la Tabla 5
+    r: float | None = None
     modos: int = 12
+
+
+def sistema_sismico(p: "ParametrosCargas") -> dict:
+    """R, R0 y deriva máxima del sistema (NCh433:2026 Tabla 5 y 5.7.2): el subsistema con menor R0 manda; la deriva
+    es la menor de los subsistemas. r0 y r dados en los parámetros reemplazan a los de la tabla."""
+    usados = [SISTEMAS[k] for k in (p.sistema_acero, p.sistema_madera) if k in SISTEMAS and SISTEMAS[k][1]]
+    if not usados:
+        usados = [SISTEMAS["madera_general"]]
+    manda = min(usados, key=lambda s: s[2])
+    r0 = float(p.r0) if p.r0 else manda[2]
+    r = float(p.r) if p.r else manda[1]
+    return {"R": r, "R0": r0, "deriva": min(s[3] for s in usados), "manda": manda[0],
+            "texto": f"{manda[0]}: R = {r:g}, R0 = {r0:g}" + (" (dados en la app)" if (p.r0 or p.r) else " (Tabla 5)")}
 
 
 def reduccion_lr(area_tributaria: float, pendiente_pct: float) -> dict:
@@ -154,10 +199,10 @@ def cp_muro_sotavento(l_b: float) -> float:
 
 
 def espectro_ds61(p: ParametrosCargas, t_estrella: float, periodos=None) -> list[tuple[float, float]]:
-    """Espectro de diseño NCh433 + DS61 (Sa/g) para el periodo fundamental T*."""
+    """Espectro de diseño NCh433:2026 6.3.4 (Sa/g) para el periodo fundamental T*."""
     s, t0, _, _, pp = SUELOS_DS61[p.suelo]
     a0 = A0_ZONA[p.zona]
-    r_est = 1 + t_estrella / (0.10 * t0 + t_estrella / p.r0)
+    r_est = 1 + t_estrella / (0.10 * t0 + t_estrella / sistema_sismico(p)["R0"])
     periodos = periodos or [0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0]
     out = []
     for tn in periodos:
