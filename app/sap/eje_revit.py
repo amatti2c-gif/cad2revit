@@ -56,13 +56,21 @@ def hold_down_para(T: float) -> str | None:
     return None
 
 
+# escuadrías del proyecto (nominal → b × h en m; b es el lado que va a lo largo del muro)
+ESCUADRIAS = {"2x3": (0.05, 0.075), "2x4": (0.05, 0.10), "2x5": (0.05, 0.125), "2x6": (0.05, 0.15), "2x8": (0.05, 0.20)}
+
+
 @dataclass
 class ParametrosMuroMadera:
     """Parámetros de la rigidez lateral de un muro de marco plataforma (tonf, m)."""
 
-    e_ppdd: float = 1.02e6              # E de los pies derechos de borde: 102 tonf/cm²
-    a_ext: float = 2 * 0.05 * 0.075     # área de los PPDD de un extremo: 2 piezas 2x3 (50x75 mm)
-    b_ext: float = 0.10                 # ancho de los PPDD de borde (L' = L − b_ext)
+    e_ppdd: float = 1.02e6              # E de los pies derechos de borde: 102 tonf/cm² (MGP10, Manual Tablas 16 y 17)
+    # PPDD de borde: n piezas de la escuadría del proyecto (todo el entramado es 2x4 = 50x100 mm). Con clavado a 50 mm,
+    # el borde donde se unen dos tableros pide una pieza de 3" o dos piezas (SDPWS, citado por el Manual): mínimo 2
+    escuadria_borde: str = "2x4"
+    n_ppdd_borde: int = 2
+    a_ext: float | None = None          # área de los PPDD de un extremo (m²); None = n·b·h de la escuadría
+    b_ext: float | None = None          # ancho del paquete de borde a lo largo del muro (m); None = n·b
     espaciamiento_clavos: int = 100     # mm, clavado perimetral del tablero
     tableros: int = 1                   # caras con OSB
     ga: float | None = None             # tonf/m; si se da, manda sobre la tabla
@@ -74,6 +82,18 @@ class ParametrosMuroMadera:
     k_union_pilar: float = 5.48 / 0.0041  # tonf/m, rigidez axial de la unión del PPDD de borde al pilar
     t_union_pilar: float | None = None  # tonf, tracción admisible de esa unión (pernos o tornillos al pilar)
     peso: float = 0.05                  # tonf/m² de muro (peso propio)
+
+    def area_ext(self) -> float:
+        if self.a_ext:
+            return float(self.a_ext)
+        b, h = ESCUADRIAS.get(self.escuadria_borde, ESCUADRIAS["2x4"])
+        return max(int(self.n_ppdd_borde), 1) * b * h
+
+    def ancho_ext(self) -> float:
+        if self.b_ext:
+            return float(self.b_ext)
+        b, _ = ESCUADRIAS.get(self.escuadria_borde, ESCUADRIAS["2x4"])
+        return max(int(self.n_ppdd_borde), 1) * b
 
     def ga_total(self) -> float:
         if self.ga is not None:
@@ -87,8 +107,8 @@ class ParametrosMuroMadera:
 def rigidez_muro(L: float, H: float, p: ParametrosMuroMadera) -> dict:
     """Rigidez lateral equivalente (Ec. 2.22) de un segmento de muro de largo L y altura H [m]: tonf/m, con sus
     tres flexibilidades [m/tonf]."""
-    lp = max(L - p.b_ext, 0.5 * L)
-    f_flex = 2.0 / 3.0 * H ** 3 / (p.e_ppdd * p.a_ext * L ** 2)
+    lp = max(L - p.ancho_ext(), 0.5 * L)
+    f_flex = 2.0 / 3.0 * H ** 3 / (p.e_ppdd * p.area_ext() * L ** 2)
     f_corte = H / (p.ga_total() * L)
     f_volc = H ** 2 / (L * lp * p.k_anclaje)
     return {"K": 1.0 / (f_flex + f_corte + f_volc), "flexion": f_flex, "corte": f_corte, "volcamiento": f_volc}
@@ -338,7 +358,9 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
                                           "H": round(H, 3), "K_eq_tonf_m": round(r["K"], 1), "E_shell": round(e, 1),
                                           "G_shell": round(g, 1), "seccion": nombre,
                                           "parametros": {"espaciamiento_clavos": pmw.espaciamiento_clavos,
-                                                         "tableros": pmw.tableros, "b_ext": pmw.b_ext},
+                                                         "tableros": pmw.tableros, "b_ext": pmw.ancho_ext(),
+                                                         "a_ext": pmw.area_ext(), "escuadria_borde": pmw.escuadria_borde,
+                                                         "n_ppdd_borde": pmw.n_ppdd_borde},
                                           "anclaje": {"bordes": bordes, "hold_down": pmw.hold_down, "k": round(k_anc, 1),
                                                       "t_union_pilar": pmw.t_union_pilar}})
             return nombre

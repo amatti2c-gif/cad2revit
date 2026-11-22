@@ -2141,6 +2141,7 @@ function sapTablaElementos() {
   }
   for (const w of e.muros || []) {
     const mw = o.muros[w.id] || {};
+    const nBorde = () => selector([["", "def."], ...["1", "2", "3", "4", "5", "6"].map(n => [n, n])], mw.n_ppdd_borde, v => fija("n_ppdd_borde", v));
     const fija = (k, v) => { const x = o.muros[w.id] = o.muros[w.id] || {}; if (v === "") delete x[k]; else x[k] = isNaN(Number(v)) ? v : Number(v); };
     filas.push(h("tr", {}, h("td", {}, incluir(w.id)), h("td", {}, `Muro (${w.material})`), h("td", {}, w.id), h("td", {}, w.tipo),
       h("td", {}, `x ${w.x0.toFixed(2)}–${w.x1.toFixed(2)} · ${(w.vanos || []).length} vano(s)`),
@@ -2149,6 +2150,8 @@ function sapTablaElementos() {
         " Ga ", h("input", { type: "number", step: "any", value: mw.ga ?? "", title: "vacío = Manual según clavado y caras",
           placeholder: String(sapGaManual(Number(mw.espaciamiento_clavos || $('[data-sap="muro.espaciamiento_clavos"]').value),
             Number(mw.tableros || $('[data-sap="muro.tableros"]').value)) ?? "def."), onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }),
+        " escuadría ", selector([["", "def."], ...["2x3", "2x4", "2x5", "2x6", "2x8"].map(e => [e, e])], mw.escuadria_borde, v => fija("escuadria_borde", v)),
+        " PPDD borde ", nBorde(),
         " anclaje ", selector([["", "def."], ["pilar", "unido al pilar"], ["hold_down", "hold-down"]], mw.anclaje, v => fija("anclaje", v)),
         " HD ", selector([["", "def."], ["auto", "auto"], ...["HD3B", "HD5B", "HD7B", "HD9B", "HD12", "HD19", "HD12 dobles"].map(m => [m, m])], mw.hold_down, v => fija("hold_down", v)))));
   }
@@ -2167,8 +2170,10 @@ function sapTablaSecciones() {
 
 function sapTablaMuros() {
   $("#sap-muros").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "K_eq (tonf/m)", "E shell", "G shell (tonf/m²)"].map(t => h("th", {}, t)))),
-    h("tbody", {}, sap.vista.muros.map(m => h("tr", {}, ...[m.muro, `${m.x0}–${m.x1}`, m.L, m.H, m.K_eq_tonf_m, m.E_shell, m.G_shell].map(x => h("td", {}, x))))));
+    h("thead", {}, h("tr", {}, ...["Muro", "Segmento x (m)", "L", "H", "PPDD de borde", "K_eq (tonf/m)", "E shell", "G shell (tonf/m²)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, sap.vista.muros.map(m => { const q = m.parametros || {};
+      const borde = q.escuadria_borde ? `${q.n_ppdd_borde} × ${q.escuadria_borde} (${(q.a_ext * 1e4).toFixed(0)} cm², ${(q.b_ext * 100).toFixed(0)} cm)` : "";
+      return h("tr", {}, ...[m.muro, `${m.x0}–${m.x1}`, m.L, m.H, borde, m.K_eq_tonf_m, m.E_shell, m.G_shell].map(x => h("td", {}, x))); })));
 }
 
 async function sapCorrer() {

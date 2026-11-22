@@ -236,8 +236,11 @@
               <label>Caras con OSB <select data-sap="muro.tableros"><option selected>1</option><option>2</option></select></label>
               <label>Ga (tonf/m; vacío = Manual, Tablas 18 y 19) <input data-sap="muro.ga" id="sap-ga" type="number" step="any"></label>
               <label>E pies derechos (tonf/cm²) <input data-sap="muro.e_ppdd" data-f="10000" type="number" step="any" value="102"></label>
-              <label>Área PPDD de borde, un extremo (cm²) <input data-sap="muro.a_ext" data-f="0.0001" type="number" step="any" value="75"></label>
-              <label>Ancho PPDD de borde (cm) <input data-sap="muro.b_ext" data-f="0.01" type="number" step="any" value="10"></label>
+              <label>Escuadría de los PPDD (todo el entramado) <select data-sap="muro.escuadria_borde"><option value="2x3">2x3 (50×75)</option>
+                <option value="2x4" selected>2x4 (50×100)</option><option value="2x5">2x5 (50×125)</option><option value="2x6">2x6 (50×150)</option><option value="2x8">2x8 (50×200)</option></select></label>
+              <label>PPDD de borde por extremo (mín. 2 con clavado a 50 mm) <select data-sap="muro.n_ppdd_borde"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+              <label>Área PPDD de borde, un extremo (cm²; vacío = n × escuadría) <input data-sap="muro.a_ext" data-f="0.0001" type="number" step="any" placeholder="2 × 2x4 = 100"></label>
+              <label>Ancho del paquete de borde (cm; vacío = n × 5) <input data-sap="muro.b_ext" data-f="0.01" type="number" step="any" placeholder="10"></label>
               <label>Anclaje al volcamiento <select data-sap="muro.anclaje"><option value="pilar" selected>unido al pilar de acero (bordes en vano: hold-down)</option>
                 <option value="hold_down">hold-down en ambos bordes</option></select></label>
               <label>Hold-down (Manual, Tablas 20, 21 y 47) <select data-sap="muro.hold_down"><option value="auto" selected>automático (el más chico que resiste)</option><option value="HD3B">HD3B</option><option value="HD5B">HD5B</option><option value="HD7B">HD7B</option><option value="HD9B">HD9B</option><option value="HD12">HD12</option><option value="HD19">HD19</option><option value="HD12 dobles">HD12 dobles</option></select></label>
@@ -329,12 +332,12 @@
                 <tr><td>① Clavado perimetral</td><td>separación de los clavos 8d en el borde de cada tablero (en el interior, 1 hilera @ 300 mm)</td><td>150, 100 o 50 mm; Ga = 304 / 446 / 804 tonf/m por cara (Tablas 18 y 19)</td></tr>
                 <tr><td>② Caras con OSB</td><td>tableros OSB 9,5 mm «Sheathing» en una o en las dos caras</td><td>1 o 2 (Tablas 7 a 9)</td></tr>
                 <tr><td>③ Ga</td><td>rigidez de corte aparente del tablero clavado</td><td>vacío = la de la tabla según ① y ②</td></tr>
-                <tr><td>④ A_ext y b_ext</td><td>pies derechos (PPDD) de borde de un extremo: área total y ancho del paquete</td><td>3 a 6 PPDD de borde 2x6 (35×138): 94,5 a 289,8 cm²; 2 piezas 2x3 (50×75): 75 cm²</td></tr>
+                <tr><td>④ A_ext y b_ext</td><td>pies derechos (PPDD) de borde de un extremo: área total y ancho del paquete</td><td>este proyecto: n piezas 2x4 (50×100) = n × 50 cm² (2 piezas: 100 cm², 10 cm); en el ejemplo del Manual, 3 a 6 piezas 2x6 (35×138)</td></tr>
                 <tr><td>⑤ E PPDD</td><td>módulo de elasticidad de los PPDD de borde</td><td>pino radiata MGP10: 102 tonf/cm² (Tablas 16 y 17)</td></tr>
                 <tr><td>⑥ Unión al pilar</td><td>pernos o tornillos del PPDD de borde al pilar de acero: tracción admisible y rigidez</td><td>según la unión que diseñes (no está en el Manual)</td></tr>
                 <tr><td>⑦ Hold-down</td><td>anclaje del borde que llega a un vano</td><td>HD3B a HD12 dobles, Tadm 1,38 a 8,36 tonf (Tablas 20, 21 y 47)</td></tr>
                 <tr><td>⑧ Peso</td><td>peso propio del muro por m²</td><td>≈ 50 kgf/m²</td></tr>
-                <tr><td>PPDD distribuidos</td><td>pies derechos intermedios: los controla la carga gravitacional, no entran en la rigidez lateral</td><td>2x4 o 2x6 @ 400 mm (Tabla 6); en el ejemplo, simples @ 400–600 mm</td></tr>
+                <tr><td>PPDD distribuidos</td><td>pies derechos intermedios: los controla la carga gravitacional, no entran en la rigidez lateral</td><td>este proyecto: 2x4; el Manual sugiere 2x4 o 2x6 @ 400 mm (Tabla 6)</td></tr>
                 <tr><td>Soleras</td><td>piezas horizontales arriba (doble) y abajo</td><td>2x6, 4 soleras por muro en el ejemplo (Tablas 8 y 9)</td></tr>
               </tbody></table></div>
             <p class="tenue">La rigidez del segmento sale de la Ec. 2.22 del Manual con H, L, ①–⑤ y la rigidez del anclaje

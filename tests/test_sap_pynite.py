@@ -275,3 +275,15 @@ def test_torsion_accidental_amplifica_el_sismo_del_eje():
     r2 = analizar(mod, cargas_eje(mod, ParametrosCargas(modos=6)), ParametrosCargas(modos=6))
     ex = lambda r: next(c for c in r["casos"] if c["caso"] == "EX+")["reaccion_x"]      # noqa: E731
     assert abs(ex(r2) / ex(r1) - 1.3) < 1e-6 and abs(r1["corte_basal"] - r2["corte_basal"]) < 1e-9
+
+
+def test_escuadria_de_los_ppdd_de_borde():
+    from app.sap.eje_revit import ParametrosMuroMadera, mallar, rigidez_muro
+    p = ParametrosMuroMadera()
+    assert abs(p.area_ext() - 2 * 0.05 * 0.10) < 1e-12 and abs(p.ancho_ext() - 0.10) < 1e-12      # 2 × 2x4
+    p6 = ParametrosMuroMadera(escuadria_borde="2x6", n_ppdd_borde=3)
+    assert abs(p6.area_ext() - 3 * 0.05 * 0.15) < 1e-12 and abs(p6.ancho_ext() - 0.15) < 1e-12
+    assert rigidez_muro(2.4, 2.5, p6)["K"] > rigidez_muro(2.4, 2.5, p)["K"]
+    assert ParametrosMuroMadera(a_ext=0.02).area_ext() == 0.02                                     # dato explícito manda
+    mod = mallar(EJE, opciones={"muros": {"f": {"escuadria_borde": "2x3"}}})
+    assert mod.resumen_muros[0]["parametros"]["escuadria_borde"] == "2x3"
