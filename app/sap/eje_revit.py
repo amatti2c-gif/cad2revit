@@ -57,7 +57,7 @@ def hold_down_para(T: float) -> str | None:
 
 
 # escuadrías del proyecto (nominal → b × h en m; b es el lado que va a lo largo del muro)
-ESCUADRIAS = {"2x3": (0.05, 0.075), "2x4": (0.05, 0.10), "2x5": (0.05, 0.125), "2x6": (0.05, 0.15), "2x8": (0.05, 0.20)}
+ESCUADRIAS = {"2x3": (0.05, 0.075), "2x4": (0.05, 0.10), "2x5": (0.05, 0.125), "2x6": (0.05, 0.15)}
 
 
 @dataclass

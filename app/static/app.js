@@ -2150,7 +2150,7 @@ function sapTablaElementos() {
         " Ga ", h("input", { type: "number", step: "any", value: mw.ga ?? "", title: "vacío = Manual según clavado y caras",
           placeholder: String(sapGaManual(Number(mw.espaciamiento_clavos || $('[data-sap="muro.espaciamiento_clavos"]').value),
             Number(mw.tableros || $('[data-sap="muro.tableros"]').value)) ?? "def."), onchange: ev => { fija("ga", ev.target.value); intentar(sapActualizar); } }),
-        " escuadría ", selector([["", "def."], ...["2x3", "2x4", "2x5", "2x6", "2x8"].map(e => [e, e])], mw.escuadria_borde, v => fija("escuadria_borde", v)),
+        " escuadría ", selector([["", "def."], ...["2x3", "2x4", "2x5", "2x6"].map(e => [e, e])], mw.escuadria_borde, v => fija("escuadria_borde", v)),
         " PPDD borde ", nBorde(),
         " anclaje ", selector([["", "def."], ["pilar", "unido al pilar"], ["hold_down", "hold-down"]], mw.anclaje, v => fija("anclaje", v)),
         " HD ", selector([["", "def."], ["auto", "auto"], ...["HD3B", "HD5B", "HD7B", "HD9B", "HD12", "HD19", "HD12 dobles"].map(m => [m, m])], mw.hold_down, v => fija("hold_down", v)))));
