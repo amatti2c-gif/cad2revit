@@ -64,6 +64,7 @@ namespace Cad2Revit
                 }
 
                 var pilares = new List<object>();
+                int omitidos = 0;
                 var vigas = new List<object>();
                 var muros = new List<object>();
                 var instancias = new FilteredElementCollector(_doc).OfClass(typeof(FamilyInstance)).Cast<FamilyInstance>()
@@ -77,6 +78,7 @@ namespace Cad2Revit
                     else if (f.Location is LocationCurve lcc) { pb = lcc.Curve.GetEndPoint(0); pt = lcc.Curve.GetEndPoint(1); }
                     else continue;
                     if (D(pb) > tolerancia || D(pt) > tolerancia) continue;
+                    if (MaterialDe(f) == "hormigon") { omitidos++; continue; }   // fundaciones / pedestales: fuera del modelo
                     pilares.Add(new
                     {
                         id = f.Id.ToString(), seccion = f.Symbol.Name, familia = f.Symbol.FamilyName, material = MaterialDe(f),
@@ -94,6 +96,7 @@ namespace Cad2Revit
                     var zj = f.get_Parameter(BuiltInParameter.Z_JUSTIFICATION)?.AsInteger();
                     if (dims.TryGetValue("d", out var dd) && zj == (int)ZJustification.Top) bajar = dd / 2;
                     else if (dims.TryGetValue("d", out dd) && zj == (int)ZJustification.Bottom) bajar = -dd / 2;
+                    if (MaterialDe(f) == "hormigon") { omitidos++; continue; }
                     vigas.Add(new
                     {
                         id = f.Id.ToString(), seccion = f.Symbol.Name, familia = f.Symbol.FamilyName, material = MaterialDe(f),
@@ -130,6 +133,7 @@ namespace Cad2Revit
                             ? "madera" : "otro";
                     bool conEntramado = new FilteredElementCollector(_doc).WhereElementIsNotElementType()
                         .Any(e => e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString()?.StartsWith(MarcaEntramadoRevit + w.Id + " ") == true);
+                    if (material == "hormigon") { omitidos++; continue; }       // sobrecimientos y muros de hormigón: fuera del modelo
                     muros.Add(new
                     {
                         id = w.Id.ToString(), tipo = nombreTipo, material, entramado = conEntramado,
@@ -159,6 +163,7 @@ namespace Cad2Revit
                 _inf.Contar("Vigas y diagonales en el eje", vigas.Count);
                 _inf.Contar("Muros en el eje", muros.Count);
                 _inf.Advertencia($"Archivo: {ruta}");
+                if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) de hormigón (fundaciones, sobrecimientos, pedestales) no se exportan: el modelo SAP2000 es de acero y madera");
                 if (pilares.Count + vigas.Count + muros.Count == 0)
                     _inf.Advertencia($"No hay elementos a menos de {tolerancia:0.00} m del eje {eje.Name}");
             }

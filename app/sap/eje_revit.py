@@ -138,8 +138,9 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
             mod.nudos[claves[k]] = (round(x, 4), round(z, 4))
         return claves[k]
 
-    pilares = [p for p in eje.get("pilares", []) if p.get("material") != "madera" and str(p.get("id")) not in excluir]
-    vigas = [v for v in eje.get("vigas", []) if v.get("material") != "madera" and str(v.get("id")) not in excluir]
+    # el hormigón (fundaciones, sobrecimientos, pedestales) no entra en el modelo: solo acero y muros de madera
+    pilares = [p for p in eje.get("pilares", []) if p.get("material") not in ("madera", "hormigon") and str(p.get("id")) not in excluir]
+    vigas = [v for v in eje.get("vigas", []) if v.get("material") not in ("madera", "hormigon") and str(v.get("id")) not in excluir]
     xs_pilar = sorted({round((p["x0"] + p["x1"]) / 2, 4) for p in pilares})
 
     def a_pilar(x):
@@ -160,7 +161,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
 
     # ---- muros: malla de cuadriláteros (sin las celdas de los vanos) ----
     for w in eje.get("muros", []):
-        if str(w.get("id")) in excluir:
+        if str(w.get("id")) in excluir or w.get("material") == "hormigon":
             continue
         pmw = _replace(pm, **{k: v for k, v in (op.get("muros") or {}).get(str(w.get("id")), {}).items()
                              if k in ParametrosMuroMadera.__dataclass_fields__ and v not in (None, "")})
