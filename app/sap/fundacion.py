@@ -337,14 +337,17 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     from .diseno_hormigon import opciones_armadura
     d_viga = Ht_mm - rec
     As_min_v = max(0.25 * math.sqrt(pf.fc) / pf.fy, 1.4 / pf.fy) * bp_mm * d_viga
-    As_inf = arm.fun_barras_inferiores * _area_barra(arm.fun_diametro_mm)
-    As_sup = 2 * _area_barra(arm.ped_diametro_mm) if n_cara else 0.0           # capa superior del pedestal
+    # armadura traccionada de cada sentido: todas las capas al lado traccionado del centro de gravedad de la sección
+    # (con tracción abajo, las barras inferiores y superiores de la zapata; con tracción arriba, las del pedestal)
+    yc_mm = yc * 1000
+    As_inf = sum(a_ for a_, y in capas if y > yc_mm)
+    As_sup = sum(a_ for a_, y in capas if y < yc_mm)
 
     def nota_min(As, Mu, phiMn, cara):
         if As >= As_min_v:
             return []
         As_req = As * min(Mu * kN / phiMn, 1.0) if phiMn else As
-        txt = (f"As {cara} = {As:.0f} < As,min = {As_min_v:.0f} mm² (9.6.1.2, bw = {bp_mm:.0f} mm): para cumplir usar "
+        txt = (f"As traccionada {cara} = {As:.0f} < As,min = {As_min_v:.0f} mm² (9.6.1.2, bw = {bp_mm:.0f} mm): para cumplir usar "
                f"{opciones_armadura(As_min_v)}")
         if As >= 4 / 3 * As_req:
             txt += f"; o se acepta por 9.6.1.3 (As ≥ 4/3·As requerido = {4 / 3 * As_req:.0f} mm²)"
@@ -352,10 +355,12 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     viga = [
         {"verificacion": "Flexión, tracción abajo (Mu+)", "Mu_tonfm": peor["Mpos"][0], "combo": peor["Mpos"][1],
          "phiMn_tonfm": mn_pos["phiMn_kNm"] / kN, "razon": peor["Mpos"][0] * kN / mn_pos["phiMn_kNm"] if mn_pos["phiMn_kNm"] else None,
-         "notas": nota_min(As_inf, peor["Mpos"][0], mn_pos["phiMn_kNm"], "inferior")},
+         "notas": nota_min(As_inf, peor["Mpos"][0], mn_pos["phiMn_kNm"], "abajo") or
+                  [f"As traccionada abajo = {As_inf:.0f} mm² (barras de la zapata) ≥ As,min = {As_min_v:.0f} mm²"]},
         {"verificacion": "Flexión, tracción arriba (Mu−)", "Mu_tonfm": peor["Mneg"][0], "combo": peor["Mneg"][1],
          "phiMn_tonfm": mn_neg["phiMn_kNm"] / kN, "razon": peor["Mneg"][0] * kN / mn_neg["phiMn_kNm"] if mn_neg["phiMn_kNm"] else None,
-         "notas": nota_min(As_sup, peor["Mneg"][0], mn_neg["phiMn_kNm"], "superior")},
+         "notas": nota_min(As_sup, peor["Mneg"][0], mn_neg["phiMn_kNm"], "arriba") or
+                  [f"As traccionada arriba = {As_sup:.0f} mm² (barras del pedestal) ≥ As,min = {As_min_v:.0f} mm²"]},
         {"verificacion": "Corte (estribos del pedestal)", "Vu_tonf": peor["V"][0], "combo": peor["V"][1],
          "phiVn_tonf": cv["phiVn_kN"] / kN, "razon": peor["V"][0] * kN / cv["phiVn_kN"], "notas": cv["notas"]},
     ]
