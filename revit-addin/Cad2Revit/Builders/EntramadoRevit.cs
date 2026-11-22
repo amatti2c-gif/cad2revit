@@ -208,6 +208,9 @@ namespace Cad2Revit
                 inicio = Math.Max(inicio, c1);
             }
             if (inicio < fin) tramos.Add((inicio, fin));
+            _inf.Advertencia($"Muro {w.Id}: largo {largo:0.00} m; entramado en " +
+                             string.Join(", ", tramos.Select(tr => $"{tr.s0:0.00}–{tr.s1:0.00} m")) +
+                             $" (pies derechos cada {conf.SeparacionPies * 100:0} cm desde el inicio de cada tramo)");
             // vanos que quedan detrás de un pilar o del borde del muro: la jamba queda en la cara del pilar/borde
             int nPropios = vanos.Count - obs.Vanos.Count;
             foreach (var v in vanos.Take(nPropios))

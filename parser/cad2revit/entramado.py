@@ -115,8 +115,10 @@ def generar(muro: Muro, otros: list[Muro], conf: dict, z_base: float, z_tope: fl
     # Pies derechos
     verticales: list[_Vertical] = [_Vertical(s0 + b / 2, zb, zt_en(s0 + b / 2), "pie_derecho"),
                                    _Vertical(s1 - b / 2, zb, zt_en(s1 - b / 2), "pie_derecho")]
+    # intermedios cada sep_v desde el inicio y el último espacio con lo que quede; si queda muy chico (menos de 15 cm
+    # entre centros), no se pone el intermedio: queda solo el pie derecho de borde
     t = s0 + sep_v
-    while t < s1 - b / 2 - b:
+    while t < s1 - b / 2 - 0.15 + 1e-6:
         verticales.append(_Vertical(t, zb, zt_en(t), "pie_derecho"))
         t += sep_v
 

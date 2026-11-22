@@ -95,7 +95,10 @@ namespace Cad2Revit
                 new() { T = s0 + bb / 2, Z0 = zb, Z1 = ZtEn(s0 + bb / 2), Rol = "pie_borde" },
                 new() { T = s1 - bb / 2, Z0 = zb, Z1 = ZtEn(s1 - bb / 2), Rol = "pie_borde" },
             };
-            for (double t = s0 + c.SeparacionPies; t < s1 - bb / 2 - bb; t += c.SeparacionPies)
+            // intermedios cada «SeparacionPies» desde el inicio y el último espacio con lo que quede; si ese espacio
+            // queda muy chico (menos de 15 cm entre centros), no se pone el intermedio: queda solo el de borde
+            const double MinUltimo = 0.15;
+            for (double t = s0 + c.SeparacionPies; t < s1 - bb / 2 - MinUltimo + Tol; t += c.SeparacionPies)
                 verticales.Add(new Vertical { T = t, Z0 = zb, Z1 = ZtEn(t), Rol = "pie_derecho" });
 
             if (c.RefuerzoVanos)
