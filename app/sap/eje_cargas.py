@@ -42,6 +42,7 @@ CP_TECHO_SOTAVENTO = [(0, -0.3), (10, -0.3), (15, -0.5), (20, -0.6), (90, -0.6)]
 class ParametrosCargas:
     peso_techo: float = 0.03            # tonf/m² de techo (cubierta, costaneras, aislación)
     lo_techo: float = 0.10              # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención (1 kPa)
+    reducir_lr: bool = True             # NCh1537 §8.2: reducción por área tributaria (R1) y pendiente (R2)
     # viento
     v_viento: float = 35.0              # m/s, velocidad básica del lugar (NCh432)
     exposicion: str = "C"
@@ -60,13 +61,20 @@ class ParametrosCargas:
     modos: int = 12
 
 
-def lr_techo(p: ParametrosCargas, area_tributaria: float, pendiente_pct: float) -> float:
-    """NCh1537 §8.2: Lr reducida [tonf/m² de proyección horizontal]."""
+def reduccion_lr(area_tributaria: float, pendiente_pct: float) -> dict:
+    """NCh1537 §8.2: factores R1 (área tributaria A_T, m²) y R2 (pendiente F, %) y el factor aplicado a Lo."""
     r1 = 1 - 0.008 * area_tributaria if area_tributaria < 50 else 0.6
     r2 = 1 - 0.0233 * pendiente_pct if pendiente_pct < 30 else 0.3
     r = r1 * r2
     f = 1.0 if r >= 0.84 else (r if r > 0.3 else 0.3)
-    return max(p.lo_techo * f, 0.03)                 # nunca menos de 0,3 kPa (§5.3.2)
+    return {"R1": r1, "R2": r2, "R1R2": r, "factor": f}
+
+
+def lr_techo(p: ParametrosCargas, area_tributaria: float, pendiente_pct: float) -> float:
+    """Sobrecarga de techo [tonf/m² de proyección horizontal]: Lo, reducida según NCh1537 §8.2 si se pide; nunca
+    menos de 0,3 kPa (§5.3.2)."""
+    f = reduccion_lr(area_tributaria, pendiente_pct)["factor"] if p.reducir_lr else 1.0
+    return max(p.lo_techo * f, 0.03)
 
 
 def kz(p: ParametrosCargas, z: float) -> float:
@@ -136,11 +144,18 @@ def cargas_eje(mod, p: ParametrosCargas | None = None) -> CargasEje:
     for f in techo:
         c.distribuidas.append((f, "DEAD", "GRAV", p.peso_techo * b))
     # Lr: por m² de proyección horizontal; área tributaria de cada faldón ≈ proyección del faldón × ancho tributario
-    lr = lr_techo(p, proy / 2 * b if ang > 1 else proy * b, pend * 100)
+    at = proy / 2 * b if ang > 1 else proy * b
+    lr = lr_techo(p, at, pend * 100)
     for f in techo:
         c.distribuidas.append((f, "LR", "GRAV_PROY", lr * b))
-    c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² (NCh1537: Lo 100 kgf/m², pendiente {pend * 100:.0f} %, "
-                     f"área tributaria {proy / 2 * b:.1f} m²)")
+    red = reduccion_lr(at, pend * 100)
+    if p.reducir_lr:
+        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² — NCh1537 §8.2: Lo {p.lo_techo * 1000:.0f} kgf/m², "
+                         f"A_T {at:.1f} m² → R1 = {red['R1']:.3f}; pendiente F {pend * 100:.1f} % → R2 = {red['R2']:.3f}; "
+                         f"R1·R2 = {red['R1R2']:.3f} → factor {red['factor']:.3f}" + (" (mínimo 0,3 kPa)" if lr > p.lo_techo * red['factor'] + 1e-9 else ""))
+    else:
+        c.resumen.append(f"Lr = {lr * 1000:.0f} kgf/m² — sin reducción (Lo); con NCh1537 §8.2 sería factor "
+                         f"{red['factor']:.3f} (R1 {red['R1']:.3f}, R2 {red['R2']:.3f})")
 
     # W: viento en el plano del eje, +X (W1 con +GCpi, W2 con −GCpi) y −X (W3, W4)
     qh = q_viento(p, h)

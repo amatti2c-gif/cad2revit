@@ -511,6 +511,7 @@ def main(argv=None):
     ap.add_argument("--importancia", type=float, default=1.0, help="coeficiente de importancia sísmico I")
     ap.add_argument("--r0", type=float, default=7.0, help="R0 de NCh433 (7 = muros arriostrados de madera)")
     ap.add_argument("--sin-diseno", action="store_true", help="no correr el chequeo de acero AISC 360-16")
+    ap.add_argument("--sin-reduccion-lr", action="store_true", help="sobrecarga de techo Lo sin la reducción de NCh1537 §8.2")
     a = ap.parse_args(argv)
     with open(a.eje, encoding="utf-8") as f:
         eje = json.load(f)
@@ -530,7 +531,8 @@ def main(argv=None):
     if not a.sin_cargas:
         from .eje_cargas import ParametrosCargas, cargas_eje
         pc = ParametrosCargas(peso_techo=a.peso_techo / 1000, v_viento=a.viento, exposicion=a.exposicion, zona=a.zona,
-                              suelo=a.suelo, importancia_sismo=a.importancia, r0=a.r0)
+                              suelo=a.suelo, importancia_sismo=a.importancia, r0=a.r0,
+                              reducir_lr=not a.sin_reduccion_lr)
         cargas = cargas_eje(mod, pc)
         for x in cargas.resumen:
             print(" ", x)

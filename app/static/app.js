@@ -1988,6 +1988,7 @@ function sapParametros() {
     let v = el.value;
     if (v === "") return;
     if (el.type === "number" || (el.tagName === "SELECT" && /^\d+(\.\d+)?$/.test(v))) v = Number(v);
+    if (v === "true" || v === "false") v = v === "true";
     if (el.dataset.f) v = Number(v) * Number(el.dataset.f);
     const ruta = el.dataset.sap.split(".");
     let o = p;
@@ -2001,7 +2002,7 @@ function sapPonerParametros(p) {
     let o = p;
     for (const k of el.dataset.sap.split(".")) o = o == null ? undefined : o[k];
     if (o === undefined || o === null) return;
-    el.value = el.dataset.f ? +(o / Number(el.dataset.f)).toPrecision(6) : o;
+    el.value = el.dataset.f ? +(o / Number(el.dataset.f)).toPrecision(6) : String(o);
   });
 }
 const sapAjustes = () => ({ parametros: sapParametros(), opciones: sap.opciones });
