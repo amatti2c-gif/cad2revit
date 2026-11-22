@@ -2597,15 +2597,15 @@ function funEsquema() {
   // coordenadas: x desde el eje del muro, y hacia abajo desde la cara superior del pedestal
   const Ht = hp + hz, xP0 = -bp / 2, xP1 = bp / 2, xZ0 = -B / 2, xZ1 = B / 2, yZ = hp, yF = Ht;
   const yTerreno = yF - Df;
-  const mg = Math.max(B, Ht) * 0.32, ancho = B + 1.3 * mg + Math.max(B, Ht) * 1.07, alto = Ht + 2 * mg;
-  const x0 = xZ0 - 1.3 * mg - 12 * Math.max(B, Ht) / 100, y0 = Math.min(0, yTerreno) - mg * 0.6;
+  const mg = Math.max(B, Ht) * 0.32, ancho = B + 1.3 * mg + Math.max(B, Ht) * 1.5, alto = Ht + 2 * mg;
+  const x0 = xZ0 - 1.3 * mg - 18 * Math.max(B, Ht) / 100, y0 = Math.min(0, yTerreno) - mg * 0.6;
   svg.setAttribute("viewBox", `${x0} ${y0} ${ancho} ${alto}`);
   const k = Math.max(B, Ht) / 100;                                      // tamaño de textos y líneas
-  const T = (x, y, t, o = {}) => { const e = s("text", { x, y, "font-size": 3.2 * k, fill: "currentColor", ...o }); e.textContent = t; return e; };
+  const T = (x, y, t, o = {}) => { const e = s("text", { x, y, "font-size": 4.6 * k, fill: "currentColor", ...o }); e.textContent = t; return e; };
   const hijos = [];
   // terreno y hormigón
   hijos.push(s("line", { x1: x0, y1: yTerreno, x2: xZ1 + 10 * k, y2: yTerreno, stroke: "#7a5c2e", "stroke-width": 0.5 * k, "stroke-dasharray": `${2 * k} ${k}` }));
-  hijos.push(T(x0 + k, yTerreno - k, "N.T.", { fill: "#7a5c2e" }));
+  hijos.push(T(x0 + 3 * k, yTerreno - 1.2 * k, "N.T.", { fill: "#7a5c2e" }));
   hijos.push(s("path", { d: `M${xP0},0 H${xP1} V${yZ} H${xZ1} V${yF} H${xZ0} V${yZ} H${xP0} Z`, fill: "rgba(160,160,160,.22)", stroke: "#666", "stroke-width": 0.4 * k }));
   // estribos (línea al eje de la barra) y barras longitudinales
   const radio = (d) => Math.max(2 * d, 0.8);
@@ -2630,7 +2630,7 @@ function funEsquema() {
   // cotas
   const cota = (xa, ya, xb, yb, t, lado = 1) => {
     const g = [s("line", { x1: xa, y1: ya, x2: xb, y2: yb, stroke: "#555", "stroke-width": 0.25 * k, "marker-start": "url(#fun-fl)", "marker-end": "url(#fun-fl)" })];
-    if (ya === yb) g.push(T((xa + xb) / 2, ya - 1.2 * k * lado, t, { "text-anchor": "middle" }));
+    if (ya === yb) g.push(T((xa + xb) / 2, lado > 0 ? ya - 1.5 * k : ya + 5.5 * k, t, { "text-anchor": "middle" }));
     else g.push(T(xa - 1.5 * k, (ya + yb) / 2, t, { "dominant-baseline": "middle", "text-anchor": "end" }));
     return g;
   };
@@ -2640,14 +2640,14 @@ function funEsquema() {
   hijos.push(...cota(xP0, -5 * k, xP1, -5 * k, `${bp.toFixed(0)} cm`));
   hijos.push(...cota(xZ0 - 6 * k, 0, xZ0 - 6 * k, yZ, `${hp.toFixed(0)} cm`));
   hijos.push(...cota(xZ0 - 6 * k, yZ, xZ0 - 6 * k, yF, `${hz.toFixed(0)} cm`));
-  hijos.push(...cota(xZ0 - 20 * k, yTerreno, xZ0 - 20 * k, yF, `Df ${Df.toFixed(0)} cm`));
+  hijos.push(...cota(xZ0 - 24 * k, yTerreno, xZ0 - 24 * k, yF, `Df ${Df.toFixed(0)} cm`));
   // leyendas de armadura
   // leyendas a la derecha, con una línea guía hasta la barra o el estribo
   const xl = xZ1 + 22 * k, yFs = eFy0 + eF / 2 + dF / 2, yFi = eFy1 - eF / 2 - dF / 2;
   const xUlt = eFx1 - eF / 2 - dF / 2;
   const ley = [
     [ypA + 2 * k, xpD, ypA, `${nCara} φ${(dP * 10).toFixed(0)} por cara (${2 * nCara} φ${(dP * 10).toFixed(0)})`, "#1f4e9c"],
-    [ypA + 12 * k, ePx1, ypA + 12 * k, `E φ${(eP * 10).toFixed(0)}@${sP} pedestal${hastaFondo ? ", hasta el fondo" : ""}`, "#d35400"],
+    [ypA + 14 * k, ePx1, ypA + 14 * k, `E φ${(eP * 10).toFixed(0)}@${sP} pedestal${hastaFondo ? ", hasta el fondo" : ""}`, "#d35400"],
     [yZ - 3 * k, xUlt, yFs, `${nSup} φ${(dF * 10).toFixed(0)} sup. zapata`, "#1f4e9c"],
     [yZ + hz / 2 + 1 * k, eFx1, yZ + hz / 2, `E φ${(eF * 10).toFixed(0)}@${sF} zapata`, "#c0392b"],
     [yF + 4 * k, xUlt, yFi, `${nInf} φ${(dF * 10).toFixed(0)} inf. zapata`, "#1f4e9c"],
@@ -2656,7 +2656,7 @@ function funEsquema() {
     hijos.push(s("polyline", { points: `${xa},${ya} ${xl - 2 * k},${y - k} ${xl - 0.5 * k},${y - k}`, fill: "none", stroke: c, "stroke-width": 0.2 * k, opacity: 0.8 }));
     hijos.push(T(xl, y, t, { fill: c }));
   }
-  hijos.push(T(xl, yF + 13 * k, `recubrimiento ${rec.toFixed(1).replace(".0", "")} cm`, { fill: "#555" }));
+  hijos.push(T(xl, yF + 15 * k, `recubrimiento ${rec.toFixed(1).replace(".0", "")} cm`, { fill: "#555" }));
   svg.replaceChildren(...hijos);
 }
 
