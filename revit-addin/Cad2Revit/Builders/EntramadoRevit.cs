@@ -153,6 +153,34 @@ namespace Cad2Revit
                 return r;
             }
             double r0 = Recorte(a, -ux, -uy), r1 = Recorte(b, ux, uy);
+            // encuentros: muros cuyo extremo llega a la cara de este (en T o en esquina): t del eje del muro que llega
+            var encuentros = new List<double>();
+            double espW = Mt(w.Width);
+            foreach (var o in todos)
+            {
+                if (o.Id == w.Id || !(o.Location is LocationCurve olc2) || !(olc2.Curve is Line ol2)) continue;
+                XYZ od2 = ol2.Direction;
+                double hn2 = Math.Sqrt(od2.X * od2.X + od2.Y * od2.Y);
+                if (hn2 < 1e-9 || Math.Abs(od2.X / hn2 * uy - od2.Y / hn2 * ux) < 0.5) continue;   // casi paralelo
+                foreach (var pe in new[] { ol2.GetEndPoint(0), ol2.GetEndPoint(1) })
+                {
+                    double tq = (Mt(pe.X) - a[0]) * ux + (Mt(pe.Y) - a[1]) * uy;
+                    double dq = Math.Abs((Mt(pe.X) - a[0]) * uy - (Mt(pe.Y) - a[1]) * ux);
+                    if (dq <= espW / 2 + Mt(o.Width) / 2 + 0.03 && tq > 0.02 && tq < largo - 0.02)
+                    {
+                        // el eje del muro que llega cruza este muro en tq (si llega inclinado, en su punto de cruce)
+                        double cx = od2.X / hn2, cy = od2.Y / hn2;
+                        double den = cx * uy - cy * ux;
+                        double tc = Math.Abs(den) > 1e-9
+                            ? tq - ((Mt(pe.X) - a[0]) * uy - (Mt(pe.Y) - a[1]) * ux) / den * (cx * ux + cy * uy)
+                            : tq;
+                        if (tc > 0.02 && tc < largo - 0.02) encuentros.Add(tc);
+                    }
+                }
+            }
+            if (encuentros.Count > 0)
+                _inf.Advertencia($"Muro {w.Id}: {encuentros.Count} encuentro(s) con otros muros, con pie derecho en " +
+                                 string.Join(", ", encuentros.OrderBy(x => x).Select(x => $"{x:0.00} m")));
 
             // vanos: puertas, ventanas y aberturas alojadas en el muro
             var vanos = VanosDelMuro(w, a, ux, uy, largo, zBase, todos);
@@ -234,7 +262,7 @@ namespace Cad2Revit
                     double zb = zBase;
                     foreach (var (b0, b1, zs) in obs.Bases) if (tm >= b0 && tm <= b1) zb = Math.Max(zb, zs);
                     var vanosAqui = zb > zBase ? VanosDesde(vanos, zb) : vanos;
-                    piezas.AddRange(GeneradorEntramado.Generar(a, b, zb, zTope, s0, largo - s1, vanosAqui, conf, topeEn, quiebres));
+                    piezas.AddRange(GeneradorEntramado.Generar(a, b, zb, zTope, s0, largo - s1, vanosAqui, conf, topeEn, quiebres, encuentros));
                 }
             }
             if (obs.Bases.Count > 0)
@@ -267,7 +295,7 @@ namespace Cad2Revit
                 {
                     double a0 = Math.Max(t0, vt0), a1 = Math.Min(t1, vt1);
                     if (a1 - a0 > 2 * conf.B + 0.02)
-                        piezas.AddRange(GeneradorEntramado.Generar(a, b, zSobre, zTope, a0, largo - a1, vanosArriba, conf, topeArriba, quiebres));
+                        piezas.AddRange(GeneradorEntramado.Generar(a, b, zSobre, zTope, a0, largo - a1, vanosArriba, conf, topeArriba, quiebres, encuentros));
                 }
                 if (piezas.Count > antes)
                     _inf.Advertencia($"Muro {w.Id}: entramado también sobre la viga (a {zSobre - zBase:0.00} m), hasta el borde superior del muro");
@@ -331,7 +359,7 @@ namespace Cad2Revit
             }).Where(v => v.ZSup - v.ZInf > 0.05).ToList();
             // (las piezas que encajonan el vano —jambas, dinteles, alféizares y soleras— se conservan siempre: si el vano
             // pasa detrás de un pilar o del borde del muro, la jamba queda en el borde y lo cierra)
-            var marco = new HashSet<string> { "pie_borde", "jamba", "dintel", "alfeizar", "solera_superior", "solera_inferior" };
+            var marco = new HashSet<string> { "pie_borde", "pie_encuentro", "jamba", "dintel", "alfeizar", "solera_superior", "solera_inferior" };
             int quitadas = piezas.RemoveAll(p => !marco.Contains(p.Rol) && revisar.Any(v => Invade(p, v, a, ux, uy, conf.B)));
             if (quitadas > 0)
                 _inf.Advertencia($"Muro {w.Id}: se quitaron {quitadas} pieza(s) que pasaban por un vano");

@@ -39,7 +39,8 @@ namespace Cad2Revit
         /// <param name="quiebres">t donde cambia la pendiente de <paramref name="tope"/> (para la solera superior)</param>
         public static List<PiezaDef> Generar(double[] a, double[] b, double zBase, double zTope, double recorte0,
                                              double recorte1, List<VanoMuro> aberturas, ConfEntramado c,
-                                             Func<double, double> tope = null, IEnumerable<double> quiebres = null)
+                                             Func<double, double> tope = null, IEnumerable<double> quiebres = null,
+                                             IEnumerable<double> encuentros = null)
         {
             var piezas = new List<PiezaDef>();
             double largo = Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[1] - a[1], 2));
@@ -100,6 +101,17 @@ namespace Cad2Revit
             const double MinUltimo = 0.15;
             for (double t = s0 + c.SeparacionPies; t < s1 - bb / 2 - MinUltimo + Tol; t += c.SeparacionPies)
                 verticales.Add(new Vertical { T = t, Z0 = zb, Z1 = ZtEn(t), Rol = "pie_derecho" });
+
+            // encuentros con otros muros (en T o en esquina, sin pilar): un pie derecho en el eje del muro que llega, para
+            // que su pie derecho de borde tenga dónde fijarse; reemplaza a los intermedios que quedan encima
+            if (encuentros != null)
+                foreach (var te in encuentros)
+                {
+                    if (te < s0 + bb || te > s1 - bb) continue;                  // junto al extremo: ya está el de borde
+                    verticales.RemoveAll(x => x.Rol == "pie_derecho" && Math.Abs(x.T - te) < bb + 0.03);
+                    if (verticales.Any(x => Math.Abs(x.T - te) < bb - Tol)) continue;
+                    verticales.Add(new Vertical { T = te, Z0 = zb, Z1 = ZtEn(te), Rol = "pie_encuentro" });
+                }
 
             if (c.RefuerzoVanos)
             {
