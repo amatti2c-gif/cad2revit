@@ -488,12 +488,15 @@ namespace Cad2Revit
                                           d: (Mt(q.X) - a[0]) * uy - (Mt(q.Y) - a[1]) * ux, z: Mt(q.Z))).ToList();
                 double t0 = loc.Min(x => x.t), t1 = loc.Max(x => x.t), d0 = loc.Min(x => x.d), d1 = loc.Max(x => x.d);
                 double z0 = loc.Min(x => x.z), z1 = loc.Max(x => x.z);
-                // ¿atraviesa el muro? (dentro de su espesor, de su largo y de su altura)
-                if (d1 < -esp / 2 + 0.005 || d0 > esp / 2 - 0.005 || t1 < 0.01 || t0 > largo - 0.01 || z1 < zBase + 0.01 || z0 > zTope - 0.01)
+                bool pilar = e.Category?.Id == new ElementId(BuiltInCategory.OST_StructuralColumns);
+                // ¿atraviesa el muro? (dentro de su espesor, de su largo y de su altura). Un pilar que solo toca un
+                // extremo del muro (muro dibujado de cara a cara de los pilares) también cuenta: ahí termina el entramado
+                double tolT = pilar ? -0.03 : 0.01;
+                if (d1 < -esp / 2 + 0.005 || d0 > esp / 2 - 0.005 || t1 < tolT || t0 > largo - tolT || z1 < zBase + 0.01 || z0 > zTope - 0.01)
                     continue;
                 t0 = Math.Max(0, t0); t1 = Math.Min(largo, t1);
+                if (t1 < t0) { if (t0 <= 0) t1 = t0; else t0 = t1; }               // pilar justo afuera del extremo
                 string nombre = $"{e.Category?.Name} {e.Id}";
-                bool pilar = e.Category?.Id == new ElementId(BuiltInCategory.OST_StructuralColumns);
                 if (pilar)
                 {
                     var fuste = loc.Where(x => x.z > z0 + 0.15).ToList();
@@ -501,6 +504,7 @@ namespace Cad2Revit
                     {
                         t0 = Math.Max(0, fuste.Min(x => x.t));
                         t1 = Math.Min(largo, fuste.Max(x => x.t));
+                        if (t1 < t0) { if (t0 <= 0) t1 = t0; else t0 = t1; }
                     }
                     // pilar que corta el muro en tramos: parte abajo y llega al borde superior del muro en su posición
                     // (en un frontón, los pilares de los extremos llegan al alero, no a la cumbrera) o a la viga que
