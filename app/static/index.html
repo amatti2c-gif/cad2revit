@@ -247,7 +247,8 @@
               <label>Peso del muro (kgf/m²) <input data-sap="muro.peso" data-f="0.001" type="number" step="any" value="50"></label>
               <label>Tamaño de malla (m) <input data-sap="malla" type="number" step="any" value="0.5"></label>
               <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">rotulada</option><option value="empotrado">empotrada</option></select></label>
-            </div></div>
+            </div>
+</div>
           <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432, NCh433:2026)</span></div>
             <div class="sap-form">
               <label>Ancho colaborante (m; carga/m² → carga/m) <input data-sap="cargas.ancho_colaborante" id="sap-ancho" type="number" step="any"></label>
@@ -279,6 +280,66 @@
               <label>Lateral pilares y muros con viento: H / <input data-sap="diseno.lateral_viento" type="number" step="any" value="200"></label>
               <label>Deriva sísmica (NCh433:2026 5.9.2 y Tabla 5): ·H <input data-sap="diseno.deriva_sismo" type="number" step="any" placeholder="según sistema (Tabla 5)"></label>
             </div></div>
+        </div>
+        <div class="panel">
+          <details class="guia-muro"><summary>¿Qué datos pide el muro? Esquema y valores del Manual de marco plataforma</summary>
+            <svg viewBox="0 0 900 435" class="esquema-muro" role="img" aria-label="Esquema de un muro de marco plataforma y sus datos">
+  <defs><pattern id="osb" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M0 8 L8 0" stroke="#c9a56a" stroke-width="1"/></pattern>
+    <marker id="fl" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#333"/></marker></defs>
+  <!-- pilar de acero a la izquierda -->
+  <rect x="40" y="40" width="26" height="310" fill="#9db3d6" stroke="#1f4e9c"/><text x="53" y="32" text-anchor="middle" class="t">pilar</text>
+  <!-- tablero OSB -->
+  <rect x="70" y="58" width="400" height="274" fill="url(#osb)" stroke="#a08050"/>
+  <!-- soleras -->
+  <rect x="70" y="46" width="400" height="12" fill="#e7c98f" stroke="#8a6a30"/><rect x="70" y="34" width="400" height="12" fill="#e7c98f" stroke="#8a6a30"/>
+  <rect x="70" y="332" width="400" height="12" fill="#e7c98f" stroke="#8a6a30"/>
+  <!-- PPDD de borde (dobles) y distribuidos -->
+  <rect x="70" y="58" width="14" height="274" fill="#d9b26b" stroke="#8a6a30"/><rect x="84" y="58" width="14" height="274" fill="#d9b26b" stroke="#8a6a30"/>
+  <rect x="442" y="58" width="14" height="274" fill="#d9b26b" stroke="#8a6a30"/><rect x="456" y="58" width="14" height="274" fill="#d9b26b" stroke="#8a6a30"/>
+  <rect x="180" y="58" width="10" height="274" fill="#ecd3a0" stroke="#8a6a30"/><rect x="270" y="58" width="10" height="274" fill="#ecd3a0" stroke="#8a6a30"/>
+  <rect x="360" y="58" width="10" height="274" fill="#ecd3a0" stroke="#8a6a30"/>
+  <!-- clavado perimetral (puntos) e interior -->
+  <g fill="#333"><circle cx="78" cy="62" r="2"/><circle cx="78" cy="328" r="2"/><circle cx="94" cy="62" r="2"/><circle cx="94" cy="328" r="2"/><circle cx="110" cy="62" r="2"/><circle cx="110" cy="328" r="2"/><circle cx="126" cy="62" r="2"/><circle cx="126" cy="328" r="2"/><circle cx="142" cy="62" r="2"/><circle cx="142" cy="328" r="2"/><circle cx="158" cy="62" r="2"/><circle cx="158" cy="328" r="2"/><circle cx="174" cy="62" r="2"/><circle cx="174" cy="328" r="2"/><circle cx="190" cy="62" r="2"/><circle cx="190" cy="328" r="2"/><circle cx="206" cy="62" r="2"/><circle cx="206" cy="328" r="2"/><circle cx="222" cy="62" r="2"/><circle cx="222" cy="328" r="2"/><circle cx="238" cy="62" r="2"/><circle cx="238" cy="328" r="2"/><circle cx="254" cy="62" r="2"/><circle cx="254" cy="328" r="2"/><circle cx="270" cy="62" r="2"/><circle cx="270" cy="328" r="2"/><circle cx="286" cy="62" r="2"/><circle cx="286" cy="328" r="2"/><circle cx="302" cy="62" r="2"/><circle cx="302" cy="328" r="2"/><circle cx="318" cy="62" r="2"/><circle cx="318" cy="328" r="2"/><circle cx="334" cy="62" r="2"/><circle cx="334" cy="328" r="2"/><circle cx="350" cy="62" r="2"/><circle cx="350" cy="328" r="2"/><circle cx="366" cy="62" r="2"/><circle cx="366" cy="328" r="2"/><circle cx="382" cy="62" r="2"/><circle cx="382" cy="328" r="2"/><circle cx="398" cy="62" r="2"/><circle cx="398" cy="328" r="2"/><circle cx="414" cy="62" r="2"/><circle cx="414" cy="328" r="2"/><circle cx="430" cy="62" r="2"/><circle cx="430" cy="328" r="2"/><circle cx="446" cy="62" r="2"/><circle cx="446" cy="328" r="2"/><circle cx="462" cy="62" r="2"/><circle cx="462" cy="328" r="2"/><circle cx="77" cy="70" r="2"/><circle cx="463" cy="70" r="2"/><circle cx="77" cy="86" r="2"/><circle cx="463" cy="86" r="2"/><circle cx="77" cy="102" r="2"/><circle cx="463" cy="102" r="2"/><circle cx="77" cy="118" r="2"/><circle cx="463" cy="118" r="2"/><circle cx="77" cy="134" r="2"/><circle cx="463" cy="134" r="2"/><circle cx="77" cy="150" r="2"/><circle cx="463" cy="150" r="2"/><circle cx="77" cy="166" r="2"/><circle cx="463" cy="166" r="2"/><circle cx="77" cy="182" r="2"/><circle cx="463" cy="182" r="2"/><circle cx="77" cy="198" r="2"/><circle cx="463" cy="198" r="2"/><circle cx="77" cy="214" r="2"/><circle cx="463" cy="214" r="2"/><circle cx="77" cy="230" r="2"/><circle cx="463" cy="230" r="2"/><circle cx="77" cy="246" r="2"/><circle cx="463" cy="246" r="2"/><circle cx="77" cy="262" r="2"/><circle cx="463" cy="262" r="2"/><circle cx="77" cy="278" r="2"/><circle cx="463" cy="278" r="2"/><circle cx="77" cy="294" r="2"/><circle cx="463" cy="294" r="2"/><circle cx="77" cy="310" r="2"/><circle cx="463" cy="310" r="2"/><circle cx="77" cy="326" r="2"/><circle cx="463" cy="326" r="2"/><circle cx="275" cy="80" r="1.6"/><circle cx="275" cy="114" r="1.6"/><circle cx="275" cy="148" r="1.6"/><circle cx="275" cy="182" r="1.6"/><circle cx="275" cy="216" r="1.6"/><circle cx="275" cy="250" r="1.6"/><circle cx="275" cy="284" r="1.6"/><circle cx="275" cy="318" r="1.6"/></g>
+  <!-- hold-down y unión al pilar -->
+  <rect x="456" y="300" width="14" height="30" fill="#555"/><line x1="463" y1="330" x2="463" y2="370" stroke="#555" stroke-width="3"/>
+  <g stroke="#1f4e9c" stroke-width="3"><line x1="56" y1="90" x2="92" y2="90"/><line x1="56" y1="170" x2="92" y2="170"/><line x1="56" y1="250" x2="92" y2="250"/><line x1="56" y1="315" x2="92" y2="315"/></g>
+  <!-- base -->
+  <rect x="30" y="344" width="470" height="26" fill="#ddd" stroke="#999"/><text x="265" y="362" text-anchor="middle" class="t">sobrecimiento</text>
+  <!-- cotas -->
+  <line x1="70" y1="392" x2="470" y2="392" stroke="#333" marker-start="url(#fl)" marker-end="url(#fl)"/><text x="270" y="388" text-anchor="middle" class="t">L (segmento de muro, del modelo)</text>
+  <line x1="84" y1="412" x2="463" y2="412" stroke="#333" marker-start="url(#fl)" marker-end="url(#fl)"/><text x="273" y="426" text-anchor="middle" class="t">L′ = L − 1,5·b_ext − b_HD</text>
+  <line x1="500" y1="34" x2="500" y2="344" stroke="#333" marker-start="url(#fl)" marker-end="url(#fl)"/><text x="506" y="190" class="t">H</text>
+  <!-- llamadas -->
+  <g class="ll">
+    <line x1="140" y1="62" x2="560" y2="60"/><text x="565" y="64">① clavado perimetral s (50 / 100 / 150 mm)</text>
+    <line x1="230" y1="200" x2="560" y2="92"/><text x="565" y="96">② OSB 9,5 mm, 1 o 2 caras · ③ Ga (vacío = Manual)</text>
+    <line x1="91" y1="120" x2="560" y2="124"/><text x="565" y="128">④ PPDD de borde: A_ext (un extremo) y b_ext</text>
+    <line x1="185" y1="140" x2="560" y2="156"/><text x="565" y="160">⑤ E de los PPDD (MGP10: 102 tonf/cm²)</text>
+    <line x1="275" y1="114" x2="560" y2="188"/><text x="565" y="192">PPDD distribuidos @ 400–600 mm (gravitacional)</text>
+    <line x1="72" y1="250" x2="560" y2="220"/><text x="565" y="224">⑥ unión al pilar: Tadm y rigidez</text>
+    <line x1="463" y1="315" x2="560" y2="252"/><text x="565" y="256">⑦ hold-down (borde en vano): modelo o auto</text>
+    <line x1="300" y1="338" x2="560" y2="284"/><text x="565" y="288">anclaje antideslizamiento (base)</text>
+    <line x1="400" y1="40" x2="560" y2="316"/><text x="565" y="320">soleras dobles arriba, simple abajo</text>
+    <text x="565" y="352">⑧ peso del muro (kgf/m²)</text>
+  </g>
+</svg>
+            <div class="tabla-wrap"><table class="tabla sap-tabla">
+              <thead><tr><th>Dato</th><th>Qué es</th><th>Valores del Manual</th></tr></thead>
+              <tbody>
+                <tr><td>① Clavado perimetral</td><td>separación de los clavos 8d en el borde de cada tablero (en el interior, 1 hilera @ 300 mm)</td><td>150, 100 o 50 mm; Ga = 304 / 446 / 804 tonf/m por cara (Tablas 18 y 19)</td></tr>
+                <tr><td>② Caras con OSB</td><td>tableros OSB 9,5 mm «Sheathing» en una o en las dos caras</td><td>1 o 2 (Tablas 7 a 9)</td></tr>
+                <tr><td>③ Ga</td><td>rigidez de corte aparente del tablero clavado</td><td>vacío = la de la tabla según ① y ②</td></tr>
+                <tr><td>④ A_ext y b_ext</td><td>pies derechos (PPDD) de borde de un extremo: área total y ancho del paquete</td><td>3 a 6 PPDD de borde 2x6 (35×138): 94,5 a 289,8 cm²; 2 piezas 2x3 (50×75): 75 cm²</td></tr>
+                <tr><td>⑤ E PPDD</td><td>módulo de elasticidad de los PPDD de borde</td><td>pino radiata MGP10: 102 tonf/cm² (Tablas 16 y 17)</td></tr>
+                <tr><td>⑥ Unión al pilar</td><td>pernos o tornillos del PPDD de borde al pilar de acero: tracción admisible y rigidez</td><td>según la unión que diseñes (no está en el Manual)</td></tr>
+                <tr><td>⑦ Hold-down</td><td>anclaje del borde que llega a un vano</td><td>HD3B a HD12 dobles, Tadm 1,38 a 8,36 tonf (Tablas 20, 21 y 47)</td></tr>
+                <tr><td>⑧ Peso</td><td>peso propio del muro por m²</td><td>≈ 50 kgf/m²</td></tr>
+                <tr><td>PPDD distribuidos</td><td>pies derechos intermedios: los controla la carga gravitacional, no entran en la rigidez lateral</td><td>2x4 o 2x6 @ 400 mm (Tabla 6); en el ejemplo, simples @ 400–600 mm</td></tr>
+                <tr><td>Soleras</td><td>piezas horizontales arriba (doble) y abajo</td><td>2x6, 4 soleras por muro en el ejemplo (Tablas 8 y 9)</td></tr>
+              </tbody></table></div>
+            <p class="tenue">La rigidez del segmento sale de la Ec. 2.22 del Manual con H, L, ①–⑤ y la rigidez del anclaje
+              (⑥ o ⑦); la tracción del anclaje es T = V·H/L′ − (carga gravitacional)·L/(2·L′) (Ec. 3.30–3.31).</p>
+          </details>
         </div>
         <div class="panel"><div class="panel-tit"><span>Elementos del eje</span></div>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="sap-elementos"></table></div></div>

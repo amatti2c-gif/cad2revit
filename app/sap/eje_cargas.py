@@ -345,6 +345,23 @@ def cargas_eje(mod, p: ParametrosCargas | None = None) -> CargasEje:
             c.distribuidas.append((f, nombre, "X", -pn * nx))
             c.distribuidas.append((f, nombre, "Z", -pn * nz))
 
+    # E: sismo NCh433:2026 (el análisis modal espectral lo hace el programa de análisis; aquí el detalle de los datos)
+    sis = sistema_sismico(p)
+    s_, t0_, tp_, n_, pp_ = SUELOS_DS61[p.suelo]
+    a0_ = A0_ZONA[p.zona]
+    tor = factor_torsion(p)
+    c.resumen.append(f"Sismo NCh433:2026: zona {p.zona} (A0 = {a0_:.2f} g, Tabla 7), suelo {p.suelo} (S {s_}, T0 {t0_} s, "
+                     f"T' {tp_} s, n {n_}, p {pp_}; Tabla 8), I = {p.importancia_sismo} (Tabla 6)")
+    c.resumen.append(f"  sistema (Tabla 5, 5.7.2): {sis['texto']}; deriva máxima {sis['deriva']}·h")
+    c.resumen.append(f"  EX: análisis modal espectral, Sa = I·S·A0·α/R* con R* = 1 + T*/(0,10·T0 + T*/R0) y T* del modo "
+                     f"con mayor masa en X; CQC; modos hasta 90 % de masa (6.3.2)")
+    c.resumen.append(f"  corte basal entre Qmín = I·S·A0·P/6g y Qmáx = I·Cmáx·P, Cmáx = {cmax(sis['R']):.3f}·S·A0/g (Tabla 9 con "
+                     f"R = {sis['R']:g}); Qmáx no reduce desplazamientos (6.3.6)")
+    c.resumen.append(f"  {tor['texto']}")
+    c.resumen.append("  peso sísmico P: cargas permanentes (techo sin sobrecarga, 5.5.1); EZ: espectro vertical = 2/3 del "
+                     "horizontal (criterio elegido; la norma solo lo exige para aleros y marquesinas, 5.8.2)")
+    c.resumen.append("  E de diseño = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±)")
+
     # NCh3171 §9.1.1 (resistencia); E es el sismo del espectro (en las dos direcciones)
     c.combos["C1_1.4D"] = {"DEAD": 1.4}
     c.combos["C2_1.2D+0.5Lr"] = {"DEAD": 1.2, "LR": 0.5}

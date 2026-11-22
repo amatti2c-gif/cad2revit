@@ -270,3 +270,10 @@ legend { padding: 0 4px; }
 #visor-lienzo { width: 100%; height: 460px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
 
 td.pendiente { color: #8a5a00; background: #fff6e0; }
+
+.guia-muro { margin-top: 10px; }
+.guia-muro summary { cursor: pointer; font-weight: 600; }
+.esquema-muro { width: 100%; max-width: 900px; height: auto; display: block; margin: 8px 0; }
+.esquema-muro .t, .esquema-muro .ll text { font-size: 12px; fill: #222; }
+.esquema-muro .ll line { stroke: #777; stroke-width: 0.8; }
+@media (prefers-color-scheme: dark) { .esquema-muro .t, .esquema-muro .ll text { fill: #ddd; } }
