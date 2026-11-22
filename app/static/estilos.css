@@ -261,3 +261,8 @@ legend { padding: 0 4px; }
 
 #sap-borrador summary { cursor: pointer; }
 #sap-borrador[open] summary { margin-bottom: 8px; }
+
+.sap-avance { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
+.sap-avance-barra { flex: 1; height: 10px; border-radius: 5px; background: #e3e7ee; overflow: hidden; }
+#sap-avance-relleno { height: 100%; width: 0; background: #2d6cdf; transition: width .4s ease; }
+#sap-avance-txt { font-size: 13px; white-space: nowrap; min-width: 260px; }

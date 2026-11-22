@@ -2191,7 +2191,40 @@ async function sapCorrer() {
 async function sapNube() {
   await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
   $("#sap-estado").textContent = "Analizando en la nube con PyNite (estático, modal y espectral)…";
-  const d = await api("POST", P(`/sap/${encodeURIComponent(sap.nombre)}/analizar`), sapAjustes());
+  const nombre = sap.nombre, caja = $("#sap-avance"), boton = $("#btn-sap-nube");
+  const poner = (pct, etapa) => {
+    $("#sap-avance-relleno").style.width = `${pct}%`;
+    $("#sap-avance-txt").textContent = `${pct} % · ${etapa}`;
+  };
+  poner(0, "Enviando el eje");
+  caja.classList.remove("oculto");
+  boton.disabled = true;
+  // el servidor informa la etapa (pct) y dónde empieza la siguiente (hasta); en una etapa larga la barra avanza
+  // sola, cada vez más lento, sin llegar a la siguiente hasta que el servidor la confirme
+  let pct = 0, mostrado = 0, hasta = 0, etapa = "Enviando el eje";
+  const reloj = setInterval(async () => {
+    try {
+      const a = await api("GET", P(`/sap/${encodeURIComponent(nombre)}/avance`));
+      if (a.pct != null && a.pct >= pct) { pct = a.pct; hasta = Math.max(a.hasta ?? a.pct, a.pct); etapa = a.etapa; }
+    } catch { /* se reintenta */ }
+  }, 700);
+  const suave = setInterval(() => {
+    const techo = pct + 0.95 * (hasta - pct);
+    mostrado = Math.max(mostrado, pct);
+    if (mostrado < techo) mostrado += (techo - mostrado) * 0.03;
+    poner(Math.floor(mostrado), etapa);
+  }, 150);
+  let d;
+  try {
+    d = await api("POST", P(`/sap/${encodeURIComponent(nombre)}/analizar`), sapAjustes());
+    clearInterval(suave);
+    poner(100, "Listo");
+  } finally {
+    clearInterval(reloj);
+    clearInterval(suave);
+    boton.disabled = false;
+    setTimeout(() => caja.classList.add("oculto"), 1200);
+  }
   sapMostrarNube(d);
   $("#sap-estado").textContent = "Listo: análisis PyNite, acero AISC 360-16 y muros de madera";
 }
@@ -2202,6 +2235,7 @@ function sapMostrarNube(d) {
   sap.razones = {};
   for (const a of d.acero) for (const b of a.barras) sap.razones[b] = a.razon;
   const malas = d.acero.filter(a => a.razon > 1).length, mmalas = d.madera.filter(m => m.FU > 1).length;
+  const defs = d.deformaciones || [], dmalas = defs.filter(x => x.razon > 1).length;
   $("#sap-nube").classList.remove("oculto");
   $("#sap-leyenda-razon").classList.remove("oculto");
   $("#sap-nube-resumen").replaceChildren(
@@ -2209,7 +2243,13 @@ function sapMostrarNube(d) {
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
     `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
-    h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"));
+    h("span", { class: mmalas ? "nocumple" : "cumple" }, mmalas ? `${mmalas} muro(s) no cumplen` : "Muros: todos cumplen"), " · ",
+    h("span", { class: dmalas ? "nocumple" : "cumple" }, dmalas ? `${dmalas} deformación(es) exceden el límite` : "Deformaciones: todas cumplen"));
+  $("#sap-nube-deform").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Elemento", "Verificación", "Combinación", "δ (mm)", "Límite (mm)", "Criterio", "L o H (m)", "Razón"]
+      .map(t => h("th", {}, t)))),
+    h("tbody", {}, defs.map(x => h("tr", {}, h("td", {}, x.elemento), h("td", {}, x.tipo), h("td", {}, x.combo), h("td", {}, f2(x.delta_mm)),
+      h("td", {}, f2(x.limite_mm)), h("td", {}, x.criterio), h("td", {}, f2(x.L)), celda(x.razon)))));
   $("#sap-nube-acero").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Id Revit", "Sección", "L (m)", "Razón", "Interacción", "Corte", "Ec.", "Combinación", "Pu (tonf)", "Mu (tonf·m)",
       "Vu (tonf)", "φPn", "φMn", "φVn", "KL/r", "Notas"].map(t => h("th", {}, t)))),

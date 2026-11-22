@@ -48,10 +48,18 @@ def _txy_global(q, combo) -> float:
     return float(S[0, 1])
 
 
-def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9) -> dict:
-    """mod: eje_revit.ModeloEje; cargas: eje_cargas.CargasEje; pc: ParametrosCargas."""
+def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
+             avance=None, limites: dict | None = None) -> dict:
+    """mod: eje_revit.ModeloEje; cargas: eje_cargas.CargasEje; pc: ParametrosCargas.
+    avance(pct, etapa, hasta): opcional, se llama a medida que avanza el cálculo (pct de 0 a 100; hasta: el pct
+    de la etapa siguiente, para que la barra avance sola durante una etapa larga, como el análisis estático)."""
     from Pynite import FEModel3D
     from Pynite import Analysis
+
+    def paso(pct, etapa, hasta=None):
+        if avance:
+            avance(round(pct), etapa, round(hasta if hasta is not None else pct))
+    paso(2, "Armando el modelo en PyNite")
 
     m = FEModel3D()
     for n, (x, z) in mod.nudos.items():
@@ -65,8 +73,11 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         base = mod.materiales[a["material"]]
         E0, G0 = base["E"], base["E"] / (2 * (1 + base["nu"]))
         nombre = f"MAT_{sec}"
-        m.add_material(nombre, E0 * a["f11"], G0 * a["f12"], 0.0, 0.0)
-        mat_area[sec] = nombre
+        # PyNite (Quad3D.Cm) toma G = E/(2(1+ν)) y no el G del material: con ν = 0 el material lleva E = 2·G_calibrado
+        # y el E calibrado entra como factor ortótropo kx = ky = E_cal / (2·G_cal)
+        E_cal, G_cal = E0 * a["f11"], G0 * a["f12"]
+        m.add_material(nombre, 2 * G_cal, G_cal, 0.0, 0.0)
+        mat_area[sec] = (nombre, E_cal / (2 * G_cal))
     perfiles = {}
     for sec, s in mod.secciones.items():
         p = Perfil(s["forma"], s["d"], s["bf"], s.get("tw", 0.0), s.get("tf", 0.0), s.get("t", 0.0))
@@ -88,7 +99,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     for nombre, ns, sec in mod.areas:
         t_ = mod.secciones_area[sec]["espesor"]
         if len(ns) == 4:
-            m.add_quad(nombre, *ns, t_, mat_area[sec])
+            m.add_quad(nombre, *ns, t_, mat_area[sec][0], mat_area[sec][1], mat_area[sec][1])
             sub[nombre] = [nombre]
             continue
         P = [mod.nudos[n] for n in ns]
@@ -97,7 +108,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         sub[nombre] = []
         for k in range(3):
             q = f"{nombre}_{k + 1}"
-            m.add_quad(q, ns[k], med[k], g, med[k - 1], t_, mat_area[sec])
+            m.add_quad(q, ns[k], med[k], g, med[k - 1], t_, mat_area[sec][0], mat_area[sec][1], mat_area[sec][1])
             sub[nombre].append(q)
     # apoyos y restricciones del plano (Z, RX, RY); los nudos solo de muros no tienen giro en el plano (RZ)
     con_barra = {x for _, a, b, _ in mod.barras for x in (a, b)}
@@ -137,7 +148,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         m.add_load_combo(n, {n: 1.0})
 
     # ---- modal (masa = DEAD) y espectro DS61 con CQC ----
+    paso(5, f"Análisis estático: {len(estaticos)} casos de carga", 75)
     m.analyze_linear(check_statics=False)
+    paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
     K11, _, _, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
     M11, _, _, _ = Analysis._partition(m, m.M("DEAD", "Y", G_ACC, False, sparse=True).tocsr(), D1_idx, D2_idx)
@@ -183,6 +196,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         factor = q_min / q0
     elif q0 > q_max:
         factor = q_max / q0
+    paso(80, f"Espectro NCh433 + DS61 (T* = {t_est:.3f} s) y corte basal")
     modos_combo = []
     for i in range(nmod):
         nombre = f"_MODO{i + 1}"
@@ -200,7 +214,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                 np.array([mb.moment("Mz", x, combo) for x in xs]))
 
     res_barra = {}
-    for f, *_ in mod.barras:
+    for k_b, (f, *_) in enumerate(mod.barras):
+        paso(82 + 12 * k_b / max(len(mod.barras), 1), f"Esfuerzos en las barras ({k_b + 1} de {len(mod.barras)})")
         est = {c: fuerzas(f, c) for c in estaticos}
         modal = [fuerzas(f, c) for c in modos_combo]
         E = tuple(_cqc([mm[k] for mm in modal], list(omegas)) for k in range(3))
@@ -212,7 +227,8 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         por_elemento.setdefault((mod.origen.get(f), sec), []).append(f)
     combos_lrfd = cargas.combos
     acero = []
-    for (orig, sec), fs in por_elemento.items():
+    for k_e, ((orig, sec), fs) in enumerate(por_elemento.items()):
+        paso(94 + 4 * k_e / max(len(por_elemento), 1), f"Diseño de acero AISC 360-16 ({k_e + 1} de {len(por_elemento)})")
         p, g = perfiles[sec]
         L = sum(m.members[f].L() for f in fs)
         cap = capacidades(p, L, lb_fuera or L, lb_fuera or L, Fy=fy)
@@ -245,6 +261,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
            "D+0,75E": {"DEAD": 1.0, "E": 0.75}, "0,6D+W": {"DEAD": 0.6, "W": 1.0}, "0,6D+E": {"DEAD": 0.6, "E": 1.0}}
     vientos = [n for n, t in cargas.patrones.items() if t == "WIND"]
     madera = []
+    paso(98, "Verificación de muros de madera")
     for seg in mod.resumen_muros:
         x0, x1, H = seg["x0"], seg["x1"], seg["H"]
         cuads = [(nombre, ns) for nombre, ns, sec in mod.areas if sec == seg["seccion"]]
@@ -285,9 +302,116 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         madera.append({"muro": seg["muro"], "x0": x0, "x1": x1, "L": L, "H": H, **peor, "T_anclaje": T})
     madera.sort(key=lambda r: -r["FU"])
 
+    deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
+
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro,
-        "acero": acero, "madera": madera,
+        "acero": acero, "madera": madera, "deformaciones": deformaciones,
+        "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }
+
+
+# límites de deformación por defecto (servicio, cargas sin mayorar):
+# - vigas y costaneras de techo, flecha relativa a la cuerda: L/240 con cargas totales (D+Lr, D+W, D+0,75Lr+0,75W) y
+#   L/360 con la carga variable sola (Lr o W)  [criterio usual, AISC Design Guide 3 / IBC Tabla 1604.3]
+# - pilares y muros, desplazamiento lateral relativo: H/200 con viento (D+W) y 0,002·H con sismo (NCh433 5.9.2, con
+#   los desplazamientos del análisis espectral reducido)
+LIMITES_DEF = {"viga_total": 240, "viga_variable": 360, "lateral_viento": 200, "deriva_sismo": 0.002}
+
+
+def _deformaciones(m, mod, cargas, modos, omegas, sub, lim) -> list[dict]:
+    vientos = [n for n, t in cargas.patrones.items() if t == "WIND"]
+    D = lambda n, gdl, caso: getattr(m.nodes[n], gdl)[caso]          # noqa: E731
+
+    def comb(valor, fac):
+        return sum(f * valor(c) for c, f in fac.items())
+    out = []
+
+    # ---- vigas y techo: flecha perpendicular a la cuerda del elemento de Revit ----
+    grupos = {}
+    for f, a, b, sec in mod.barras:
+        if mod.roles.get(f) in ("viga", "techo"):
+            grupos.setdefault(mod.origen.get(f) or f, []).append((a, b))
+    totales = [("D+Lr", {"DEAD": 1, "LR": 1})] + [(f"D+{w}", {"DEAD": 1, w: 1}) for w in vientos] +               [(f"D+0,75Lr+0,75{w}", {"DEAD": 1, "LR": 0.75, w: 0.75}) for w in vientos]
+    variables = [("Lr", {"LR": 1})] + [(w, {w: 1}) for w in vientos]
+    for orig, pares in grupos.items():
+        ns = {n for p in pares for n in p}
+        (xa, za), (xb, zb) = min((mod.nudos[n] for n in ns)), max((mod.nudos[n] for n in ns))
+        L = math.hypot(xb - xa, zb - za)
+        if L < 0.5:
+            continue
+        ux, uz = (xb - xa) / L, (zb - za) / L
+        orden = sorted(ns, key=lambda n: (mod.nudos[n][0] - xa) * ux + (mod.nudos[n][1] - za) * uz)
+        ini, fin = orden[0], orden[-1]
+
+        def flecha(fac):
+            perp = {n: comb(lambda c, n=n: -D(n, "DX", c) * uz + D(n, "DY", c) * ux, fac) for n in orden}
+            peor = 0.0
+            for n in orden:
+                s_ = ((mod.nudos[n][0] - xa) * ux + (mod.nudos[n][1] - za) * uz) / L
+                peor = max(peor, abs(perp[n] - (perp[ini] * (1 - s_) + perp[fin] * s_)))
+            return peor
+        for grupo, lista, div in (("total", totales, lim["viga_total"]), ("variable", variables, lim["viga_variable"])):
+            d, cn = max(((flecha(fac), cn) for cn, fac in lista), default=(0.0, ""))
+            out.append({"elemento": orig, "tipo": "Viga (vertical)", "combo": cn, "delta_mm": float(d) * 1000,
+                        "limite_mm": L / div * 1000, "criterio": f"L/{div:g}", "L": L, "razon": float(d) / (L / div)})
+
+    # ---- pilares: desplazamiento lateral relativo entre sus extremos ----
+    def lateral(nodos_ref, nodos_obj, altura_de):
+        """máx. |ΔDX|/h (viento: D+W; sismo: E con CQC modo a modo) entre la base y los nudos de nodos_obj."""
+        base = lambda c: sum(D(n, "DX", c) for n in nodos_ref) / len(nodos_ref)      # noqa: E731
+        res_w, res_e = (0.0, 0.0, ""), (0.0, 0.0)
+        for n in nodos_obj:
+            h = altura_de(n)
+            if h < 0.3:
+                continue
+            for w in vientos:
+                dd = abs(comb(lambda c, n=n: D(n, "DX", c) - base(c), {"DEAD": 1, w: 1}))
+                if dd / h > (res_w[0] / res_w[1] if res_w[1] else 0):
+                    res_w = (dd, h, f"D+{w}")
+            de = float(_cqc([np.array([D(n, "DX", c) - base(c)]) for c in modos], omegas)[0])
+            if de / h > (res_e[0] / res_e[1] if res_e[1] else 0):
+                res_e = (de, h)
+        return res_w, res_e
+
+    def filas_laterales(nombre, tipo, res_w, res_e):
+        if res_w[1]:
+            d, h, cn = res_w
+            out.append({"elemento": nombre, "tipo": f"{tipo} (lateral, viento)", "combo": cn, "delta_mm": float(d) * 1000,
+                        "limite_mm": h / lim["lateral_viento"] * 1000, "criterio": f"H/{lim['lateral_viento']:g}", "L": h,
+                        "razon": float(d) / (h / lim["lateral_viento"])})
+        if res_e[1]:
+            d, h = res_e
+            out.append({"elemento": nombre, "tipo": f"{tipo} (deriva sísmica)", "combo": "E (espectral, CQC)", "delta_mm": float(d) * 1000,
+                        "limite_mm": h * lim["deriva_sismo"] * 1000, "criterio": f"{lim['deriva_sismo']:g}·H (NCh433 5.9.2)",
+                        "L": h, "razon": float(d) / (h * lim["deriva_sismo"])})
+
+    pil = {}
+    for f, a, b, sec in mod.barras:
+        if mod.roles.get(f) == "pilar":
+            pil.setdefault(mod.origen.get(f) or f, set()).update((a, b))
+    for orig, ns in pil.items():
+        bajo = min(ns, key=lambda n: mod.nudos[n][1])
+        z0 = mod.nudos[bajo][1]
+        alto = max(ns, key=lambda n: mod.nudos[n][1])
+        filas_laterales(orig, "Pilar", *lateral([bajo], [alto], lambda n: mod.nudos[n][1] - z0))
+
+    # ---- muros: desplazamiento lateral de los nudos del segmento respecto de su base ----
+    for seg in mod.resumen_muros:
+        ns = {n for nombre, nn, sec in mod.areas if sec == seg["seccion"] for n in nn}
+        if not ns:
+            continue
+        z0 = min(mod.nudos[n][1] for n in ns)
+        base = [n for n in ns if abs(mod.nudos[n][1] - z0) < 1e-6]
+        # borde superior del segmento: el nudo más alto de cada vertical (la deriva se mide de la base al borde)
+        tope = {}
+        for n in ns:
+            x = round(mod.nudos[n][0], 4)
+            if x not in tope or mod.nudos[n][1] > mod.nudos[tope[x]][1]:
+                tope[x] = n
+        filas_laterales(f"{seg['muro']} x {seg['x0']}–{seg['x1']}", "Muro",
+                        *lateral(base, [n for n in tope.values() if n not in base], lambda n: mod.nudos[n][1] - z0))
+    out.sort(key=lambda r: -r["razon"])
+    return out

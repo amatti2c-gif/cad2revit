@@ -73,3 +73,43 @@ def test_endpoints(tmp_path, monkeypatch):
     h = cli.post("/api/hormigon/verificar", json={"b": 300, "h": 500, "recubrimiento": 50, "as_inf": 942, "av": 157, "s": 150,
                                                  "Mu": 100, "Vu": 80}).json()
     assert 0 < h["flexion"]["razon"] < 1 and h["corte"]["phiVn_kN"] > 80
+
+
+def test_muro_pynite_tiene_la_rigidez_del_manual():
+    """PyNite toma G = E/2(1+ν) en los cuadriláteros: el modelo debe reproducir el K_eq calibrado (Ec. 2.22)."""
+    from Pynite import FEModel3D
+    from app.sap.eje_revit import mallar
+    eje = {"tipo_archivo": "cad2revit-eje-sap", "eje": "R", "pilares": [], "vigas": [],
+           "muros": [{"id": "m", "material": "madera", "x0": 0, "x1": 2.4, "z0": 0, "nucleo": 0.075,
+                      "perfil": [[0, 2.5], [2.4, 2.5]], "vanos": []}]}
+    mod = mallar(eje, malla=0.5)
+    a = next(iter(mod.secciones_area.values()))
+    E0 = mod.materiales[a["material"]]["E"]
+    E_cal, G_cal = E0 * a["f11"], E0 / 2 * a["f12"]
+    m = FEModel3D()
+    for n, (x, z) in mod.nudos.items():
+        m.add_node(n, x, z, 0)
+        m.def_support(n, z == 0, z == 0, True, True, True, True)
+    m.add_material("M", 2 * G_cal, G_cal, 0, 0)
+    for nm, ns, _ in mod.areas:
+        m.add_quad(nm, *ns, a["espesor"], "M", E_cal / (2 * G_cal), E_cal / (2 * G_cal))
+    top = [n for n, (_, z) in mod.nudos.items() if abs(z - 2.5) < 1e-6]
+    for n in top:
+        m.add_node_load(n, "FX", 1.0 / len(top))
+    m.add_load_combo("C", {"Case 1": 1})
+    m.analyze_linear(check_statics=False)
+    k = len(top) / sum(m.nodes[n].DX["C"] for n in top)
+    assert abs(k / mod.resumen_muros[0]["K_eq_tonf_m"] - 1) < 0.15
+
+
+def test_deformaciones():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc, limites={"viga_total": 300})
+    tipos = {d["tipo"] for d in r["deformaciones"]}
+    assert {"Viga (vertical)", "Pilar (lateral, viento)", "Pilar (deriva sísmica)", "Muro (deriva sísmica)"} <= tipos
+    assert any(d["criterio"] == "L/300" for d in r["deformaciones"])
+    assert all(d["delta_mm"] >= 0 and d["limite_mm"] > 0 for d in r["deformaciones"])

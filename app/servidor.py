@@ -1879,6 +1879,14 @@ def s2k_eje_sap(pid: str, nombre: str, aj: AjustesEje):
                         headers={"Content-Disposition": f'attachment; filename="{nombre}.s2k"'})
 
 
+_AVANCE_ANALISIS: dict = {}       # "pid/eje" → {pct, etapa}: avance del análisis en curso
+
+
+@app.get("/api/proyectos/{pid}/sap/{nombre}/avance")
+def avance_eje_pynite(pid: str, nombre: str):
+    return _AVANCE_ANALISIS.get(f"{pid}/{nombre}") or {"pct": None, "etapa": ""}
+
+
 @app.post("/api/proyectos/{pid}/sap/{nombre}/analizar")
 def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
     """Análisis en la nube con PyNite (estático + modal espectral NCh433/DS61) y verificación de los elementos:
@@ -1890,11 +1898,18 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
     try:
         fy = float(dis.get("fy_mpa") or 270) * 1000 / 9.80665
         lb = float(dis["lb"]) if dis.get("lb") not in (None, "") else None
-        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb)
+        clave = f"{pid}/{nombre}"
+        _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando el modelo", "hasta": 2}
+        limites = {k: float(dis[k]) for k in ("viga_total", "viga_variable", "lateral_viento", "deriva_sismo")
+                   if dis.get(k) not in (None, "")}
+        r = analizar(mod, cargas, pc, fy=fy, lb_fuera=lb, limites=limites, avance=lambda pct, etapa, hasta: _AVANCE_ANALISIS.__setitem__(
+            clave, {"pct": pct, "etapa": etapa, "hasta": hasta}))
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(400, f"No se pudo analizar el eje: {e}")
+    finally:
+        _AVANCE_ANALISIS.pop(f"{pid}/{nombre}", None)
     r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     r["nota"] = f"Análisis PyNite en la app (Fy {dis.get('fy_mpa') or 270} MPa" + (f", Lb {lb} m" if lb else ", Lb = largo del elemento") + ")"
     f.with_name(f.name.replace(".sap.json", ".resultado.json")).write_text(json.dumps(r, ensure_ascii=False), encoding="utf-8")
