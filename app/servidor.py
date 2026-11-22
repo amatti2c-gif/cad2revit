@@ -1923,7 +1923,10 @@ def resultado_eje_pynite(pid: str, nombre: str):
     r = f.with_name(f.name.replace(".sap.json", ".resultado.json"))
     if not r.is_file():
         raise HTTPException(404, "El eje aún no se ha analizado")
-    return json.loads(r.read_text(encoding="utf-8"))
+    from app.sap.eje_pynite import VERSION_RESULTADO
+    d = json.loads(r.read_text(encoding="utf-8"))
+    d["desactualizado"] = d.get("version") != VERSION_RESULTADO
+    return d
 
 
 class SeccionHormigon(BaseModel):

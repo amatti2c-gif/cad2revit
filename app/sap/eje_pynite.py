@@ -19,6 +19,8 @@ from .diseno_acero import FY_A270ES, Perfil, capacidades, razon
 from .eje_cargas import A0_ZONA, SUELOS_DS61, espectro_ds61
 
 G_ACC = 9.80665
+# versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
+VERSION_RESULTADO = 4
 # resistencia admisible al corte de muros (tonf/m), 1 tablero OSB 9,5 mm Sheathing y clavo 8d, según el clavado
 # perimetral (Manual de diseño de estructuras en madera, Tablas 45 y 46; SDPWS 4.3A, sismo). Viento: × 1,4 (SDPWS)
 VN_OSB_9_5_8D = {150: 0.33, 100: 0.48, 50: 0.79}
@@ -388,7 +390,7 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
+        "version": VERSION_RESULTADO, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
         "limites_deformacion": {**LIMITES_DEF, **(limites or {})},
     }
 

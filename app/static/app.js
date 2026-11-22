@@ -2059,10 +2059,13 @@ async function abrirEjeSap(nombre) {
   $("#sap-leyenda-razon").classList.add("oculto");
   sapTablaElementos();
   await sapActualizar();
-  let hay = false;
-  try { sapMostrarNube(await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`))); hay = true; } catch { /* aún sin análisis */ }
-  // recién llegado desde Revit y sin análisis: se analiza y diseña de inmediato
-  if (sap.auto === nombre) { sap.auto = null; if (!hay) await sapNube(); }
+  let res = null;
+  try { res = await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`)); } catch { /* aún sin análisis */ }
+  const desdeRevit = sap.auto === nombre;
+  sap.auto = null;
+  if (res && !res.desactualizado) sapMostrarNube(res);
+  // recién llegado desde Revit sin análisis, o resultado de una versión anterior del cálculo: se analiza de nuevo
+  else if (desdeRevit || res) await sapNube();
 }
 
 async function sapActualizar() {
