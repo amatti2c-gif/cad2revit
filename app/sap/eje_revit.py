@@ -217,6 +217,22 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         # min_celda se juntan en uno (manda el pilar, luego el extremo, el quiebre y al final el vano): sin shells angostos
         cand = [(x, 0) for x in xs_pilar if x0 - 1e-6 <= x <= x1 + 1e-6] + [(x0, 1), (x1, 1)]
         cand += [(x, 2) for x, _ in perfil if x0 < x < x1]
+        # en el frontón, líneas verticales donde el borde inclinado cruza cada nivel horizontal (cada «malla» sobre el
+        # tope más bajo): así cada franja termina en un solo triángulo bajo el borde y los niveles quedan horizontales
+        # (muestreo fino del borde real: el borde se ajusta a las vigas que lo siguen, que pueden no calzar con el perfil)
+        npt = max(2, int((x1 - x0) / 0.02))
+        xp = sorted({x0 + (x1 - x0) * i / npt for i in range(npt + 1)} | {x for x, _ in perfil if x0 < x < x1})
+        zp = [tope(x) for x in xp]
+        zmin0 = min(zp)
+        for (xa_, za_), (xb_, zb_) in zip(zip(xp, zp), zip(xp[1:], zp[1:])):
+            if abs(zb_ - za_) < 1e-6:
+                continue
+            lo, hi = sorted((za_, zb_))
+            k = math.floor((lo - zmin0) / malla) + 1
+            while zmin0 + k * malla < hi - 1e-6:
+                zk = zmin0 + k * malla
+                cand.append((xa_ + (xb_ - xa_) * (zk - za_) / (zb_ - za_), 2))
+                k += 1
         cand += [(min(max(v[k], x0), x1), 3) for v in vanos for k in ("x0", "x1")]
         ajx = _juntar(cand, min_celda)
         for v in vanos:
@@ -225,7 +241,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         cx = sorted({ajx(x) for x, _ in cand})
         xs = []
         for a, b in zip(cx, cx[1:]):
-            n = max(1, math.ceil((b - a) / malla - 1e-9))
+            n = max(1, round((b - a) / malla))          # celdas de ≈ malla (entre 0,67 y 1,5 veces)
             xs += [a + (b - a) * i / n for i in range(n)]
         xs.append(cx[-1])
         tops = [tope(x) for x in xs]
@@ -248,12 +264,14 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         base = zs + [zmin_top]
         nb = len(base)
 
+        # sobre el tope más bajo (frontón), niveles HORIZONTALES comunes a todo el muro cada «malla»; cada línea llega
+        # hasta su borde superior (el último nivel a menos de min_celda del borde se omite)
+        n_niv = max(0, math.ceil((max(tops) - zmin_top) / malla - 1e-9))
+        niveles_sup = [zmin_top + malla * k for k in range(1, n_niv + 1)]
+
         def zs_en(i):
-            """Niveles de la línea i: los comunes hasta el tope más bajo y, sobre él, divisiones propias de ≈ malla
-            (en el frontón, pocas cerca del alero y más hacia la cumbrera: sin shells de pocos centímetros)."""
-            alto = tops[i] - zmin_top
-            k = max(0, math.ceil(alto / malla - 1e-9)) if alto > min_celda else 0
-            return base + [zmin_top + alto * j / k for j in range(1, k + 1)]
+            sup = [z for z in niveles_sup if z < tops[i] - min_celda]
+            return base + sup + ([tops[i]] if tops[i] > zmin_top + 1e-9 else [])
 
         # material del muro: por segmento de altura completa (entre vanos)
         es_madera = w.get("material") == "madera" or w.get("entramado")
@@ -299,19 +317,33 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
             za, zb = zs_en(i), zs_en(i + 1)
             xa, xb = xs[i], xs[i + 1]
             xm = (xa + xb) / 2
-            comunes = min(len(za), len(zb))
-            for k in range(comunes - 1):
-                zm = (za[k] + za[k + 1] + zb[k] + zb[k + 1]) / 4
+            # niveles horizontales que ambas líneas comparten (sin contar su borde superior)
+            ca = [z for z in za if z <= zmin_top + 1e-9 or z in niveles_sup]
+            cb = [z for z in zb if z <= zmin_top + 1e-9 or z in niveles_sup]
+            c = min(len(ca), len(cb))
+            for k in range(c - 1):
+                zm = (za[k] + za[k + 1]) / 2
                 if k < nb - 1 and any(v["x0"] < xm < v["x1"] and v["z0"] < zm < v["z1"] for v in vanos):
                     continue
                 area([nudo(xa, za[k]), nudo(xb, zb[k]), nudo(xb, zb[k + 1]), nudo(xa, za[k + 1])], xm)
-            # la línea con más niveles: triángulos en abanico desde el último nivel común de la otra
-            if len(zb) > len(za):
-                for k in range(comunes - 1, len(zb) - 1):
-                    area([nudo(xa, za[-1]), nudo(xb, zb[k]), nudo(xb, zb[k + 1])], xm)
-            elif len(za) > len(zb):
-                for k in range(comunes - 1, len(za) - 1):
-                    area([nudo(xb, zb[-1]), nudo(xa, za[k + 1]), nudo(xa, za[k])], xm)
+            # bajo el borde superior: del último nivel común a cada borde (un cuadrilátero si cada lado tiene un solo
+            # tramo; si no, triángulos en abanico desde la esquina inferior)
+            ra, rb = za[c - 1:], zb[c - 1:]
+            if len(ra) < 2 and len(rb) < 2:
+                continue
+            if len(ra) == 2 and len(rb) == 2:
+                area([nudo(xa, ra[0]), nudo(xb, rb[0]), nudo(xb, rb[1]), nudo(xa, ra[1])], xm)
+                continue
+            # «cremallera» entre las dos líneas: cada triángulo tiene nudos en ambas (sin triángulos degenerados)
+            ia = ib = 0
+            while ia < len(ra) - 1 or ib < len(rb) - 1:
+                sube_b = ia >= len(ra) - 1 or (ib < len(rb) - 1 and rb[ib + 1] <= ra[ia + 1])
+                if sube_b:
+                    area([nudo(xa, ra[ia]), nudo(xb, rb[ib]), nudo(xb, rb[ib + 1])], xm)
+                    ib += 1
+                else:
+                    area([nudo(xa, ra[ia]), nudo(xb, rb[ib]), nudo(xa, ra[ia + 1])], xm)
+                    ia += 1
         if not sobre_viga:
             for x in xs:
                 mod.apoyos.setdefault(nudo(x, z0), "rotula")
