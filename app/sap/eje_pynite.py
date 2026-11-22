@@ -21,7 +21,9 @@ from .eje_revit import HOLD_DOWNS, hold_down_para
 
 G_ACC = 9.80665
 # versión del formato y del cálculo: un resultado guardado con otra versión se vuelve a calcular al abrir el eje
-VERSION_RESULTADO = 8
+VERSION_RESULTADO = 9
+MASA_OBJETIVO = 0.90            # masa participante mínima en X y en Z (se agregan modos hasta alcanzarla)
+MODOS_MAX = 600
 # sismo vertical: espectro vertical = 2/3 del horizontal de diseño; combinación de componentes 100 % / 30 %
 FACTOR_VERTICAL = 2 / 3
 # resistencia admisible al corte de muros (tonf/m), 1 tablero OSB 9,5 mm Sheathing y clavo 8d, según el clavado
@@ -91,14 +93,16 @@ def _cmax(r: float) -> float:
 
 
 def _cqc(valores: list[np.ndarray], omegas: list[float], amort: float = 0.05) -> np.ndarray:
-    n = len(valores)
-    tot = np.zeros_like(valores[0])
-    for i in range(n):
-        for j in range(n):
-            r = omegas[j] / omegas[i]
-            rho = 8 * amort ** 2 * (1 + r) * r ** 1.5 / ((1 - r ** 2) ** 2 + 4 * amort ** 2 * r * (1 + r) ** 2)
-            tot = tot + rho * valores[i] * valores[j]
-    return np.sqrt(np.abs(tot))
+    """Combinación cuadrática completa (Der Kiureghian), vectorizada: √|Σᵢ Σⱼ ρᵢⱼ·vᵢ·vⱼ|."""
+    if not len(valores):
+        return np.zeros(0)
+    V = np.array([np.asarray(v, float) for v in valores])
+    w = np.asarray(omegas, float)
+    r = w[None, :] / w[:, None]
+    rho = 8 * amort ** 2 * (1 + r) * r ** 1.5 / ((1 - r ** 2) ** 2 + 4 * amort ** 2 * r * (1 + r) ** 2)
+    plano = V.reshape(len(V), -1)
+    tot = np.einsum("ik,ij,jk->k", plano, rho, plano)
+    return np.sqrt(np.abs(tot)).reshape(V.shape[1:])
 
 
 def _s_global(q, combo) -> np.ndarray:
@@ -242,25 +246,35 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         Mg = _masa_consistente(m, mod, peso_barra, {q: peso_area[sec] for nombre, _, sec in mod.areas for q in sub[nombre]})
     M11, _, _, _ = Analysis._partition(m, Mg, D1_idx, D2_idx)
     import scipy.sparse.linalg as sla
-    nmod = min(pc.modos, K11.shape[0] - 2)
-    vals, vecs = sla.eigsh(K11.tocsc(), k=nmod, M=M11.tocsc(), sigma=0.0, which="LM")
-    orden = np.argsort(vals)
-    vals, vecs = vals[orden], vecs[:, orden]
-    omegas = np.sqrt(np.maximum(vals, 1e-12))
-    periodos = 2 * math.pi / omegas
-    # vector de influencia en X: los grados de libertad DX de los nudos libres
-    gdl = []
-    for n in m.nodes.values():
-        base = n.ID * 6
-        gdl += [base + k for k in range(6)]
+    # vectores de influencia: DX (sismo horizontal) y DY (vertical) de los nudos libres
     infl_full = np.zeros(len(m.nodes) * 6)
+    infl_z = np.zeros(len(m.nodes) * 6)
     for n in m.nodes.values():
         infl_full[n.ID * 6 + 0] = 1.0
+        infl_z[n.ID * 6 + 1] = 1.0
     r = infl_full[D1_idx]
-    Mr = M11 @ r
-    masa_tot = float(r @ Mr)
-    gam = np.array([vecs[:, i] @ Mr / (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
-    m_ef = np.array([gam[i] ** 2 * (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
+    rz = infl_z[D1_idx]
+    Mr, Mrz = M11 @ r, M11 @ rz
+    masa_tot, masa_z = float(r @ Mr), float(rz @ Mrz)
+    # modos: se agregan (duplicando) hasta que la masa participante llegue al 90 % en X y en Z
+    nmax = min(K11.shape[0] - 2, MODOS_MAX)
+    nmod = min(max(int(pc.modos), 1), nmax)
+    Kc, Mc = K11.tocsc(), M11.tocsc()
+    while True:
+        vals, vecs = sla.eigsh(Kc, k=nmod, M=Mc, sigma=0.0, which="LM")
+        orden = np.argsort(vals)
+        vals, vecs = vals[orden], vecs[:, orden]
+        mm = np.einsum("ij,ij->j", vecs, np.asarray(M11 @ vecs))
+        gam, gam_z = (vecs.T @ Mr) / mm, (vecs.T @ Mrz) / mm
+        m_ef, m_ef_z = gam ** 2 * mm, gam_z ** 2 * mm
+        part_x = m_ef.sum() / masa_tot if masa_tot else 1.0
+        part_z = m_ef_z.sum() / masa_z if masa_z else 1.0
+        if (part_x >= MASA_OBJETIVO and part_z >= MASA_OBJETIVO) or nmod >= nmax:
+            break
+        paso(75, f"Análisis modal: {nmod} modos, masa X {100 * part_x:.0f} %, Z {100 * part_z:.0f} %; agregando modos", 80)
+        nmod = min(2 * nmod, nmax)
+    omegas = np.sqrt(np.maximum(vals, 1e-12))
+    periodos = 2 * math.pi / omegas
     i_fund = int(np.argmax(m_ef))
     t_est = float(periodos[i_fund])
     espectro = espectro_ds61(pc, t_est)
@@ -284,32 +298,24 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     elif q0 > q_max:
         factor = q_max / q0
     paso(80, f"Espectro NCh433 + DS61 (T* = {t_est:.3f} s) y corte basal")
+    # Cada modo se guarda una vez con su forma φ (sin escalar); la respuesta del modo i al sismo horizontal es
+    # coef_x[i]·(respuesta a φ) y al vertical coef_z[i]·(respuesta a φ). Se usan los modos que aportan masa.
+    # EZ: espectro vertical = 2/3 del horizontal; la masa vertical que no alcanzan los modos va como respuesta
+    # estática con Sa(T = 0).
+    Sv = lambda T: FACTOR_VERTICAL * Sa(T)                              # noqa: E731
+    coef_x_all = np.array([factor * gam[i] * Sa(periodos[i]) / omegas[i] ** 2 for i in range(nmod)])
+    coef_z_all = np.array([gam_z[i] * Sv(periodos[i]) / omegas[i] ** 2 for i in range(nmod)])
+    aporta = [i for i in range(nmod) if i < pc.modos
+              or (masa_tot and m_ef[i] / masa_tot > 1e-4) or (masa_z and m_ef_z[i] / masa_z > 1e-4)]
     modos_combo = []
-    for i in range(nmod):
+    for i in aporta:
         nombre = f"_MODO{i + 1}"
         m.add_load_combo(nombre, {})
-        d1 = (factor * gam[i] * Sa(periodos[i]) / omegas[i] ** 2 * vecs[:, i]).reshape(-1, 1)
-        Analysis._store_displacements(m, d1, D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
+        Analysis._store_displacements(m, vecs[:, i].reshape(-1, 1), D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
         modos_combo.append(nombre)
-
-    # ---- sismo vertical EZ: espectro vertical = 2/3 del horizontal, mismos modos con su participación vertical, y
-    # la masa vertical que no alcanzan los modos calculados (modos rígidos) como respuesta estática con Sa(T = 0) ----
-    infl_z = np.zeros(len(m.nodes) * 6)
-    for n in m.nodes.values():
-        infl_z[n.ID * 6 + 1] = 1.0
-    rz = infl_z[D1_idx]
-    Mrz = M11 @ rz
-    masa_z = float(rz @ Mrz)
-    gam_z = np.array([vecs[:, i] @ Mrz / (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
-    m_ef_z = np.array([gam_z[i] ** 2 * (vecs[:, i] @ (M11 @ vecs[:, i])) for i in range(nmod)])
-    Sv = lambda T: FACTOR_VERTICAL * Sa(T)                              # noqa: E731
-    modos_z = []
-    for i in range(nmod):
-        nombre = f"_MODOZ{i + 1}"
-        m.add_load_combo(nombre, {})
-        d1 = (gam_z[i] * Sv(periodos[i]) / omegas[i] ** 2 * vecs[:, i]).reshape(-1, 1)
-        Analysis._store_displacements(m, d1, D2 * 0, D1_idx, D2_idx, m.load_combos[nombre])
-        modos_z.append(nombre)
+    om_a = [float(omegas[i]) for i in aporta]
+    cx, cz = coef_x_all[aporta], coef_z_all[aporta]
+    modos_x_esc = list(zip(modos_combo, cx))                              # (combo, coeficiente) para el sismo X
     r_res = rz - vecs @ gam_z                                             # parte de la masa vertical sin modo
     f_res = np.asarray(M11 @ r_res).ravel() * Sv(0.0)
     from scipy.sparse.linalg import spsolve
@@ -320,8 +326,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     def env_e(val):
         """val(combo) → array. Devuelve (EX, EZ, E): EX CQC de los modos horizontales; EZ CQC de los verticales más
         la masa faltante (SRSS); E = máx(EX + 0,3·EZ, 0,3·EX + EZ) (100 % / 30 %). Todo sin signo (±)."""
-        ex = _cqc([np.asarray(val(c), float) for c in modos_combo], list(omegas))
-        ez = np.sqrt(_cqc([np.asarray(val(c), float) for c in modos_z], list(omegas)) ** 2 + np.asarray(val("_RESZ"), float) ** 2)
+        resp = [np.asarray(val(c), float) for c in modos_combo]
+        ex = _cqc([k * v for k, v in zip(cx, resp)], om_a)
+        ez = np.sqrt(_cqc([k * v for k, v in zip(cz, resp)], om_a) ** 2 + np.asarray(val("_RESZ"), float) ** 2)
         return ex, ez, np.maximum(ex + 0.3 * ez, 0.3 * ex + ez)
 
     # reacciones basales por modo: las fuerzas de inercia M·Γ·φ·Sa (con el factor de corte), cambiadas de signo
@@ -330,19 +337,18 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     ref = (min(xs_ap), min(zs_ap))
     por_id = {n.ID: n for n in m.nodes.values()}
 
+    # reacción basal (ΣFx, ΣFz, ΣMy) = −A·f, con f las fuerzas de inercia en los grados de libertad libres
+    gl = np.asarray(D1_idx).ravel().astype(int)
+    comp_, nd_ = gl % 6, [por_id[int(g_) // 6] for g_ in gl]
+    X_ = np.array([n_.X for n_ in nd_]) - ref[0]
+    Y_ = np.array([n_.Y for n_ in nd_]) - ref[1]
+    A = np.vstack([(comp_ == 0) * 1.0, (comp_ == 1) * 1.0, -Y_ * (comp_ == 0) + X_ * (comp_ == 1) + (comp_ == 5)])
+
     def reaccion(fi):
-        rx_ = ry_ = rm_ = 0.0
-        for k, g_ in enumerate(np.asarray(D1_idx).ravel()):
-            nd, comp = por_id[int(g_) // 6], int(g_) % 6
-            if comp == 0:
-                rx_ += fi[k]; rm_ -= (nd.Y - ref[1]) * fi[k]
-            elif comp == 1:
-                ry_ += fi[k]; rm_ += (nd.X - ref[0]) * fi[k]
-            elif comp == 5:
-                rm_ += fi[k]
-        return np.array([-rx_, -ry_, -rm_])
-    reac_modo = [reaccion(np.asarray(M11 @ (factor * gam[i] * Sa(periodos[i]) * vecs[:, i])).ravel()) for i in range(nmod)]
-    reac_z = [reaccion(np.asarray(M11 @ (gam_z[i] * Sv(periodos[i]) * vecs[:, i])).ravel()) for i in range(nmod)]
+        return -(A @ np.asarray(fi).ravel())
+    MF = np.asarray(M11 @ vecs)                                           # M·φ de todos los modos
+    reac_modo = list((-(A @ MF) * (factor * gam * np.array([Sa(t) for t in periodos]))).T)
+    reac_z = list((-(A @ MF) * (gam_z * np.array([Sv(t) for t in periodos]))).T)
     reac_z_res = reaccion(f_res)
     signo_x = np.sign(reac_modo[i_fund]) if reac_modo else np.ones(3)
     i_fz = int(np.argmax(m_ef_z)) if nmod else 0
@@ -487,19 +493,23 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                        "falta_capacidad_union": any(a["tipo"] == "unión al pilar" and not a["T_adm"] for a in anclajes)})
     madera.sort(key=lambda r: -max(r["FU"], r["FU_anclaje"] if math.isfinite(r["FU_anclaje"]) else 1e9))
 
-    deformaciones = _deformaciones(m, mod, cargas, modos_combo, list(omegas), sub, {**LIMITES_DEF, **(limites or {})})
+    deformaciones = _deformaciones(m, mod, cargas, modos_x_esc, om_a, sub, {**LIMITES_DEF, **(limites or {})})
     sismo = {"reac_x": _cqc(reac_modo, list(omegas)) if reac_modo else np.zeros(3), "signo_x": signo_x,
              "reac_z": np.sqrt(_cqc(reac_z, list(omegas)) ** 2 + reac_z_res ** 2) if reac_z else np.abs(reac_z_res),
              "signo_z": signo_z, "env": env_e, "masa_z": float(m_ef_z.sum() / masa_z) if masa_z else 0.0}
     casos = _casos_puros(m, mod, cargas, estaticos, res_barra, modos_combo, list(omegas), factor, sismo, ref)
-    visor = _visor(m, mod, cargas, estaticos, modos_combo, periodos, m_ef / masa_tot if masa_tot else m_ef * 0,
-                   m_ef_z / masa_z if masa_z else m_ef_z * 0)
+    # visor: los primeros modos y los que aportan al menos 1 % de masa en X o Z (máx. 40)
+    pxs = m_ef / masa_tot if masa_tot else m_ef * 0
+    pzs = m_ef_z / masa_z if masa_z else m_ef_z * 0
+    ver = [i for i in aporta if i < max(pc.modos, 12) or pxs[i] >= 0.01 or pzs[i] >= 0.01][:40]
+    visor = _visor(m, mod, cargas, estaticos, [(f"_MODO{i + 1}", i) for i in ver], periodos, pxs, pzs)
 
     return {
         "T": t_est, "periodos": [float(x) for x in periodos], "masa_participante_x": float(sum(m_ef) / masa_tot) if masa_tot else 0.0,
         "corte_basal_espectral": q0, "q_min": q_min, "q_max": q_max, "factor_corte": factor,
         "corte_basal": q0 * factor, "peso_sismico": peso, "espectro": espectro, "masa": masa,
-        "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL,
+        "masa_participante_z": sismo["masa_z"], "factor_vertical": FACTOR_VERTICAL, "n_modos": int(nmod),
+        "n_modos_usados": len(aporta),
         "criterio_sismo": "E = máx(EX + 0,3·EZ ; 0,3·EX + EZ), en ambos sentidos (±); EX: espectro NCh433 + DS61 con CQC; "
                           "EZ: espectro vertical = 2/3 del horizontal, CQC + masa vertical no captada por los modos (Sa(0))",
         "version": VERSION_RESULTADO, "visor": visor, "columna_fuerte": columna_fuerte, "ry": ry, "acero": acero, "madera": madera, "deformaciones": deformaciones, "casos": casos,
@@ -583,8 +593,8 @@ def _visor(m, mod, cargas, estaticos, modos, periodos, part, part_z=None) -> dic
         "apoyos": dict(mod.apoyos),
         "cargas": carg,
         "deformadas": {c: campo(c) for c in estaticos},
-        "modos": [{"T": float(periodos[i]), "masa_x": float(part[i]), "masa_z": float(part_z[i]) if part_z is not None else 0.0,
-                   "forma": campo(c, True)} for i, c in enumerate(modos)],
+        "modos": [{"n": i + 1, "T": float(periodos[i]), "masa_x": float(part[i]),
+                   "masa_z": float(part_z[i]) if part_z is not None else 0.0, "forma": campo(c, True)} for c, i in modos],
     }
 
 
@@ -695,7 +705,7 @@ def _deformaciones(m, mod, cargas, modos, omegas, sub, lim) -> list[dict]:
                 dd = abs(comb(lambda c, n=n: D(n, "DX", c) - base(c), {"DEAD": 1, w: 1}))
                 if dd / h > (res_w[0] / res_w[1] if res_w[1] else 0):
                     res_w = (dd, h, f"D+{w}")
-            de = float(_cqc([np.array([D(n, "DX", c) - base(c)]) for c in modos], omegas)[0])
+            de = float(_cqc([np.array([k * (D(n, "DX", c) - base(c))]) for c, k in modos], omegas)[0])
             if de / h > (res_e[0] / res_e[1] if res_e[1] else 0):
                 res_e = (de, h)
         return res_w, res_e

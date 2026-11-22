@@ -180,3 +180,27 @@ def test_sismo_ex_ez_columna_fuerte_y_signo_axial():
     assert all(a["Pu"] > 0 for a in r["acero"] if a["origen"] in ("p1", "p2"))
     cf = r["columna_fuerte"]
     assert len(cf) == 2 and all(c["razon"] > 1 and c["Puc_rel"] > 0 for c in cf)
+
+
+def test_masa_participante_90_en_x_y_z():
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    from app.sap.eje_revit import mallar
+    mod = mallar(EJE)
+    pc = ParametrosCargas(modos=6)
+    r = analizar(mod, cargas_eje(mod, pc), pc)
+    assert r["masa_participante_x"] >= 0.9 and r["masa_participante_z"] >= 0.9 and r["n_modos"] > 6
+
+
+def test_cqc_vectorizado_igual_al_de_doble_suma():
+    import numpy as np
+    from app.sap.eje_pynite import _cqc
+    w = [10.0, 11.0, 30.0]
+    v = [np.array([1.0, -2.0]), np.array([0.5, 1.0]), np.array([-0.2, 0.3])]
+    ref = np.zeros(2)
+    for i in range(3):
+        for j in range(3):
+            r = w[j] / w[i]
+            rho = 8 * 0.05 ** 2 * (1 + r) * r ** 1.5 / ((1 - r ** 2) ** 2 + 4 * 0.05 ** 2 * r * (1 + r) ** 2)
+            ref = ref + rho * v[i] * v[j]
+    assert np.allclose(_cqc(v, w), np.sqrt(np.abs(ref)))

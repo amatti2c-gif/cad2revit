@@ -2247,7 +2247,8 @@ function sapMostrarNube(d) {
   $("#sap-leyenda-razon").classList.remove("oculto");
   $("#sap-nube-resumen").replaceChildren(
     `${d.nota} · ${d.fecha.slice(0, 16).replace("T", " ")} · T* = ${f3(d.T)} s (masa participante X ${(100 * d.masa_participante_x).toFixed(0)} %) · ` +
-    `masa participante Z ${d.masa_participante_z != null ? (100 * d.masa_participante_z).toFixed(0) + " % (resto: masa faltante con Sa(0))" : "—"} · ` +
+    `masa participante Z ${d.masa_participante_z != null ? (100 * d.masa_participante_z).toFixed(0) + " %" : "—"}` +
+    (d.n_modos ? ` (${d.n_modos} modos calculados, ${d.n_modos_usados} con masa)` : "") + " · " +
     `P sísmico ${f2(d.peso_sismico)} tonf · Q0 espectral ${f2(d.corte_basal_espectral)} tonf (Qmín ${f2(d.q_min)}, Qmáx ${f2(d.q_max)}` +
     `${d.factor_corte !== 1 ? `, factor ${f2(d.factor_corte)}` : ""}) → Q = ${f2(d.corte_basal)} tonf. `,
     h("span", { class: malas ? "nocumple" : "cumple" }, malas ? `${malas} elemento(s) de acero no cumplen` : "Acero: todo cumple"), " · ",
@@ -2316,7 +2317,7 @@ function sapVisorOpciones(d) {
   const ops = [["geo", "Modelo (barras, shells y apoyos)"]];
   for (const c of Object.keys(v.cargas)) ops.push([`carga:${c}`, `Cargas: ${c}`]);
   for (const c of Object.keys(v.deformadas)) ops.push([`def:${c}`, `Deformada: ${c}`]);
-  v.modos.forEach((m, i) => ops.push([`modo:${i}`, `Modo ${i + 1}: T = ${m.T.toFixed(3)} s, masa X ${(100 * m.masa_x).toFixed(1)} %` +
+  v.modos.forEach((m, i) => ops.push([`modo:${i}`, `Modo ${m.n ?? i + 1}: T = ${m.T.toFixed(3)} s, masa X ${(100 * m.masa_x).toFixed(1)} %` +
     (m.masa_z != null ? `, Z ${(100 * m.masa_z).toFixed(1)} %` : "")]));
   sel.replaceChildren(...ops.map(([k, t]) => h("option", { value: k }, t)));
   sel.value = ops.some(o => o[0] === antes) ? antes : "geo";
