@@ -600,6 +600,8 @@ def main(argv=None):
                                                 "por defecto, el ancho tributario del eje exportado por Revit")
     ap.add_argument("--viento", type=float, default=40, help="velocidad básica del viento V (m/s, NCh432; 40 = Ancud, Tabla 6)")
     ap.add_argument("--exposicion", default="C", choices=["B", "C", "D"])
+    ap.add_argument("--ancho-edificio", type=float, help="B: dimensión del edificio normal al viento (m), para el Cp "
+                                                          "del muro a sotavento (NCh432 Tabla 14)")
     ap.add_argument("--zona", type=int, default=2, choices=[1, 2, 3], help="zona sísmica (NCh433)")
     ap.add_argument("--suelo", default="C", choices=list("ABCDE"), help="tipo de suelo (DS61)")
     ap.add_argument("--importancia", type=float, default=1.0, help="coeficiente de importancia sísmico I")
@@ -626,7 +628,8 @@ def main(argv=None):
         from .eje_cargas import ParametrosCargas, cargas_eje
         pc = ParametrosCargas(peso_techo=a.peso_techo / 1000, v_viento=a.viento, exposicion=a.exposicion, zona=a.zona,
                               suelo=a.suelo, importancia_sismo=a.importancia, r0=a.r0,
-                              reducir_lr=not a.sin_reduccion_lr, ancho_colaborante=a.ancho)
+                              reducir_lr=not a.sin_reduccion_lr, ancho_colaborante=a.ancho,
+                              ancho_edificio=a.ancho_edificio)
         cargas = cargas_eje(mod, pc)
         for x in cargas.resumen:
             print(" ", x)
