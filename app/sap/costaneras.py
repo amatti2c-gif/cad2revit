@@ -452,6 +452,8 @@ class ParametrosCostaneras:
     limite_viento: float = 150.0         # L/… con W
     tol_apoyo: float = 1.0               # m: distancia máxima bajo la costanera a la que se busca la viga de apoyo
     ids: list = field(default_factory=list)  # costaneras elegidas para verificar (las más críticas, a mano)
+    # apoyos cambiados a mano: id de la costanera → {"quitar": [x m], "agregar": [x m]} (x desde el inicio de la costanera)
+    apoyos_editados: dict = field(default_factory=dict)
 
 
 def _tensores_por_tramo(regla: str, luz_m: float) -> int:
@@ -522,6 +524,16 @@ def _geometria(datos: dict, par: ParametrosCostaneras) -> tuple[list[dict], dict
                 continue
             unicos.append(ap)
         apoyos = unicos
+        apoyos_revit = [float(ap["t"]) for ap in apoyos]
+        ed = (par.apoyos_editados or {}).get(str(c.get("id"))) or {}
+        quitar = [float(q) for q in ed.get("quitar") or []]
+        agregar = [float(q) for q in ed.get("agregar") or []]
+        con_dir = [ap for ap in apoyos if ap.get("dir_viga") is not None]
+        apoyos = [ap for ap in apoyos if not any(abs(ap["t"] - q) < 0.05 for q in quitar)]
+        for xa in agregar:
+            if -1e-6 <= xa <= L + 1e-6 and not any(abs(ap["t"] - xa) < 0.05 for ap in apoyos):
+                apoyos.append({"t": min(max(xa, 0.0), L), "viga": None, "tipo": "agregado en la app", "bajo": 0.0, "dir_viga": None})
+        apoyos.sort(key=lambda x: x["t"])
         # costaneras vecinas (mismo sistema, paralelas, que se traslapan) a cada lado: separación en el plano del techo
         lados = {1: [], -1: []}
         for o in cost:
@@ -550,8 +562,8 @@ def _geometria(datos: dict, par: ParametrosCostaneras) -> tuple[list[dict], dict
                 wp = vv[1]
                 theta = math.degrees(math.atan2(abs(wp[2]), math.hypot(wp[0], wp[1])))
                 break
-        if theta is None and apoyos:
-            e = apoyos[0]["dir_viga"]
+        if theta is None and con_dir:
+            e = con_dir[0]["dir_viga"]
             ep = e - np.dot(e, u) * u
             if np.linalg.norm(ep) > 1e-9:
                 theta = math.degrees(math.atan2(abs(ep[2]), math.hypot(ep[0], ep[1])))
@@ -610,7 +622,8 @@ def _geometria(datos: dict, par: ParametrosCostaneras) -> tuple[list[dict], dict
             nota.append("menos de 2 apoyos: no se encontraron vigas de apoyo bajo la costanera")
         out.append({"id": c.get("id"), "sistema": c.get("sistema"), "tipo": c.get("tipo") or "", "familia": c.get("familia") or "",
                     "parametros": c.get("parametros") or {}, "L": L, "p0": a, "u": u, "uh": uh, "vh": vh,
-                    "apoyos": [{"x": ap["t"], "viga": ap["viga"], "tipo": ap["tipo"]} for ap in apoyos],
+                    "apoyos": [{"x": float(ap["t"]), "viga": ap["viga"], "tipo": ap["tipo"]} for ap in apoyos],
+                    "apoyos_revit": apoyos_revit, "apoyos_editados": bool(quitar or agregar),
                     "tramos": tramos, "s": s_trib, "origen_s": origen_s, "theta": theta, "notas": nota,
                     "z_media": float((a[2] + b[2]) / 2)})
     if z_base is None:
@@ -735,7 +748,7 @@ def _props_tabla(pf: Perfil, c: dict) -> dict:
 def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
     base = {"id": cg["id"], "sistema": cg["sistema"], "tipo": cg["tipo"], "perfil": pf.nombre() if pf else None,
             "L": cg["L"], "s": cg["s"], "origen_s": cg["origen_s"], "theta": cg["theta"],
-            "apoyos": cg["apoyos"], "tramos": [], "notas": list(cg["notas"]), "FU": None, "verificaciones": []}
+            "apoyos": cg["apoyos"], "apoyos_revit": cg["apoyos_revit"], "apoyos_editados": cg["apoyos_editados"], "tramos": [], "notas": list(cg["notas"]), "FU": None, "verificaciones": []}
     if pf is None:
         base["notas"].append(f"no se reconoce el perfil del tipo «{cg['tipo']}»: escríbelo en la tabla de perfiles")
         return base

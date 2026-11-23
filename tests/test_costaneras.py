@@ -120,3 +120,14 @@ def test_iterar_seccion():
     ok = [x for x in r if x.get("cumple")]
     assert ok and not r[0]["cumple"]                       # el más liviano no cumple; alguno sí
     assert set(ok[0]["FU"]) == {"100", "105"}
+
+
+def test_apoyos_editados():
+    p = ParametrosCostaneras(ids=[102], apoyos_editados={"102": {"quitar": [5.0], "agregar": [3.0, 7.5]}})
+    c = analizar_costaneras(_techo(), p)["costaneras"][0]
+    assert [round(a["x"], 2) for a in c["apoyos"]] == [0.0, 3.0, 7.5, 10.0]
+    assert c["apoyos_revit"] == [0.0, 5.0, 10.0] and c["apoyos_editados"]
+    assert abs(c["tramo_verificado"]["luz"] - 4.5) < 1e-6
+    # quitar el apoyo central deja un solo tramo de 10 m
+    c2 = analizar_costaneras(_techo(), ParametrosCostaneras(ids=[102], apoyos_editados={"102": {"quitar": [5.0]}}))["costaneras"][0]
+    assert [round(t["luz"], 2) for t in c2["tramos"]] == [10.0]

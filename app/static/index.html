@@ -581,6 +581,14 @@
           <div id="cos-detalle" class="oculto">
             <h3 id="cos-det-tit"></h3>
             <svg id="cos-diagrama" viewBox="0 0 100 40" role="img" aria-label="Momentos mayorados de la costanera"></svg>
+            <div class="fila-sap cos-apoyos">
+              <strong>Apoyos:</strong>
+              <span class="tenue">clic en un apoyo (▲) lo quita; clic en un apoyo quitado (△) lo devuelve; clic sobre la costanera agrega uno</span>
+              <label>Agregar en x = <input id="cos-apoyo-x" type="number" step="0.05" style="width:80px"> m</label>
+              <button class="sec" id="btn-cos-apoyo-agregar">Agregar</button>
+              <button class="sec" id="btn-cos-apoyo-revit">Restablecer los de Revit</button>
+              <span id="cos-apoyos-estado" class="tenue"></span>
+            </div>
             <div class="tenue">Envolvente de momentos Mx mayorados (kgf·m; positivo = tracción abajo), apoyos (▲) y tensores (✕). Se verifica el tramo de mayor luz entre apoyos (sombreado), con los esfuerzos de la viga continua.</div>
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-det-tramos"></table></div>
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-det-ver"></table></div>

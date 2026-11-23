@@ -296,3 +296,5 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 
 .cos-iterar { margin: 14px 0; padding: 10px 12px; border: 1px solid var(--borde); border-radius: var(--radio); background: rgba(45,108,223,.04); }
 #cosit-avance-txt { font-size: 13px; white-space: nowrap; min-width: 260px; }
+
+.cos-apoyos { margin: 6px 0 10px; font-size: 13px; }
