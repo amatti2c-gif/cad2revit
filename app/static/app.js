@@ -2751,7 +2751,7 @@ async function cargarCostaneras(elegir) {
 async function abrirCostaneras(nombre) {
   const r = await api("GET", P(`/costaneras/${encodeURIComponent(nombre)}`));
   cos.nombre = nombre; cos.datos = r.datos; cos.res = null; cos.sel = null;
-  cos.vista = null; cos.vigasApoyo = null; cos.iter = []; cosIterTabla();
+  cos.vista = null; cos.vigasApoyo = null; cos.apRevit = null; cos.iter = []; cosIterTabla();
   const par = r.ajustes || {};
   $$("[data-cos]").forEach(el => {
     const v = par[el.dataset.cos];
@@ -2780,24 +2780,66 @@ function cosTablaPerfiles(perfiles, leidos = {}) {
 }
 
 // apoyos cambiados a mano (por costanera): se guardan en los ajustes y se vuelve a verificar
-async function cosEditarApoyo(c, accion, x) {
-  const id = String(c.id), ed = cos.apoyosEd[id] || (cos.apoyosEd[id] = { quitar: [], agregar: [] });
+function cosEditarNucleo(id, L, revit, actuales, accion, x) {
+  id = String(id);
+  const ed = cos.apoyosEd[id] || (cos.apoyosEd[id] = { quitar: [], agregar: [] });
   const cerca = (a, b) => Math.abs(a - b) < 0.05;
-  const deRevit = (c.apoyos_revit || []).some(r => cerca(r, x));
+  const deRevit = revit.some(r => cerca(r, x));
   if (accion === "quitar") {
     if (deRevit) ed.quitar.push(x); else ed.agregar = ed.agregar.filter(a => !cerca(a, x));
   } else if (accion === "devolver") {
     ed.quitar = ed.quitar.filter(a => !cerca(a, x));
   } else if (accion === "agregar") {
-    if (x < 0 || x > c.L + 1e-6) throw new Error(`x debe estar entre 0 y ${c.L.toFixed(2)} m`);
-    if (c.apoyos.some(a => cerca(a.x, x))) throw new Error("Ya hay un apoyo ahí");
+    if (x < 0 || x > L + 1e-6) throw new Error(`x debe estar entre 0 y ${L.toFixed(2)} m`);
+    if (actuales.some(a => cerca(a, x))) throw new Error("Ya hay un apoyo ahí");
     if (deRevit) ed.quitar = ed.quitar.filter(a => !cerca(a, x)); else ed.agregar.push(x);
   } else if (accion === "revit") {
     delete cos.apoyosEd[id];
   }
   if (cos.apoyosEd[id] && !cos.apoyosEd[id].quitar.length && !cos.apoyosEd[id].agregar.length) delete cos.apoyosEd[id];
+}
+
+// desde el diagrama de una costanera verificada: se vuelve a verificar
+async function cosEditarApoyo(c, accion, x) {
+  cosEditarNucleo(c.id, c.L, c.apoyos_revit || [], c.apoyos.map(a => a.x), accion, x);
   cos.sel = c.id;
   await cosVerificar();
+}
+
+// apoyos de Revit de una costanera (cruces con las vigas que pasan por debajo, como en el cálculo): x desde su inicio (m)
+function cosApoyosRevit(c) {
+  cos.apRevit = cos.apRevit || {};
+  const k = String(c.id);
+  if (cos.apRevit[k]) return cos.apRevit[k];
+  if (!cos.vigasApoyo) cos.vigasApoyo = cosVigasApoyo();
+  const tol = Number($('[data-cos="tol_apoyo"]')?.value) || 1.0;
+  const dx = c.p1[0] - c.p0[0], dy = c.p1[1] - c.p0[1], dz = c.p1[2] - c.p0[2], L = Math.hypot(dx, dy, dz);
+  const hall = [];
+  for (const v of cos.vigasApoyo) {
+    const ex = v.p1[0] - v.p0[0], ey = v.p1[1] - v.p0[1], ez = v.p1[2] - v.p0[2];
+    const den = dx * ey - dy * ex;
+    if (Math.abs(den) < 1e-9) continue;
+    const wx = v.p0[0] - c.p0[0], wy = v.p0[1] - c.p0[1];
+    const t = (wx * ey - wy * ex) / den, u = (wx * dy - wy * dx) / den;
+    const tt = 0.05 / L, tu = 0.05 / (Math.hypot(ex, ey) || 1);
+    if (t < -tt || t > 1 + tt || u < -tu || u > 1 + tu) continue;
+    const bajo = (c.p0[2] + dz * t) - (v.p0[2] + ez * u);
+    if (bajo >= -0.10 && bajo <= tol) hall.push({ x: Math.min(Math.max(t, 0), 1) * L, bajo });
+  }
+  hall.sort((a, b) => a.x - b.x);
+  const unicos = [];
+  for (const a of hall) {
+    if (unicos.length && a.x - unicos[unicos.length - 1].x < 0.05) { if (a.bajo < unicos[unicos.length - 1].bajo) unicos[unicos.length - 1] = a; continue; }
+    unicos.push(a);
+  }
+  return (cos.apRevit[k] = unicos.map(a => a.x));
+}
+
+function cosApoyosActuales(id, revit, L) {
+  const ed = cos.apoyosEd[String(id)] || {}, cerca = (a, b) => Math.abs(a - b) < 0.05;
+  const act = revit.filter(x => !(ed.quitar || []).some(q => cerca(q, x)));
+  for (const a of ed.agregar || []) if (a >= -1e-6 && a <= L + 1e-6 && !act.some(x => cerca(x, a))) act.push(a);
+  return act.sort((a, b) => a - b);
 }
 
 function cosParametros() {
@@ -2817,6 +2859,7 @@ function cosParametros() {
 }
 
 async function cosVerificar() {
+  cos.apoyosSinVerificar = false;
   if (!cos.nombre) throw new Error("Primero sube las costaneras desde Revit");
   if (!cos.ids.size) throw new Error("Elige en la planta (clic) las costaneras que quieres verificar");
   const nombre = cos.nombre;
@@ -2867,19 +2910,55 @@ function cosPlanta() {
   const res = {}; for (const r of cos.res?.costaneras || []) res[r.id] = r;
   const linea = (a, b, color, ancho, extra = {}) => s("line", { x1: a[0], y1: -a[1], x2: b[0], y2: -b[1], stroke: color,
     "stroke-width": ancho, "vector-effect": "non-scaling-stroke", ...extra });
-  const capaVigas = [], capaCost = [], capaMarcas = [], capaTextos = [];
+  const capaVigas = [], capaCost = [], capaMarcas = [], capaTextos = [], capaApoyos = [];
   for (const v of cos.vigasApoyo) capaVigas.push(linea(v.p0, v.p1, "#a0a0a0", 1.5));
   const etiquetas = [];
   for (const c of cs) {
     const elegida = cos.ids.has(String(c.id)), r = elegida ? res[c.id] : null;
     const color = !elegida ? "#b7c3d6" : r ? colorFU(r.FU) : "#1f4e9c";
     const ln = linea(c.p0, c.p1, color, cos.sel === c.id ? 3.5 : elegida ? 2.2 : 1.2, { "pointer-events": "none" });
-    const zona = linea(c.p0, c.p1, "transparent", 10, { style: "cursor:pointer", "data-cos-id": c.id });
+    const modoApoyos = cos.modo === "apoyos";
+    const zona = linea(c.p0, c.p1, "transparent", 10, { style: modoApoyos ? "cursor:copy" : "cursor:pointer", "data-cos-id": c.id });
     const t = s("title"); t.textContent = `Costanera ${c.id} · ${c.tipo}` + (r?.FU != null ? ` · FU ${r.FU.toFixed(2)}` : "") +
-      (elegida ? " · elegida (clic para quitarla)" : " · clic para elegirla");
+      (modoApoyos ? " · clic para agregar un apoyo aquí" : elegida ? " · elegida (clic para quitarla)" : " · clic para elegirla");
     zona.append(t);
-    zona.addEventListener("click", () => {
+    // apoyos de esta costanera (de Revit, con los cambios hechos a mano)
+    const Lc = Math.hypot(c.p1[0] - c.p0[0], c.p1[1] - c.p0[1], c.p1[2] - c.p0[2]);
+    const Pc = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / Lc, c.p0[1] + (c.p1[1] - c.p0[1]) * x / Lc];
+    const revit = cosApoyosRevit(c), actuales = cosApoyosActuales(c.id, revit, Lc);
+    const editar = (accion, x) => intentar(() => {
+      cosEditarNucleo(c.id, Lc, revit, actuales, accion, x);
+      cos.apoyosSinVerificar = true;
+      cosPlanta();
+    });
+    for (const xr of revit) {
+      if (actuales.some(x => Math.abs(x - xr) < 0.05)) continue;
+      const [qx, qy] = Pc(xr);
+      const o = s("circle", { cx: qx, cy: -qy, r: (modoApoyos ? 4 : 2.6) * px, fill: "#fff", stroke: "#555", "stroke-width": 1.2,
+        "vector-effect": "non-scaling-stroke", style: modoApoyos ? "cursor:pointer" : "", "pointer-events": modoApoyos ? "all" : "none" });
+      const tt = s("title"); tt.textContent = `Apoyo de Revit quitado · costanera ${c.id} · x = ${xr.toFixed(2)} m (clic para devolverlo)`; o.append(tt);
+      o.addEventListener("click", ev => { ev.stopPropagation(); if (!cos.arrastro) editar("devolver", xr); });
+      capaApoyos.push(o);
+    }
+    for (const xa of actuales) {
+      const [qx, qy] = Pc(xa), agregado = !revit.some(x => Math.abs(x - xa) < 0.05);
+      const o = s("circle", { cx: qx, cy: -qy, r: (modoApoyos ? 4 : 2.6) * px, fill: agregado ? "#2d6cdf" : "#333",
+        stroke: "#fff", "stroke-width": modoApoyos ? 1 : 0, "vector-effect": "non-scaling-stroke",
+        style: modoApoyos ? "cursor:pointer" : "", "pointer-events": modoApoyos ? "all" : "none" });
+      const tt = s("title"); tt.textContent = `${agregado ? "Apoyo agregado" : "Apoyo de Revit"} · costanera ${c.id} · x = ${xa.toFixed(2)} m (clic para quitarlo)`; o.append(tt);
+      o.addEventListener("click", ev => { ev.stopPropagation(); if (!cos.arrastro) editar("quitar", xa); });
+      capaApoyos.push(o);
+    }
+    zona.addEventListener("click", ev => {
       if (cos.arrastro) return;
+      if (modoApoyos) {
+        const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+        const q = pt.matrixTransform(svg.getScreenCTM().inverse());
+        const dx = c.p1[0] - c.p0[0], dy = c.p1[1] - c.p0[1];
+        const tq = Math.min(Math.max(((q.x - c.p0[0]) * dx + (-q.y - c.p0[1]) * dy) / (dx * dx + dy * dy), 0), 1);
+        editar("agregar", Math.round(tq * Lc / 0.05) * 0.05);
+        return;
+      }
       const id = String(c.id);
       if (cos.ids.has(id)) cos.ids.delete(id); else cos.ids.add(id);
       cosElegidas(); cosPlanta();
@@ -2895,7 +2974,6 @@ function cosPlanta() {
       capaCost.push(linea(P_(tv.x0), P_(tv.x1), colorFU(r.FU), cos.sel === c.id ? 6 : 4.5, { "stroke-linecap": "round", "pointer-events": "none" }));
       if (visible) etiquetas.push({ r, P_, tv });
     }
-    for (const a of r.apoyos) { const [qx, qy] = P_(a.x); capaMarcas.push(s("circle", { cx: qx, cy: -qy, r: 2.6 * px, fill: "#333", "pointer-events": "none" })); }
     for (const tx of r.tensores_x || []) {
       const [qx, qy] = P_(tx), e = 3 * px;
       capaMarcas.push(s("path", { d: `M${qx - e},${-qy - e}L${qx + e},${-qy + e}M${qx + e},${-qy - e}L${qx - e},${-qy + e}`,
@@ -2931,7 +3009,13 @@ function cosPlanta() {
   const ocultas = etiquetas.length - capaTextos.length;
   $("#cos-planta-nota").textContent = (ocultas > 0 ? `${ocultas} FU no caben a esta escala: acerca con la rueda del mouse. ` : "") +
     "Rueda: zoom · arrastrar: mover · doble clic: ver todo.";
-  svg.replaceChildren(...capaVigas, ...capaCost, ...capaMarcas, ...capaTextos);
+  svg.replaceChildren(...capaVigas, ...capaCost, ...capaMarcas, ...capaTextos, ...capaApoyos);
+  const nEd = Object.keys(cos.apoyosEd || {}).length;
+  $("#cos-planta-nota").textContent = (cos.modo === "apoyos"
+    ? "Editar apoyos: clic en un apoyo (●) lo quita; clic en uno quitado (○) lo devuelve; clic sobre una costanera agrega uno. "
+    : "Elegir costaneras: clic sobre una costanera la elige o la quita. ") +
+    (nEd ? `${nEd} costanera(s) con apoyos cambiados a mano` + (cos.apoyosSinVerificar ? " (presiona «Verificar las elegidas» para recalcular). " : ". ") : "") +
+    $("#cos-planta-nota").textContent;
 }
 
 // zoom y arrastre de la planta
@@ -3032,26 +3116,36 @@ function cosDetalle(id) {
     (c.cargas ? ` · D ${f0(cg.D_kgf_m)} kgf/m (peso propio ${f2(cg.peso_propio_kgf_m)}), Lr ${f0(cg.Lr_kgf_m)}, W +${f0(cg.W_pos_kgf_m)} / ${f0(cg.W_neg_kgf_m)} kgf/m` : "");
   // diagrama de momentos
   const svg = $("#cos-diagrama"), dg = c.diagrama;
-  if (dg && dg.x.length) {
-    const L = c.L, sx = 100 / L, mmax = Math.max(...dg.Mmax.map(Math.abs), ...dg.Mmin.map(Math.abs), 1e-9), sy = 14 / mmax, y0 = 20;
+  // el eje con sus apoyos se dibuja siempre (aunque la costanera no se haya podido calcular, para poder agregarle apoyos)
+  const conDiagrama = !!(dg && dg.x.length);
+  {
+    const L = c.L, y0 = 20, sx = 100 / L;
+    const mmax = conDiagrama ? Math.max(...dg.Mmax.map(Math.abs), ...dg.Mmin.map(Math.abs), 1e-9) : 1, sy = 14 / mmax;
     const pts = arr => dg.x.map((x, i) => `${x * sx},${y0 + arr[i] * sy}`).join(" ");
     const hijos = [];
     const tv = c.tramo_verificado;
     if (tv) hijos.push(s("rect", { x: tv.x0 * sx, y: 1, width: (tv.x1 - tv.x0) * sx, height: 38, fill: "rgba(255,200,0,.13)" }));
     hijos.push(s("line", { x1: 0, y1: y0, x2: 100, y2: y0, stroke: "#333", "stroke-width": 0.4 }));
-    hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmax)} 100,${y0}`, fill: "rgba(176,0,32,.15)", stroke: "#b00020", "stroke-width": 0.25 }));
-    hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmin)} 100,${y0}`, fill: "rgba(45,108,223,.15)", stroke: "#2d6cdf", "stroke-width": 0.25 }));
+    if (conDiagrama) {
+      hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmax)} 100,${y0}`, fill: "rgba(176,0,32,.15)", stroke: "#b00020", "stroke-width": 0.25 }));
+      hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmin)} 100,${y0}`, fill: "rgba(45,108,223,.15)", stroke: "#2d6cdf", "stroke-width": 0.25 }));
+    } else {
+      const aviso = s("text", { x: 50, y: 10, "font-size": 2.6, fill: "#b00020", "text-anchor": "middle" });
+      aviso.textContent = c.apoyos.length < 2 ? `Sin calcular: tiene ${c.apoyos.length} apoyo(s) y necesita al menos 2 — haz clic sobre la costanera para agregarlos`
+        : "Sin diagrama: " + (c.notas || []).join("; ");
+      hijos.push(aviso);
+    }
     // apoyos editables: los de Revit quitados se ven huecos; clic para quitar o devolver
     for (const xr of c.apoyos_revit || []) {
       if (c.apoyos.some(a => Math.abs(a.x - xr) < 0.05)) continue;
-      const tri = s("path", { d: `M${xr * sx},${y0} l-1.5,2.7 h3 z`, fill: "#fff", stroke: "#888", "stroke-width": 0.3, "stroke-dasharray": "0.6 0.4", style: "cursor:pointer" });
+      const tri = s("path", { d: `M${xr * sx},${y0} l-2,3.6 h4 z`, fill: "#fff", stroke: "#666", "stroke-width": 0.35, "stroke-dasharray": "0.7 0.45", style: "cursor:pointer" });
       const t = s("title"); t.textContent = `Apoyo de Revit quitado en x = ${f2(xr)} m (clic para devolverlo)`; tri.append(t);
       tri.addEventListener("click", ev => { ev.stopPropagation(); intentar(() => cosEditarApoyo(c, "devolver", xr)); });
       hijos.push(tri);
     }
     for (const a of c.apoyos) {
       const agregado = a.viga == null;
-      const tri = s("path", { d: `M${a.x * sx},${y0} l-1.5,2.7 h3 z`, fill: agregado ? "#2d6cdf" : "#333", style: "cursor:pointer" });
+      const tri = s("path", { d: `M${a.x * sx},${y0} l-2,3.6 h4 z`, fill: agregado ? "#2d6cdf" : "#333", stroke: "#fff", "stroke-width": 0.25, style: "cursor:pointer" });
       const t = s("title"); t.textContent = `${agregado ? "Apoyo agregado en la app" : `Apoyo en la viga ${a.viga}`} · x = ${f2(a.x)} m (clic para quitarlo)`;
       tri.append(t);
       tri.addEventListener("click", ev => { ev.stopPropagation(); intentar(() => cosEditarApoyo(c, "quitar", a.x)); });
@@ -3068,16 +3162,18 @@ function cosDetalle(id) {
     });
     hijos.splice(1, 0, franja);
     for (const tx of c.tensores_x || []) hijos.push(s("path", { d: `M${tx * sx - 0.8},${y0 - 0.8} l1.6,1.6 m0,-1.6 l-1.6,1.6`, stroke: "#c06000", "stroke-width": 0.35 }));
-    const dentro = i => !tv || (dg.x[i] >= tv.x0 - 1e-6 && dg.x[i] <= tv.x1 + 1e-6);
-    const idx = dg.x.map((_, i) => i).filter(dentro);
-    const iM = idx.reduce((a, i) => dg.Mmax[i] > dg.Mmax[a] ? i : a, idx[0]);
-    const im = idx.reduce((a, i) => dg.Mmin[i] < dg.Mmin[a] ? i : a, idx[0]);
-    const T = (x, y, t) => { const e = s("text", { x: Math.min(Math.max(x, 4), 92), y, "font-size": 2.4, fill: "currentColor", "text-anchor": "middle" }); e.textContent = t; return e; };
-    if (dg.Mmax[iM] > 0) hijos.push(T(dg.x[iM] * sx, y0 + dg.Mmax[iM] * sy + 3, `+${f0(dg.Mmax[iM])}`));
-    if (dg.Mmin[im] < 0) hijos.push(T(dg.x[im] * sx, y0 + dg.Mmin[im] * sy - 1, f0(dg.Mmin[im])));
+    if (conDiagrama) {
+      const dentro = i => !tv || (dg.x[i] >= tv.x0 - 1e-6 && dg.x[i] <= tv.x1 + 1e-6);
+      const idx = dg.x.map((_, i) => i).filter(dentro);
+      const iM = idx.reduce((a, i) => dg.Mmax[i] > dg.Mmax[a] ? i : a, idx[0]);
+      const im = idx.reduce((a, i) => dg.Mmin[i] < dg.Mmin[a] ? i : a, idx[0]);
+      const T = (x, y, t) => { const e = s("text", { x: Math.min(Math.max(x, 4), 92), y, "font-size": 2.4, fill: "currentColor", "text-anchor": "middle" }); e.textContent = t; return e; };
+      if (dg.Mmax[iM] > 0) hijos.push(T(dg.x[iM] * sx, y0 + dg.Mmax[iM] * sy + 3, `+${f0(dg.Mmax[iM])}`));
+      if (dg.Mmin[im] < 0) hijos.push(T(dg.x[im] * sx, y0 + dg.Mmin[im] * sy - 1, f0(dg.Mmin[im])));
+    }
     for (const e of hijos) if (!e.getAttribute("style")) e.setAttribute("pointer-events", "none");   // solo los apoyos y la franja reciben clics
     svg.replaceChildren(...hijos);
-  } else svg.replaceChildren();
+  }
   $("#cos-apoyos-estado").textContent = c.apoyos_editados ? "apoyos cambiados a mano en esta costanera" : "apoyos de Revit";
   $("#cos-apoyos-estado").className = c.apoyos_editados ? "nocumple" : "tenue";
   $("#cos-det-tramos").replaceChildren(
@@ -3144,6 +3240,7 @@ $("#btn-cos-probar").addEventListener("click", () => intentar(() => {
   return cosIterar([v]);
 }));
 $("#btn-cos-buscar").addEventListener("click", () => intentar(() => cosIterar([])));
+$$('input[name="cos-modo"]').forEach(el => el.addEventListener("change", () => { cos.modo = el.value; cosPlanta(); }));
 $("#btn-cos-apoyo-agregar").addEventListener("click", () => intentar(() => {
   const c = cos.res?.costaneras.find(x => x.id === cos.sel), v = $("#cos-apoyo-x").value;
   if (!c) throw new Error("Elige una costanera verificada");

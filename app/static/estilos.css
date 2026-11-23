@@ -298,3 +298,6 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 #cosit-avance-txt { font-size: 13px; white-space: nowrap; min-width: 260px; }
 
 .cos-apoyos { margin: 6px 0 10px; font-size: 13px; }
+
+.cos-modo { display: inline-flex; gap: 10px; margin-right: 10px; font-size: 13px; }
+.cos-modo label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
