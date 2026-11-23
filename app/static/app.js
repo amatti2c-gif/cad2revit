@@ -2836,6 +2836,17 @@ function cosPlanta() {
     hijos.push(ln);
     if (r) {
       const L = r.L, P_ = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / L, -(c.p0[1] + (c.p1[1] - c.p0[1]) * x / L)];
+      // FU sobre el tramo verificado (el de mayor luz)
+      const tv = r.tramo_verificado;
+      if (tv && r.FU != null) {
+        const [ax, ay] = P_(tv.x0), [bx, by] = P_(tv.x1);
+        hijos.push(s("line", { x1: ax, y1: ay, x2: bx, y2: by, stroke: colorFU(r.FU), "stroke-width": 1.6 * k, "stroke-linecap": "round", "pointer-events": "none" }));
+        const [px, py] = P_((tv.x0 + tv.x1) / 2);
+        const txt = s("text", { x: px, y: py - 1.2 * k, "font-size": 2.6 * k, "font-weight": 700, "text-anchor": "middle", fill: colorFU(r.FU),
+          stroke: "#fff", "stroke-width": 0.5 * k, "paint-order": "stroke", "pointer-events": "none" });
+        txt.textContent = `FU ${r.FU.toFixed(2)}`;
+        hijos.push(txt);
+      }
       for (const a of r.apoyos) { const [px, py] = P_(a.x); hijos.push(s("circle", { cx: px, cy: py, r: 0.6 * k, fill: "#333" })); }
       for (const tx of r.tensores_x || []) { const [px, py] = P_(tx); hijos.push(s("path", { d: `M${px - 0.5 * k},${py - 0.5 * k}l${k},${k}m0,${-k}l${-k},${k}`, stroke: "#c06000", "stroke-width": 0.3 * k })); }
     }
