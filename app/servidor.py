@@ -2010,6 +2010,116 @@ def fundacion_guardada(pid: str, nombre: str):
     return json.loads(r.read_text(encoding="utf-8"))
 
 
+# ------------------------------------------------------------------ costaneras (elementos secundarios, pestaña 8)
+def _costaneras(d: Path, nombre: str) -> Path:
+    f = d / "costaneras" / f"{nombre}.costaneras.json"
+    if not re.fullmatch(r"[\w.\-]+", nombre) or not f.is_file():
+        raise HTTPException(404, f"No existe el techo {nombre}")
+    return f
+
+
+@app.get("/api/proyectos/{pid}/costaneras")
+def listar_costaneras(pid: str):
+    d = _proyecto(pid)
+    out = []
+    for f in sorted((d / "costaneras").glob("*.costaneras.json")):
+        try:
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        out.append({"nombre": f.name[: -len(".costaneras.json")], "proyecto_revit": e.get("proyecto"),
+                    "fecha": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                    "sistemas": len(e.get("sistemas") or []), "costaneras": len(e.get("costaneras") or []),
+                    "vigas": len(e.get("vigas") or [])})
+    return out
+
+
+@app.post("/api/proyectos/{pid}/costaneras", status_code=201)
+async def subir_costaneras(pid: str, archivo: UploadFile = File(...)):
+    """El .costaneras.json del botón «Costaneras a análisis» de Revit (sistemas de vigas y vigas de apoyo)."""
+    d = _proyecto(pid)
+    try:
+        e = json.loads((await archivo.read()).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "El archivo no es JSON")
+    if e.get("tipo_archivo") != "cad2revit-costaneras":
+        raise HTTPException(400, "No es un archivo del botón «Costaneras a análisis» de Revit")
+    nombre = "techo-" + re.sub(r"[^\w.\-]", "_", str(e.get("nombre") or e.get("proyecto") or "revit"))[:60]
+    (d / "costaneras").mkdir(exist_ok=True)
+    (d / "costaneras" / f"{nombre}.costaneras.json").write_text(json.dumps(e, ensure_ascii=False), encoding="utf-8")
+    return {"nombre": nombre}
+
+
+@app.get("/api/proyectos/{pid}/costaneras/{nombre}")
+def leer_costaneras(pid: str, nombre: str):
+    f = _costaneras(_proyecto(pid), nombre)
+    a = f.with_name(f.name.replace(".costaneras.json", ".ajustes.json"))
+    return {"datos": json.loads(f.read_text(encoding="utf-8")),
+            "ajustes": json.loads(a.read_text(encoding="utf-8")) if a.is_file() else {}}
+
+
+@app.delete("/api/proyectos/{pid}/costaneras/{nombre}", status_code=204)
+def borrar_costaneras(pid: str, nombre: str):
+    f = _costaneras(_proyecto(pid), nombre)
+    f.unlink()
+    for ext in (".ajustes.json", ".resultado.json"):
+        a = f.with_name(f.name.replace(".costaneras.json", ext))
+        if a.is_file():
+            a.unlink()
+
+
+class PedidoCostaneras(BaseModel):
+    parametros: dict = {}
+
+
+@app.put("/api/proyectos/{pid}/costaneras/{nombre}/ajustes")
+def guardar_ajustes_costaneras(pid: str, nombre: str, pedido: PedidoCostaneras):
+    f = _costaneras(_proyecto(pid), nombre)
+    f.with_name(f.name.replace(".costaneras.json", ".ajustes.json")).write_text(
+        json.dumps(pedido.parametros, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True}
+
+
+@app.post("/api/proyectos/{pid}/costaneras/{nombre}/analizar")
+def analizar_costaneras_ep(pid: str, nombre: str, pedido: PedidoCostaneras):
+    """Verificación de las costaneras (AISI S100-16 / NCh427/2) con cargas NCh1537, NCh432 y NCh3171."""
+    from app.sap.costaneras import ParametrosCostaneras, analizar_costaneras
+    f = _costaneras(_proyecto(pid), nombre)
+    datos = json.loads(f.read_text(encoding="utf-8"))
+    par = dict(pedido.parametros or {})
+    f.with_name(f.name.replace(".costaneras.json", ".ajustes.json")).write_text(json.dumps(par, ensure_ascii=False), encoding="utf-8")
+    clave = f"{pid}/{nombre}/costaneras"
+    try:
+        pc = ParametrosCostaneras(**{k: v for k, v in par.items() if k in ParametrosCostaneras.__dataclass_fields__
+                                     and v not in (None, "")})
+        _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando", "hasta": 2}
+        r = analizar_costaneras(datos, pc, avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
+            clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
+    except (ValueError, TypeError, KeyError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+    finally:
+        _AVANCE_ANALISIS.pop(clave, None)
+    r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else
+                       (sorted(o) if isinstance(o, set) else str(o)))
+    f.with_name(f.name.replace(".costaneras.json", ".resultado.json")).write_text(texto, encoding="utf-8")
+    return Response(texto, media_type="application/json")
+
+
+@app.get("/api/proyectos/{pid}/costaneras/{nombre}/avance")
+def avance_costaneras(pid: str, nombre: str):
+    return _AVANCE_ANALISIS.get(f"{pid}/{nombre}/costaneras") or {"pct": None, "etapa": ""}
+
+
+@app.get("/api/proyectos/{pid}/costaneras/{nombre}/resultado")
+def resultado_costaneras(pid: str, nombre: str):
+    f = _costaneras(_proyecto(pid), nombre)
+    r = f.with_name(f.name.replace(".costaneras.json", ".resultado.json"))
+    if not r.is_file():
+        raise HTTPException(404, "Aún no se han verificado las costaneras de este techo")
+    return json.loads(r.read_text(encoding="utf-8"))
+
+
 class SeccionHormigon(BaseModel):
     b: float                      # mm
     h: float                      # mm

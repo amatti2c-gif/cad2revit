@@ -33,6 +33,7 @@
     <button data-tab="historial">5 · Historial</button>
     <button data-tab="sap">6 · Análisis y diseño</button>
     <button data-tab="fundaciones">7 · Fundaciones</button>
+    <button data-tab="secundarios">8 · Elementos secundarios</button>
     <span id="badge-errores" class="badge oculto" hidden></span>
   </nav>
 
@@ -486,6 +487,83 @@
         <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-viga"></table></div>
         <h3>Pedestal como muro (ACI 318-19 cap. 11)</h3>
         <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-pedestal"></table></div>
+      </div>
+    </section>
+
+    <!-- ======================= ELEMENTOS SECUNDARIOS (costaneras) ======================= -->
+    <section id="tab-secundarios" class="tab">
+      <div class="panel">
+        <div class="panel-tit"><span>Costaneras de techo</span>
+          <span class="acciones"><label class="link">Subir .costaneras.json<input id="inp-costaneras" type="file" accept=".json" hidden></label></span></div>
+        <p class="tenue">En Revit, el botón <strong>Costaneras a análisis</strong> exporta los sistemas de vigas (Structural
+          Framing Systems) con sus costaneras y las vigas que las soportan por debajo, y los sube aquí. De los cruces con esas
+          vigas salen los apoyos y las luces libres; de la separación entre costaneras, el ancho colaborante. Se verifican como
+          perfiles de acero conformado en frío (AISI S100-16 / NCh427/2, anchos efectivos) con las cargas NCh1537 (Lr),
+          NCh432 (viento de componentes y revestimientos) y las combinaciones NCh3171, con tensores a L/2 o L/3.</p>
+        <div class="fila-sap"><label>Techo <select id="sel-costaneras"></select></label>
+          <button class="sec" id="btn-borrar-costaneras">Eliminar</button><span id="cos-estado" class="tenue"></span></div>
+      </div>
+      <div id="cos-contenido" class="oculto">
+        <div class="panel">
+          <div class="panel-tit"><span>Planta del techo</span>
+            <span class="acciones"><button class="pri" id="btn-costaneras">▶ Verificar costaneras</button></span></div>
+          <div id="cos-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="cos-avance-relleno" class="relleno-avance"></div></div>
+            <span id="cos-avance-txt"></span></div>
+          <svg id="cos-planta" viewBox="0 0 100 60" role="img" aria-label="Planta del techo con costaneras y vigas de apoyo"></svg>
+          <div class="tenue sap-leyenda"><span style="color:#888">━ viga de apoyo</span> <span style="color:#1f4e9c">━ costanera</span>
+            <span>● apoyo</span> <span style="color:#c06000">✕ tensor</span>
+            · diseño: <span style="color:#1b6e20">━ ≤0,7</span> <span style="color:#e0a000">━ ≤1</span> <span style="color:#b00020">━ &gt;1</span></div>
+        </div>
+        <div class="sap-cols">
+          <div class="panel"><div class="panel-tit"><span>Perfil, acero y tensores</span></div>
+            <div class="tenue">Perfil de cada tipo de Revit (mm): «CA 150x50x15x2» (C atiesada: alto × ala × labio × espesor),
+              «C 100x50x3», «ZA 200x70x20x2», «Tubular 100x50x2». Vacío = se lee del nombre del tipo.</div>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-perfiles"></table></div>
+            <div class="sap-form">
+              <label>fy (MPa; A270ES = 270) <input data-cos="fy" type="number" step="any" value="270"></label>
+              <label>Radio interior de doblado (mm) <input data-cos="radio_interior" type="number" step="any" placeholder="= espesor"></label>
+              <label>Tensores <select data-cos="tensores"><option value="auto" selected>auto (L/2 hasta 6 m; L/3 sobre 6 m)</option>
+                <option value="L/2">a L/2</option><option value="L/3">a L/3</option><option value="ninguno">sin tensores</option></select></label>
+              <label>La cubierta atornillada arriostra el ala superior <select data-cos="cubierta_arriostra"><option value="false" selected>no (Lb entre tensores)</option><option value="true">sí (flexión positiva)</option></select></label>
+              <label>Deformación máxima D + Lr: L / <input data-cos="limite_gravedad" type="number" step="any" value="200"></label>
+              <label>Deformación máxima viento: L / <input data-cos="limite_viento" type="number" step="any" value="150"></label>
+            </div></div>
+          <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432)</span></div>
+            <div class="sap-form">
+              <label>Cubierta, fijaciones y aislación (kgf/m²) <input data-cos="peso_cubierta" type="number" step="any" value="15"></label>
+              <label>Lo sobrecarga de techo (kgf/m²) <input data-cos="lo_techo" type="number" step="any" value="102"></label>
+              <label>Reducir Lr por área y pendiente (§8.2) <select data-cos="reducir_lr"><option value="true" selected>sí</option><option value="false">no</option></select></label>
+              <label>Nieve (kgf/m² en proyección horizontal) <input data-cos="nieve" type="number" step="any" value="0"></label>
+              <label>Velocidad básica del viento (m/s) <input data-cos="v_viento" type="number" step="any" value="40"></label>
+              <label>Exposición <select data-cos="exposicion"><option>B</option><option selected>C</option><option>D</option></select></label>
+              <label>Kd <input data-cos="kd" type="number" step="any" value="0.85"></label>
+              <label>Kzt <input data-cos="kzt" type="number" step="any" value="1"></label>
+              <label>Importancia (viento) <input data-cos="importancia_viento" type="number" step="any" value="1"></label>
+              <label>GCpi (± ; cerrado 0,18) <input data-cos="gcpi" type="number" step="any" value="0.18"></label>
+              <label>Altura media del techo h (m) <input data-cos="h_techo" type="number" step="any" placeholder="desde Revit"></label>
+              <label>Zona de viento <select data-cos="zona_viento"><option value="auto" selected>según la posición (1, 2 o 3)</option>
+                <option value="1">1 (interior) en todas</option><option value="2">2 (bordes) en todas</option><option value="3">3 (esquinas) en todas</option></select></label>
+              <label>Ancho colaborante (m) <input data-cos="ancho_colaborante" type="number" step="any" placeholder="según la separación"></label>
+              <label>Pendiente del techo (°) <input data-cos="pendiente" type="number" step="any" placeholder="desde Revit"></label>
+              <label>Distancia máx. a la viga de apoyo bajo la costanera (m) <input data-cos="tol_apoyo" type="number" step="any" value="1"></label>
+            </div></div>
+        </div>
+        <div class="panel oculto" id="cos-res">
+          <div class="panel-tit"><span>Resultados</span></div>
+          <ul id="cos-resumen" class="tenue"></ul>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-sistemas"></table></div>
+          <h3>Propiedades de los perfiles</h3>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-props"></table></div>
+          <h3>Costaneras <span class="tenue">(haz clic en una fila para ver su detalle)</span></h3>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-tabla"></table></div>
+          <div id="cos-detalle" class="oculto">
+            <h3 id="cos-det-tit"></h3>
+            <svg id="cos-diagrama" viewBox="0 0 100 40" role="img" aria-label="Momentos mayorados de la costanera"></svg>
+            <div class="tenue">Envolvente de momentos Mx mayorados (kgf·m; positivo = tracción abajo), apoyos (▲) y tensores (✕).</div>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-det-tramos"></table></div>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-det-ver"></table></div>
+          </div>
+        </div>
       </div>
     </section>
 

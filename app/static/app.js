@@ -66,6 +66,7 @@ function irA(tab) {
   if (tab === "estructura") intentar(cargarEstructura);
   if (tab === "sap") intentar(cargarSap);
   if (tab === "fundaciones") intentar(cargarFundacion);
+  if (tab === "secundarios") intentar(() => cargarCostaneras());
 }
 $$(".pestanas button").forEach(b => b.addEventListener("click", () => irA(b.dataset.tab)));
 
@@ -99,6 +100,7 @@ async function abrirProyecto(id) {
   try { localStorage.setItem("c2r-proyecto", id); } catch {}
   await Promise.all([cargarPlanos(), cargarEntradas(), cargarCorridas(), cargarLegos()]);
   if ($("#tab-sap").classList.contains("activa")) intentar(cargarSap);
+  if ($("#tab-secundarios").classList.contains("activa")) { cos.nombre = null; intentar(() => cargarCostaneras()); }
 }
 
 $("#sel-proyecto").addEventListener("change", e => intentar(() => abrirProyecto(e.target.value)));
@@ -2729,6 +2731,193 @@ $("#inp-eje-sap").addEventListener("change", ev => intentar(async () => {
   await cargarSap(r.nombre);
 }));
 
+
+// ------------------------------------------------------------------ Elementos secundarios: costaneras (pestaña 8)
+const cos = { nombre: null, datos: null, res: null, sel: null };
+const colorFU = r => r == null ? "#1f4e9c" : r > 1 ? "#b00020" : r > 0.7 ? "#e0a000" : "#1b6e20";
+
+async function cargarCostaneras(elegir) {
+  if (!estado.proyecto) return;
+  const lista = await api("GET", P("/costaneras"));
+  const sel = $("#sel-costaneras");
+  sel.replaceChildren(...lista.map(t => h("option", { value: t.nombre },
+    `${t.nombre} · ${t.costaneras} costaneras en ${t.sistemas} sistema(s) · ${t.fecha.slice(0, 16).replace("T", " ")}`)));
+  if (!lista.length) sel.append(h("option", { value: "" }, "— exporta las costaneras desde Revit —"));
+  const nombre = elegir || (lista.some(t => t.nombre === cos.nombre) ? cos.nombre : lista[0]?.nombre);
+  if (nombre) { sel.value = nombre; await abrirCostaneras(nombre); }
+  else { cos.nombre = null; $("#cos-contenido").classList.add("oculto"); }
+}
+
+async function abrirCostaneras(nombre) {
+  const r = await api("GET", P(`/costaneras/${encodeURIComponent(nombre)}`));
+  cos.nombre = nombre; cos.datos = r.datos; cos.res = null; cos.sel = null;
+  const par = r.ajustes || {};
+  $$("[data-cos]").forEach(el => {
+    const v = par[el.dataset.cos];
+    if (v != null) el.value = String(v);
+    else if (el.dataset.defecto != null) el.value = el.dataset.defecto;
+  });
+  cosTablaPerfiles(par.perfiles || {});
+  $("#cos-contenido").classList.remove("oculto");
+  $("#cos-res").classList.add("oculto");
+  $("#cos-estado").textContent = "";
+  cosPlanta();
+  try { cosMostrar(await api("GET", P(`/costaneras/${encodeURIComponent(nombre)}/resultado`))); } catch { /* aún sin verificar */ }
+}
+
+function cosTablaPerfiles(perfiles, leidos = {}) {
+  const tipos = {};
+  for (const c of cos.datos.costaneras || []) tipos[c.tipo || ""] = (tipos[c.tipo || ""] || 0) + 1;
+  $("#cos-perfiles").replaceChildren(
+    h("thead", {}, h("tr", {}, h("th", {}, "Tipo en Revit"), h("th", {}, "N°"), h("th", {}, "Perfil"), h("th", {}, "Leído"))),
+    h("tbody", {}, Object.entries(tipos).map(([tp, n]) => h("tr", {}, h("td", {}, tp || "—"), h("td", {}, String(n)),
+      h("td", {}, h("input", { "data-perfil": tp, value: perfiles[tp] || "", placeholder: "del nombre del tipo", style: "width:170px" })),
+      h("td", { class: leidos[tp] === null ? "nocumple" : "" }, leidos[tp] === null ? "no se reconoce" : (leidos[tp] || ""))))));
+}
+
+function cosParametros() {
+  const p = {};
+  $$("[data-cos]").forEach(el => {
+    const k = el.dataset.cos, v = el.value.trim();
+    if (v === "") return;
+    if (v === "true" || v === "false") p[k] = v === "true";
+    else if (el.type === "number") p[k] = Number(v);
+    else p[k] = v;
+  });
+  p.perfiles = {};
+  $$("[data-perfil]").forEach(el => { if (el.value.trim()) p.perfiles[el.dataset.perfil] = el.value.trim(); });
+  return p;
+}
+
+async function cosVerificar() {
+  if (!cos.nombre) throw new Error("Primero sube las costaneras desde Revit");
+  const nombre = cos.nombre;
+  $("#cos-estado").textContent = "Verificando…";
+  const d = await conAvance("cos", P(`/costaneras/${encodeURIComponent(nombre)}/avance`), $("#btn-costaneras"),
+    () => api("POST", P(`/costaneras/${encodeURIComponent(nombre)}/analizar`), { parametros: cosParametros() }));
+  cosMostrar(d);
+  $("#cos-estado").textContent = "Listo";
+}
+
+function cosPlanta() {
+  const svg = $("#cos-planta"), d = cos.datos; if (!svg || !d) return;
+  const todas = [...(d.costaneras || []), ...(d.vigas || [])];
+  if (!todas.length) { svg.replaceChildren(); return; }
+  const xs = todas.flatMap(e => [e.p0[0], e.p1[0]]), ys = todas.flatMap(e => [e.p0[1], e.p1[1]]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const ancho = Math.max(x1 - x0, 1), alto = Math.max(y1 - y0, 1), m = 0.05 * Math.max(ancho, alto);
+  svg.setAttribute("viewBox", `${x0 - m} ${-y1 - m} ${ancho + 2 * m} ${alto + 2 * m}`);
+  const k = Math.max(ancho, alto) / 100;
+  const res = {}; for (const r of cos.res?.costaneras || []) res[r.id] = r;
+  const hijos = [];
+  for (const v of d.vigas || []) hijos.push(s("line", { x1: v.p0[0], y1: -v.p0[1], x2: v.p1[0], y2: -v.p1[1], stroke: "#999", "stroke-width": 0.6 * k }));
+  for (const c of d.costaneras || []) {
+    const r = res[c.id];
+    const ln = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: colorFU(r?.FU), "stroke-width": (cos.sel === c.id ? 1.1 : 0.55) * k, style: "cursor:pointer" });
+    const t = s("title"); t.textContent = r ? `Costanera ${c.id} · ${r.perfil || "?"} · FU ${r.FU != null ? r.FU.toFixed(2) : "—"}` : `Costanera ${c.id} · ${c.tipo}`;
+    ln.append(t); ln.addEventListener("click", () => r && cosDetalle(c.id));
+    hijos.push(ln);
+    if (r) {
+      const L = r.L, P_ = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / L, -(c.p0[1] + (c.p1[1] - c.p0[1]) * x / L)];
+      for (const a of r.apoyos) { const [px, py] = P_(a.x); hijos.push(s("circle", { cx: px, cy: py, r: 0.6 * k, fill: "#333" })); }
+      for (const tx of r.tensores_x || []) { const [px, py] = P_(tx); hijos.push(s("path", { d: `M${px - 0.5 * k},${py - 0.5 * k}l${k},${k}m0,${-k}l${-k},${k}`, stroke: "#c06000", "stroke-width": 0.3 * k })); }
+    }
+  }
+  svg.replaceChildren(...hijos);
+}
+
+function cosMostrar(d) {
+  cos.res = d;
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2), f0 = x => x == null ? "—" : Number(x).toFixed(0);
+  const celda = r => h("td", { class: r == null ? "" : (r > 1 ? "nocumple" : "cumple") }, r == null ? "—" : f2(r));
+  $("#cos-res").classList.remove("oculto");
+  $("#cos-resumen").replaceChildren(...d.resumen.map(t => h("li", {}, t)));
+  const leidos = {}; for (const [tp, n] of Object.entries(d.perfiles || {})) leidos[tp] = n;
+  cosTablaPerfiles(cosParametros().perfiles, leidos);
+  $("#cos-sistemas").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Sistema", "Costaneras", "Perfiles", "FU máx.", "Costanera más exigida"].map(t => h("th", {}, t)))),
+    h("tbody", {}, d.sistemas.map(x => h("tr", {}, h("td", {}, x.nombre), h("td", {}, String(x.n)), h("td", {}, x.perfiles.join(", ")),
+      celda(x.FU_max || null), h("td", {}, x.peor != null ? h("a", { href: "#", onclick: ev => { ev.preventDefault(); cosDetalle(x.peor); } }, String(x.peor)) : "—")))));
+  $("#cos-props").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Tipo", "Perfil", "A (cm²)", "Ix (cm⁴)", "Iy (cm⁴)", "Sx (cm³)", "Se,x (cm³)", "Peso (kgf/m)",
+      "φMnxo (kgf·m)", "φMny (kgf·m)", "φVn (kgf)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, Object.entries(d.propiedades || {}).map(([tp, p]) => h("tr", {}, h("td", {}, tp), h("td", {}, p.perfil),
+      h("td", {}, f2(p.A_cm2)), h("td", {}, f2(p.Ix_cm4)), h("td", {}, f2(p.Iy_cm4)), h("td", {}, f2(p.Sx_cm3)), h("td", {}, f2(p.Sex_cm3)),
+      h("td", {}, f2(p.peso_kgf_m)), h("td", {}, f0(p.phiMnxo_kgfm)), h("td", {}, f0(p.phiMny_kgfm)), h("td", {}, f0(p.phiVn_kgf))))));
+  const filas = [...d.costaneras].sort((a, b) => (b.FU ?? 99) - (a.FU ?? 99));
+  $("#cos-tabla").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Id", "Sistema", "Perfil", "Largo (m)", "Luces (m)", "Tensores", "Ancho colab. (m)", "Pend. (°)", "FU", "Manda", "Notas"].map(t => h("th", {}, t)))),
+    h("tbody", {}, filas.map(c => {
+      const peor = c.verificaciones.reduce((m, v) => (!m || v.razon > m.razon) ? v : m, null);
+      const tr = h("tr", { style: "cursor:pointer", class: cos.sel === c.id ? "sel" : "" },
+        h("td", {}, String(c.id)), h("td", {}, String(c.sistema ?? "")), h("td", { class: c.perfil ? "" : "nocumple" }, c.perfil || "sin perfil"),
+        h("td", {}, f2(c.L)), h("td", {}, c.tramos.map(t => (t.tipo === "voladizo" ? "v " : "") + f2(t.luz)).join(" · ") || "—"),
+        h("td", {}, c.tramos.filter(t => t.tipo === "tramo").map(t => ["—", "L/2", "L/3"][t.tensores] || "").join(" · ")),
+        h("td", { title: c.origen_s }, f2(c.s)), h("td", {}, f2(c.theta)), celda(c.FU), h("td", {}, peor ? peor.verificacion : ""),
+        h("td", {}, c.notas.join("; ")));
+      tr.addEventListener("click", () => cosDetalle(c.id));
+      return tr;
+    })));
+  cosPlanta();
+  const peor = filas.find(c => c.FU != null);
+  if (cos.sel != null && d.costaneras.some(c => c.id === cos.sel)) cosDetalle(cos.sel);
+  else if (peor) cosDetalle(peor.id);
+}
+
+function cosDetalle(id) {
+  const c = cos.res?.costaneras.find(x => x.id === id); if (!c) return;
+  cos.sel = id;
+  $$("#cos-tabla tbody tr").forEach(tr => tr.classList.toggle("sel", tr.firstChild.textContent === String(id)));
+  cosPlanta();
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2), f0 = x => x == null ? "—" : Number(x).toFixed(0);
+  $("#cos-detalle").classList.remove("oculto");
+  const cg = c.cargas || {};
+  $("#cos-det-tit").textContent = `Costanera ${c.id} · ${c.perfil || "sin perfil"} · L = ${f2(c.L)} m · ancho colaborante ${f2(c.s)} m (${c.origen_s}) · θ ${f2(c.theta)}°` +
+    (c.cargas ? ` · D ${f0(cg.D_kgf_m)} kgf/m (peso propio ${f2(cg.peso_propio_kgf_m)}), Lr ${f0(cg.Lr_kgf_m)}, W +${f0(cg.W_pos_kgf_m)} / ${f0(cg.W_neg_kgf_m)} kgf/m` : "");
+  // diagrama de momentos
+  const svg = $("#cos-diagrama"), dg = c.diagrama;
+  if (dg && dg.x.length) {
+    const L = c.L, sx = 100 / L, mmax = Math.max(...dg.Mmax.map(Math.abs), ...dg.Mmin.map(Math.abs), 1e-9), sy = 14 / mmax, y0 = 20;
+    const pts = arr => dg.x.map((x, i) => `${x * sx},${y0 + arr[i] * sy}`).join(" ");
+    const hijos = [s("line", { x1: 0, y1: y0, x2: 100, y2: y0, stroke: "#333", "stroke-width": 0.4 })];
+    hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmax)} 100,${y0}`, fill: "rgba(176,0,32,.15)", stroke: "#b00020", "stroke-width": 0.25 }));
+    hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmin)} 100,${y0}`, fill: "rgba(45,108,223,.15)", stroke: "#2d6cdf", "stroke-width": 0.25 }));
+    for (const a of c.apoyos) hijos.push(s("path", { d: `M${a.x * sx},${y0} l-1.2,2.2 h2.4 z`, fill: "#333" }));
+    for (const tx of c.tensores_x || []) hijos.push(s("path", { d: `M${tx * sx - 0.8},${y0 - 0.8} l1.6,1.6 m0,-1.6 l-1.6,1.6`, stroke: "#c06000", "stroke-width": 0.35 }));
+    const iM = dg.Mmax.indexOf(Math.max(...dg.Mmax)), im = dg.Mmin.indexOf(Math.min(...dg.Mmin));
+    const T = (x, y, t) => { const e = s("text", { x: Math.min(Math.max(x, 4), 92), y, "font-size": 2.4, fill: "currentColor", "text-anchor": "middle" }); e.textContent = t; return e; };
+    if (dg.Mmax[iM] > 0) hijos.push(T(dg.x[iM] * sx, y0 + dg.Mmax[iM] * sy + 3, `+${f0(dg.Mmax[iM])}`));
+    if (dg.Mmin[im] < 0) hijos.push(T(dg.x[im] * sx, y0 + dg.Mmin[im] * sy - 1, f0(dg.Mmin[im])));
+    svg.replaceChildren(...hijos);
+  } else svg.replaceChildren();
+  $("#cos-det-tramos").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Tramo", "Desde (m)", "Hasta (m)", "Luz (m)", "Tensores", "Lr (kgf/m²)", "Área viento (m²)", "GCp +", "GCp − por zona"].map(t => h("th", {}, t)))),
+    h("tbody", {}, c.tramos.map((t, i) => h("tr", {}, h("td", {}, `${i + 1} · ${t.tipo}`), h("td", {}, f2(t.x0)), h("td", {}, f2(t.x1)), h("td", {}, f2(t.luz)),
+      h("td", {}, t.tipo === "tramo" ? (["ninguno", "1 (L/2)", "2 (L/3)"][t.tensores] || String(t.tensores)) : "—"), h("td", {}, f0(t.Lr_kgf_m2)), h("td", {}, f2(t.area)),
+      h("td", {}, f2(t.GCp_pos)), h("td", {}, Object.entries(t.GCp_neg || {}).map(([z, g]) => `zona ${z}: ${f2(g)}`).join(" · "))))));
+  $("#cos-det-ver").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Verificación", "Demanda", "Capacidad", "Razón", "Combinación", "x (m)", "Notas"].map(t => h("th", {}, t)))),
+    h("tbody", {}, c.verificaciones.map(v => h("tr", {}, h("td", {}, v.verificacion), h("td", {}, v.demanda), h("td", {}, v.capacidad),
+      h("td", { class: v.razon > 1 ? "nocumple" : "cumple" }, f2(v.razon)), h("td", {}, v.combo), h("td", {}, f2(v.x)), h("td", {}, (v.notas || []).join("; "))))));
+}
+
+$("#sel-costaneras").addEventListener("change", ev => ev.target.value && intentar(() => abrirCostaneras(ev.target.value)));
+$("#btn-costaneras").addEventListener("click", () => intentar(cosVerificar));
+$("#btn-borrar-costaneras").addEventListener("click", () => intentar(async () => {
+  if (!cos.nombre || !confirm(`¿Eliminar ${cos.nombre} de este proyecto?`)) return;
+  await api("DELETE", P(`/costaneras/${encodeURIComponent(cos.nombre)}`));
+  cos.nombre = null;
+  await cargarCostaneras();
+}));
+$("#inp-costaneras").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("archivo", f);
+  const r = await api("POST", P("/costaneras"), fd);
+  ev.target.value = "";
+  await cargarCostaneras(r.nombre);
+}));
+$$("[data-cos]").forEach(el => { el.dataset.defecto = el.value; });
+
 // ------------------------------------------------------------------ inicio
 fetch("/salud").then(r => r.json()).then(v => {
   if (!v.dwg) $("#nota-dwg").textContent = "Este servidor aún no tiene el convertidor de DWG: por ahora sube los planos como DXF " +
@@ -2741,6 +2930,7 @@ intentar(async () => {
   // abierta desde Revit: ?proyecto=<id>&tab=sap&eje=<nombre>
   const q = new URLSearchParams(location.search);
   if (q.get("eje")) sap.nombre = sap.auto = q.get("eje");
+  if (q.get("techo")) cos.nombre = q.get("techo");
   await cargarProyectos(q.get("proyecto") || undefined);
   let tab = q.get("tab");
   if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}

@@ -88,6 +88,13 @@ namespace Cad2Revit
                           "(muros de marco plataforma como shell con su rigidez lateral), análisis con PyNite (sismo espectral " +
                           "NCh433 + DS61, viento NCh432, techo NCh1537) y verificación de acero AISC 360-16 y muros de madera."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitCostaneras", "Costaneras\na análisis",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoCostaneras).FullName)
+            {
+                ToolTip = "Exporta los sistemas de vigas (Structural Framing Systems) con sus costaneras y las vigas que las " +
+                          "soportan por debajo (los seleccionados, o todos) y los abre en la pestaña «8 · Elementos secundarios» " +
+                          "de la app: luces libres, ancho colaborante y verificación AISI S100-16 / NCh427/2 con tensores."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitGuardarFamilias", "Guardar\nfamilias",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoGuardarFamilias).FullName)
             {

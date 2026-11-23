@@ -288,3 +288,8 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 
 .fun-esquema-caja { margin-bottom: 10px; }
 #fun-esquema { width: 100%; height: 420px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); color: #222; }
+
+#cos-planta { width: 100%; height: 360px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); }
+#cos-diagrama { width: 100%; height: 220px; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio); color: #222; }
+#cos-avance-txt { font-size: 13px; white-space: nowrap; min-width: 260px; }
+#cos-tabla tr.sel td { background: rgba(45,108,223,.12); }
