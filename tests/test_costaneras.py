@@ -101,3 +101,12 @@ def test_sin_eleccion():
     import pytest
     with pytest.raises(ValueError):
         analizar_costaneras(_techo())
+
+
+def test_solo_tramo_de_mayor_luz():
+    r = analizar_costaneras(_techo(vigas_x=(0, 4, 10)), ParametrosCostaneras(ids=[102]))
+    c = r["costaneras"][0]
+    assert abs(c["tramo_verificado"]["luz"] - 6.0) < 1e-6 and c["tramo_verificado"]["n"] == 2
+    assert [t["verificado"] for t in c["tramos"]] == [False, True]
+    for v in c["verificaciones"]:
+        assert 4.0 - 1e-6 <= v["x"] <= 10.0 + 1e-6

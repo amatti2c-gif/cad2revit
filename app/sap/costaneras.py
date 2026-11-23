@@ -837,6 +837,11 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
         segmentos.insert(0, (0, frenos[0], True))
     if frenos and frenos[-1] < len(xs) - 1:
         segmentos.append((frenos[-1], len(xs) - 1, True))
+    # tramo que se verifica: el de mayor luz entre apoyos (la viga sigue siendo continua para los esfuerzos)
+    interiores = [j for j, tr in enumerate(cg["tramos"]) if tr["tipo"] == "tramo"]
+    j_crit = max(interiores, key=lambda j: cg["tramos"][j]["x1"] - cg["tramos"][j]["x0"])
+    tc = cg["tramos"][j_crit]
+    en_tramo = (xs >= tc["x0"] - 1e-6) & (xs <= tc["x1"] + 1e-6)
     phiMnxo = PHI_B * cap["Mnxo"]
     phiMny = PHI_B * cap["Mny"]
     phiVn = PHI_V * cap["Vn"]
@@ -846,6 +851,8 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
         phiMnx = np.full(len(xs), phiMnxo)
         info_seg = np.empty(len(xs), dtype=object)
         for i0, i1, volado in segmentos:
+            if not (en_tramo[i0] and en_tramo[i1]):
+                continue
             Lb = (xs[i1] - xs[i0]) * 1000
             Cb = 1.0 if volado else _cb(Mx[i0:i1 + 1])
             ltb = fn_volcamiento(pf, pr, Lb, Cb, par.fy)
@@ -860,17 +867,17 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
                 if info_seg[i] is None or val < phiMnx[i]:
                     phiMnx[i] = val
                     info_seg[i] = {"Lb_m": Lb / 1000, "Cb": Cb, "Fe": ltb["Fe"], "Fn": ltb["Fn"]}
-        r = np.abs(Mx) / phiMnx + np.abs(My) / phiMny
+        r = np.where(en_tramo, np.abs(Mx) / phiMnx + np.abs(My) / phiMny, 0.0)
         i = int(np.argmax(r))
         if r[i] > peor["biaxial"][0]:
             peor["biaxial"] = (float(r[i]), nombre, i, info_seg[i], float(Mx[i]), float(My[i]), float(phiMnx[i]))
-        rv = np.abs(Vx) / phiVn
+        rv = np.where(en_tramo, np.abs(Vx) / phiVn, 0.0)
         i = int(np.argmax(rv))
         if rv[i] > peor["corte"][0]:
             peor["corte"] = (float(rv[i]), nombre, i, float(Vx[i]))
         rmv = np.sqrt((Mx / phiMnxo) ** 2 + (Vx / phiVn) ** 2)
         # H2 se verifica donde actúan juntos: en los apoyos
-        ia = list(i_apoyos)
+        ia = [i for i in i_apoyos if en_tramo[i]]          # los dos apoyos del tramo
         j = ia[int(np.argmax(rmv[ia]))]
         if rmv[j] > peor["flexion_corte"][0]:
             peor["flexion_corte"] = (float(rmv[j]), nombre, j, float(Mx[j]), float(Vx[j]))
@@ -898,8 +905,8 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
                                ("W presión", {"W+": 1}, par.limite_viento), ("W succión", {"W-": 1}, par.limite_viento)):
         v = comb(cmb, "vx")
         peor_d = (0.0, None, 0.0, 0.0)
-        for tr in cg["tramos"]:
-            sel = (xs >= tr["x0"] - 1e-6) & (xs <= tr["x1"] + 1e-6)
+        for tr in [tc]:
+            sel = en_tramo
             Ls = tr["x1"] - tr["x0"]
             Lref = Ls if tr["tipo"] == "tramo" else 2 * Ls
             if Lref <= 0:
@@ -927,12 +934,13 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
     for j, tr in enumerate(cg["tramos"]):
         tramos_out.append({**{k: (float(v) if isinstance(v, (float, np.floating)) else v) for k, v in tr.items()},
                            "luz": float(tr["x1"] - tr["x0"]), "Lr_kgf_m2": lr_info[j], **w_info[j],
-                           "zonas": sorted({int(z) for z in zonas[tramo_de == j]})})
+                           "zonas": sorted({int(z) for z in zonas[tramo_de == j]}), "verificado": j == j_crit})
     reacciones = {}
     for nombre in casos:
         reacciones[nombre] = [float(kgf(sol[nombre]["Rx"][i])) for i in sorted(i_apoyos)]
     base.update({
         "tramos": tramos_out, "tensores_x": sorted(tensores_x), "verificaciones": ver,
+        "tramo_verificado": {"n": j_crit + 1, "x0": float(tc["x0"]), "x1": float(tc["x1"]), "luz": float(tc["x1"] - tc["x0"])},
         "FU": max((v["razon"] for v in ver), default=None),
         "cargas": {"D_kgf_m": d_lin * 1000 / G_ACC, "peso_propio_kgf_m": pr["peso_kgf_m"],
                    "Lr_kgf_m": float(np.max(lr_el)) * 1000 / G_ACC,

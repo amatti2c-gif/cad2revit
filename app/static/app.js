@@ -2869,12 +2869,13 @@ function cosMostrar(d) {
       h("td", {}, f2(p.peso_kgf_m)), h("td", {}, f0(p.phiMnxo_kgfm)), h("td", {}, f0(p.phiMny_kgfm)), h("td", {}, f0(p.phiVn_kgf))))));
   const filas = [...d.costaneras].sort((a, b) => (b.FU ?? 99) - (a.FU ?? 99));
   $("#cos-tabla").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Id", "Sistema", "Perfil", "Largo (m)", "Luces (m)", "Tensores", "Ancho colab. (m)", "Pend. (°)", "FU", "Manda", "Notas"].map(t => h("th", {}, t)))),
+    h("thead", {}, h("tr", {}, ...["Id", "Sistema", "Perfil", "Largo (m)", "Luces (m)", "Tramo verificado", "Tensores", "Ancho colab. (m)", "Pend. (°)", "FU", "Manda", "Notas"].map(t => h("th", {}, t)))),
     h("tbody", {}, filas.map(c => {
       const peor = c.verificaciones.reduce((m, v) => (!m || v.razon > m.razon) ? v : m, null);
       const tr = h("tr", { style: "cursor:pointer", class: cos.sel === c.id ? "sel" : "" },
         h("td", {}, String(c.id)), h("td", {}, String(c.sistema ?? "")), h("td", { class: c.perfil ? "" : "nocumple" }, c.perfil || "sin perfil"),
         h("td", {}, f2(c.L)), h("td", {}, c.tramos.map(t => (t.tipo === "voladizo" ? "v " : "") + f2(t.luz)).join(" · ") || "—"),
+        h("td", {}, c.tramo_verificado ? `${c.tramo_verificado.n} · ${f2(c.tramo_verificado.luz)} m` : "—"),
         h("td", {}, c.tramos.filter(t => t.tipo === "tramo").map(t => ["—", "L/2", "L/3"][t.tensores] || "").join(" · ")),
         h("td", { title: c.origen_s }, f2(c.s)), h("td", {}, f2(c.theta)), celda(c.FU), h("td", {}, peor ? peor.verificacion : ""),
         h("td", {}, c.notas.join("; ")));
@@ -2902,12 +2903,18 @@ function cosDetalle(id) {
   if (dg && dg.x.length) {
     const L = c.L, sx = 100 / L, mmax = Math.max(...dg.Mmax.map(Math.abs), ...dg.Mmin.map(Math.abs), 1e-9), sy = 14 / mmax, y0 = 20;
     const pts = arr => dg.x.map((x, i) => `${x * sx},${y0 + arr[i] * sy}`).join(" ");
-    const hijos = [s("line", { x1: 0, y1: y0, x2: 100, y2: y0, stroke: "#333", "stroke-width": 0.4 })];
+    const hijos = [];
+    const tv = c.tramo_verificado;
+    if (tv) hijos.push(s("rect", { x: tv.x0 * sx, y: 1, width: (tv.x1 - tv.x0) * sx, height: 38, fill: "rgba(255,200,0,.13)" }));
+    hijos.push(s("line", { x1: 0, y1: y0, x2: 100, y2: y0, stroke: "#333", "stroke-width": 0.4 }));
     hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmax)} 100,${y0}`, fill: "rgba(176,0,32,.15)", stroke: "#b00020", "stroke-width": 0.25 }));
     hijos.push(s("polygon", { points: `0,${y0} ${pts(dg.Mmin)} 100,${y0}`, fill: "rgba(45,108,223,.15)", stroke: "#2d6cdf", "stroke-width": 0.25 }));
     for (const a of c.apoyos) hijos.push(s("path", { d: `M${a.x * sx},${y0} l-1.2,2.2 h2.4 z`, fill: "#333" }));
     for (const tx of c.tensores_x || []) hijos.push(s("path", { d: `M${tx * sx - 0.8},${y0 - 0.8} l1.6,1.6 m0,-1.6 l-1.6,1.6`, stroke: "#c06000", "stroke-width": 0.35 }));
-    const iM = dg.Mmax.indexOf(Math.max(...dg.Mmax)), im = dg.Mmin.indexOf(Math.min(...dg.Mmin));
+    const dentro = i => !tv || (dg.x[i] >= tv.x0 - 1e-6 && dg.x[i] <= tv.x1 + 1e-6);
+    const idx = dg.x.map((_, i) => i).filter(dentro);
+    const iM = idx.reduce((a, i) => dg.Mmax[i] > dg.Mmax[a] ? i : a, idx[0]);
+    const im = idx.reduce((a, i) => dg.Mmin[i] < dg.Mmin[a] ? i : a, idx[0]);
     const T = (x, y, t) => { const e = s("text", { x: Math.min(Math.max(x, 4), 92), y, "font-size": 2.4, fill: "currentColor", "text-anchor": "middle" }); e.textContent = t; return e; };
     if (dg.Mmax[iM] > 0) hijos.push(T(dg.x[iM] * sx, y0 + dg.Mmax[iM] * sy + 3, `+${f0(dg.Mmax[iM])}`));
     if (dg.Mmin[im] < 0) hijos.push(T(dg.x[im] * sx, y0 + dg.Mmin[im] * sy - 1, f0(dg.Mmin[im])));
@@ -2915,7 +2922,7 @@ function cosDetalle(id) {
   } else svg.replaceChildren();
   $("#cos-det-tramos").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Tramo", "Desde (m)", "Hasta (m)", "Luz (m)", "Tensores", "Lr (kgf/m²)", "Área viento (m²)", "GCp +", "GCp − por zona"].map(t => h("th", {}, t)))),
-    h("tbody", {}, c.tramos.map((t, i) => h("tr", {}, h("td", {}, `${i + 1} · ${t.tipo}`), h("td", {}, f2(t.x0)), h("td", {}, f2(t.x1)), h("td", {}, f2(t.luz)),
+    h("tbody", {}, c.tramos.map((t, i) => h("tr", { class: t.verificado ? "sel" : "" }, h("td", {}, `${i + 1} · ${t.tipo}` + (t.verificado ? " · verificado (mayor luz)" : "")), h("td", {}, f2(t.x0)), h("td", {}, f2(t.x1)), h("td", {}, f2(t.luz)),
       h("td", {}, t.tipo === "tramo" ? (["ninguno", "1 (L/2)", "2 (L/3)"][t.tensores] || String(t.tensores)) : "—"), h("td", {}, f0(t.Lr_kgf_m2)), h("td", {}, f2(t.area)),
       h("td", {}, f2(t.GCp_pos)), h("td", {}, Object.entries(t.GCp_neg || {}).map(([z, g]) => `zona ${z}: ${f2(g)}`).join(" · "))))));
   $("#cos-det-ver").replaceChildren(
