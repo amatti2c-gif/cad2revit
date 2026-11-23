@@ -970,3 +970,44 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
     if any(t["tipo"] == "voladizo" for t in tramos_out):
         base["notas"].append("tiene voladizo(s)")
     return base
+
+
+# ---------------------------------------------------------------------------------------------- iterar la sección
+# catálogo habitual de costaneras CA (alto × ala × labio × espesor, mm), de las más livianas a las más pesadas
+CATALOGO_CA = [f"CA {h}x{b}x{c}x{t:g}" for h, b, c in ((80, 40, 15), (100, 50, 15), (125, 50, 15), (150, 50, 15),
+                                                       (175, 50, 15), (200, 50, 15), (200, 75, 20), (250, 75, 20))
+               for t in (2, 3, 4) if not (t == 4 and h < 150)]
+
+
+def peso_perfil(texto: str) -> float | None:
+    pf = leer_perfil(texto)
+    return propiedades_brutas(pf)["peso_kgf_m"] if pf else None
+
+
+def iterar_secciones(datos: dict, par: ParametrosCostaneras, candidatos: list[str], tipos: list[str] | None = None,
+                     avance=None) -> list[dict]:
+    """Verifica las costaneras elegidas con cada perfil candidato (reemplaza el perfil de los `tipos` de Revit, o de
+    todos los tipos de las elegidas). Devuelve, por candidato, el FU máximo, la costanera que manda y el FU de cada una."""
+    paso = avance or (lambda pct, etapa, hasta=None: None)
+    elegidas = {str(i) for i in (par.ids or [])}
+    if not tipos:
+        tipos = sorted({c.get("tipo") or "" for c in (datos.get("costaneras") or []) if str(c.get("id")) in elegidas})
+    out = []
+    cands = [c for c in dict.fromkeys(x.strip() for x in candidatos if x and x.strip())]
+    for k, cand in enumerate(cands):
+        paso(int(95 * k / max(len(cands), 1)), f"Probando {cand} ({k + 1} de {len(cands)})", int(95 * (k + 1) / max(len(cands), 1)))
+        pf = leer_perfil(cand)
+        if pf is None:
+            out.append({"perfil": cand, "error": "no se reconoce el perfil"})
+            continue
+        p2 = ParametrosCostaneras(**{f: getattr(par, f) for f in par.__dataclass_fields__})
+        p2.perfiles = {**(par.perfiles or {}), **{t: cand for t in tipos}}
+        r = analizar_costaneras(datos, p2)
+        fus = [(c["FU"], c["id"], c.get("manda")) for c in r["costaneras"] if c["FU"] is not None]
+        peor = max(fus, key=lambda x: x[0]) if fus else (None, None, None)
+        out.append({"perfil": pf.nombre(), "texto": cand, "peso_kgf_m": propiedades_brutas(pf)["peso_kgf_m"],
+                    "FU_max": peor[0], "peor": peor[1], "manda": peor[2],
+                    "FU": {str(c["id"]): c["FU"] for c in r["costaneras"]},
+                    "cumple": peor[0] is not None and peor[0] <= 1.0})
+    paso(100, "Listo", 100)
+    return out

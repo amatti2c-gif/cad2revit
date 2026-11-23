@@ -2106,6 +2106,41 @@ def analizar_costaneras_ep(pid: str, nombre: str, pedido: PedidoCostaneras):
     return Response(texto, media_type="application/json")
 
 
+class PedidoIterar(BaseModel):
+    parametros: dict = {}
+    candidatos: list[str] = []          # perfiles a probar; vacío = catálogo CA
+    tipos: list[str] = []               # tipos de Revit a los que se cambia el perfil; vacío = los de las elegidas
+
+
+@app.get("/api/costaneras/catalogo")
+def catalogo_costaneras():
+    from app.sap.costaneras import CATALOGO_CA, peso_perfil
+    return [{"perfil": c, "peso_kgf_m": peso_perfil(c)} for c in sorted(CATALOGO_CA, key=peso_perfil)]
+
+
+@app.post("/api/proyectos/{pid}/costaneras/{nombre}/iterar")
+def iterar_costaneras_ep(pid: str, nombre: str, pedido: PedidoIterar):
+    """Prueba perfiles en las costaneras elegidas (FU de cada una con cada perfil), para llegar a cumplir."""
+    from app.sap.costaneras import CATALOGO_CA, ParametrosCostaneras, iterar_secciones, peso_perfil
+    f = _costaneras(_proyecto(pid), nombre)
+    datos = json.loads(f.read_text(encoding="utf-8"))
+    par = dict(pedido.parametros or {})
+    clave = f"{pid}/{nombre}/costaneras"
+    cands = pedido.candidatos or sorted(CATALOGO_CA, key=peso_perfil)
+    try:
+        pc = ParametrosCostaneras(**{k: v for k, v in par.items() if k in ParametrosCostaneras.__dataclass_fields__
+                                     and v not in (None, "")})
+        _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando", "hasta": 2}
+        r = iterar_secciones(datos, pc, cands, pedido.tipos or None, avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
+            clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
+    except (ValueError, TypeError, KeyError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+    finally:
+        _AVANCE_ANALISIS.pop(clave, None)
+    texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+    return Response(texto, media_type="application/json")
+
+
 @app.get("/api/proyectos/{pid}/costaneras/{nombre}/avance")
 def avance_costaneras(pid: str, nombre: str):
     return _AVANCE_ANALISIS.get(f"{pid}/{nombre}/costaneras") or {"pct": None, "etapa": ""}

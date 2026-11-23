@@ -558,6 +558,22 @@
           <div class="panel-tit"><span>Resultados</span></div>
           <ul id="cos-resumen" class="tenue"></ul>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-sistemas"></table></div>
+          <div class="cos-iterar">
+            <h3>Iterar la sección para cumplir</h3>
+            <p class="tenue">Prueba otro perfil en las costaneras elegidas (mismas cargas, apoyos y tensores) o busca en el
+              catálogo de costaneras CA el más liviano que cumpla; «Aplicar» lo deja como perfil del tipo y vuelve a verificar.</p>
+            <div class="fila-sap">
+              <label>Cambiar el perfil de <select id="cos-it-tipo"></select></label>
+              <label>Perfil <input id="cos-it-perfil" list="cos-it-catalogo" placeholder="CA 200x50x15x3" style="width:170px"></label>
+              <datalist id="cos-it-catalogo"></datalist>
+              <button class="sec" id="btn-cos-probar">Probar</button>
+              <button class="sec" id="btn-cos-buscar">Buscar en el catálogo</button>
+              <button class="sec" id="btn-cos-it-limpiar">Limpiar</button>
+            </div>
+            <div id="cosit-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="cosit-avance-relleno" class="relleno-avance"></div></div>
+              <span id="cosit-avance-txt"></span></div>
+            <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-it-tabla"></table></div>
+          </div>
           <h3>Propiedades de los perfiles</h3>
           <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-props"></table></div>
           <h3>Costaneras <span class="tenue">(haz clic en una fila para ver su detalle)</span></h3>

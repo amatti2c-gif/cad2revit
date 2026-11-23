@@ -2751,7 +2751,7 @@ async function cargarCostaneras(elegir) {
 async function abrirCostaneras(nombre) {
   const r = await api("GET", P(`/costaneras/${encodeURIComponent(nombre)}`));
   cos.nombre = nombre; cos.datos = r.datos; cos.res = null; cos.sel = null;
-  cos.vista = null; cos.vigasApoyo = null;
+  cos.vista = null; cos.vigasApoyo = null; cos.iter = []; cosIterTabla();
   const par = r.ajustes || {};
   $$("[data-cos]").forEach(el => {
     const v = par[el.dataset.cos];
@@ -2952,6 +2952,7 @@ function compactar(lista) {
 
 function cosElegidas() {
   const n = cos.ids.size;
+  cosIterTipos();
   $("#cos-elegidas").textContent = n ? `${n} costanera(s) elegida(s) para verificar` : "Ninguna elegida: haz clic en la planta sobre las más críticas";
   $("#cos-elegidas").className = n ? "tenue" : "nocumple";
 }
@@ -3038,6 +3039,64 @@ function cosDetalle(id) {
     h("tbody", {}, c.verificaciones.map(v => h("tr", {}, h("td", {}, v.verificacion), h("td", {}, v.demanda), h("td", {}, v.capacidad),
       h("td", { class: v.razon > 1 ? "nocumple" : "cumple" }, f2(v.razon)), h("td", {}, v.combo), h("td", {}, f2(v.x)), h("td", {}, (v.notas || []).join("; "))))));
 }
+
+
+// ---- iterar la sección de las costaneras elegidas
+cos.iter = [];
+async function cosIterar(candidatos) {
+  if (!cos.nombre) throw new Error("Primero sube las costaneras desde Revit");
+  if (!cos.ids.size) throw new Error("Elige en la planta las costaneras que quieres verificar");
+  const tipo = $("#cos-it-tipo").value, nombre = cos.nombre;
+  const r = await conAvance("cosit", P(`/costaneras/${encodeURIComponent(nombre)}/avance`), $("#btn-cos-buscar"),
+    () => api("POST", P(`/costaneras/${encodeURIComponent(nombre)}/iterar`),
+      { parametros: cosParametros(), candidatos, tipos: tipo ? [tipo] : [] }));
+  const nuevos = new Map(cos.iter.map(x => [x.perfil + "|" + x.tipo, x]));
+  for (const x of r) nuevos.set(x.perfil + "|" + tipo, { ...x, tipo });
+  cos.iter = [...nuevos.values()].sort((a, b) => (a.peso_kgf_m ?? 1e9) - (b.peso_kgf_m ?? 1e9));
+  cosIterTabla();
+}
+
+function cosIterTipos() {
+  const tipos = [...new Set((cos.datos?.costaneras || []).filter(c => cos.ids.has(String(c.id))).map(c => c.tipo || ""))];
+  const sel = $("#cos-it-tipo"), antes = sel.value;
+  sel.replaceChildren(h("option", { value: "" }, "todos los tipos de las elegidas"), ...tipos.map(t => h("option", { value: t }, t || "—")));
+  if (tipos.includes(antes)) sel.value = antes;
+}
+
+function cosIterTabla() {
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2);
+  const ids = [...cos.ids].slice(0, 10);
+  const liviano = cos.iter.find(x => x.cumple);
+  const cab = ["Perfil", "Tipo", "Peso (kgf/m)", "FU máx.", "Manda", ...ids.map(i => `FU ${i}`), ""];
+  $("#cos-it-tabla").replaceChildren(
+    h("thead", {}, h("tr", {}, ...cab.map(t => h("th", {}, t)))),
+    h("tbody", {}, cos.iter.map(x => x.error ? h("tr", {}, h("td", {}, x.perfil), h("td", { class: "nocumple", colspan: cab.length - 1 }, x.error)) :
+      h("tr", { class: x === liviano ? "sel" : "" },
+        h("td", {}, x.perfil + (x === liviano ? " · el más liviano que cumple" : "")), h("td", {}, x.tipo || "todos"),
+        h("td", {}, f2(x.peso_kgf_m)),
+        h("td", { class: x.FU_max > 1 ? "nocumple" : "cumple" }, f2(x.FU_max)),
+        h("td", {}, x.peor != null ? `${x.peor} · ${x.manda?.combo || ""}` : "—"),
+        ...ids.map(i => { const v = x.FU?.[i]; return h("td", { class: v == null ? "" : v > 1 ? "nocumple" : "cumple" }, f2(v)); }),
+        h("td", {}, h("button", { class: "sec", onclick: () => intentar(() => cosAplicarPerfil(x)) }, "Aplicar"))))));
+}
+
+async function cosAplicarPerfil(x) {
+  const tipos = x.tipo ? [x.tipo] : [...new Set((cos.datos?.costaneras || []).filter(c => cos.ids.has(String(c.id))).map(c => c.tipo || ""))];
+  $$("[data-perfil]").forEach(el => { if (tipos.includes(el.dataset.perfil)) el.value = x.texto || x.perfil; });
+  await cosVerificar();
+  toast(`Perfil ${x.perfil} aplicado`);
+}
+
+$("#btn-cos-probar").addEventListener("click", () => intentar(() => {
+  const v = $("#cos-it-perfil").value.trim();
+  if (!v) throw new Error("Escribe el perfil a probar, por ejemplo CA 200x50x15x3");
+  return cosIterar([v]);
+}));
+$("#btn-cos-buscar").addEventListener("click", () => intentar(() => cosIterar([])));
+$("#btn-cos-it-limpiar").addEventListener("click", () => { cos.iter = []; cosIterTabla(); });
+fetch("/api/costaneras/catalogo").then(r => r.json()).then(l => {
+  $("#cos-it-catalogo").replaceChildren(...l.map(c => h("option", { value: c.perfil }, `${c.peso_kgf_m.toFixed(2)} kgf/m`)));
+}).catch(() => {});
 
 $("#sel-costaneras").addEventListener("change", ev => ev.target.value && intentar(() => abrirCostaneras(ev.target.value)));
 $("#btn-costaneras").addEventListener("click", () => intentar(cosVerificar));

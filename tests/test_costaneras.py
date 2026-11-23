@@ -110,3 +110,13 @@ def test_solo_tramo_de_mayor_luz():
     assert [t["verificado"] for t in c["tramos"]] == [False, True]
     for v in c["verificaciones"]:
         assert 4.0 - 1e-6 <= v["x"] <= 10.0 + 1e-6
+
+
+def test_iterar_seccion():
+    from app.sap.costaneras import CATALOGO_CA, iterar_secciones, peso_perfil
+    cands = sorted(CATALOGO_CA, key=peso_perfil)
+    r = iterar_secciones(_techo(vigas_x=(0, 4, 10)), ParametrosCostaneras(ids=[100, 105]), cands + ["nada"])
+    assert r[-1]["error"]
+    ok = [x for x in r if x.get("cumple")]
+    assert ok and not r[0]["cumple"]                       # el más liviano no cumple; alguno sí
+    assert set(ok[0]["FU"]) == {"100", "105"}
