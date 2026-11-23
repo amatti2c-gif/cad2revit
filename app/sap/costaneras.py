@@ -716,7 +716,7 @@ def analizar_costaneras(datos: dict, par: ParametrosCostaneras | None = None, av
     n = max(len(geo), 1)
     for k, cg in enumerate(geo):
         if k % 5 == 0:
-            paso(5 + int(90 * k / n), f"Costanera {k + 1} de {len(geo)}", 5 + int(90 * (k + 5) / n))
+            paso(5 + int(90 * k / n), f"Costanera {k + 1} de {len(geo)}", 5 + int(90 * min(k + 5, n) / n))
         res.append(_disenar(cg, gen, perfiles.get(cg["tipo"]), caps.get(cg["tipo"]), par, qh, h, xy, a_borde_cache))
     paso(97, "Resumen", 100)
     # resumen por sistema

@@ -131,3 +131,9 @@ def test_apoyos_editados():
     # quitar el apoyo central deja un solo tramo de 10 m
     c2 = analizar_costaneras(_techo(), ParametrosCostaneras(ids=[102], apoyos_editados={"102": {"quitar": [5.0]}}))["costaneras"][0]
     assert [round(t["luz"], 2) for t in c2["tramos"]] == [10.0]
+
+
+def test_avance_no_pasa_de_100():
+    v = []
+    analizar_costaneras(_techo(), ParametrosCostaneras(ids=[100, 101, 102]), avance=lambda p, e, h=None: v.append((p, h)))
+    assert all(p <= 100 and (h is None or h <= 100) for p, h in v)

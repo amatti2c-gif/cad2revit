@@ -2223,7 +2223,7 @@ async function sapNube() {
     } catch { /* se reintenta */ }
   }, 700);
   const suave = setInterval(() => {
-    const techo = pct + 0.95 * (hasta - pct);
+    const techo = Math.min(99, pct + 0.95 * (hasta - pct));
     mostrado = Math.max(mostrado, pct);
     if (mostrado < techo) mostrado += (techo - mostrado) * 0.03;
     poner(Math.floor(mostrado), etapa);
@@ -2493,7 +2493,7 @@ async function conAvance(p, rutaAvance, boton, tarea) {
     catch { /* se reintenta */ }
   }, 600);
   const suave = setInterval(() => {
-    const techo = pct + 0.95 * (hasta - pct);
+    const techo = Math.min(99, pct + 0.95 * (hasta - pct));
     mostrado = Math.max(mostrado, pct);
     if (mostrado < techo) mostrado += (techo - mostrado) * 0.03;
     poner(Math.floor(mostrado), etapa);
