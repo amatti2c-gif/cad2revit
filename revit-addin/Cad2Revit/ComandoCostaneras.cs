@@ -117,6 +117,8 @@ namespace Cad2Revit
                 ["tipo_archivo"] = "cad2revit-costaneras", ["version"] = 1, ["proyecto"] = doc.Title, ["nombre"] = doc.Title,
                 ["unidades"] = "m", ["z_base"] = zBase, ["sistemas"] = listaSis,
                 ["costaneras"] = costaneras.Where(x => x != null).ToList(), ["vigas"] = vigas,
+                // costaneras seleccionadas en Revit: quedan elegidas para verificar en la app
+                ["elegidas"] = sistemas.SelectMany(b => b.GetBeamIds()).Select(i => i.Value).Where(selIds.Contains).ToList(),
             };
             string ruta;
             using (var dlg = new System.Windows.Forms.SaveFileDialog

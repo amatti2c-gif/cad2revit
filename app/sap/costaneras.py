@@ -451,6 +451,7 @@ class ParametrosCostaneras:
     limite_gravedad: float = 200.0       # L/… con D + Lr
     limite_viento: float = 150.0         # L/… con W
     tol_apoyo: float = 1.0               # m: distancia máxima bajo la costanera a la que se busca la viga de apoyo
+    ids: list = field(default_factory=list)  # costaneras elegidas para verificar (las más críticas, a mano)
 
 
 def _tensores_por_tramo(regla: str, luz_m: float) -> int:
@@ -642,8 +643,14 @@ def _zona_elemento(cg: dict, gen: dict, xm: float, a_borde: float, theta: float)
 def analizar_costaneras(datos: dict, par: ParametrosCostaneras | None = None, avance=None) -> dict:
     par = par or ParametrosCostaneras()
     paso = avance or (lambda pct, etapa, hasta=None: None)
+    elegidas = {str(i) for i in (par.ids or [])}
+    if not elegidas:
+        raise ValueError("elige en la planta las costaneras que quieres verificar (las más críticas)")
     paso(2, "Leyendo costaneras y apoyos", 10)
-    geo, gen = _geometria(datos, par)
+    geo, gen = _geometria(datos, par)           # todas: las vecinas dan el ancho colaborante
+    geo = [cg for cg in geo if str(cg["id"]) in elegidas]
+    if not geo:
+        raise ValueError("ninguna de las costaneras elegidas está en el archivo")
     pc = ParametrosCargas(v_viento=par.v_viento, exposicion=par.exposicion, kzt=par.kzt, kd=par.kd,
                           importancia_viento=par.importancia_viento)
     # altura media del techo y dimensiones en planta (para q_h y el ancho a de las zonas de viento)

@@ -67,7 +67,7 @@ def test_gcp_area_y_zonas():
 
 
 def test_costaneras_techo_sintetico():
-    r = analizar_costaneras(_techo())
+    r = analizar_costaneras(_techo(), ParametrosCostaneras(ids=list(range(100, 106))))
     cs = {c["id"]: c for c in r["costaneras"]}
     assert len(cs) == 6
     c = cs[102]
@@ -82,8 +82,10 @@ def test_costaneras_techo_sintetico():
 
 
 def test_tensores_l3_y_perfil_dado():
-    r = analizar_costaneras(_techo(perfil="X"), ParametrosCostaneras(tensores="L/3", perfiles={"Costanera: X": "CA 200x50x15x2"}))
-    c = r["costaneras"][2]
+    r = analizar_costaneras(_techo(perfil="X"), ParametrosCostaneras(tensores="L/3", perfiles={"Costanera: X": "CA 200x50x15x2"}, ids=[102]))
+    assert len(r["costaneras"]) == 1                        # solo las elegidas
+    c = r["costaneras"][0]
+    assert abs(c["s"] - 1.0) < 1e-6                         # las no elegidas igual dan el ancho colaborante
     assert c["perfil"] == "CA 200x50x15x2"
     assert [t["tensores"] for t in c["tramos"]] == [2, 2] and len(c["tensores_x"]) == 4
 
@@ -91,5 +93,11 @@ def test_tensores_l3_y_perfil_dado():
 def test_sin_apoyos():
     d = _techo()
     d["vigas"] = d["vigas"][:1]
-    r = analizar_costaneras(d)
+    r = analizar_costaneras(d, ParametrosCostaneras(ids=[100, 101, 102, 103, 104, 105]))
     assert all(c["FU"] is None and c["notas"] for c in r["costaneras"])
+
+
+def test_sin_eleccion():
+    import pytest
+    with pytest.raises(ValueError):
+        analizar_costaneras(_techo())

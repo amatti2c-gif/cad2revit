@@ -2733,7 +2733,7 @@ $("#inp-eje-sap").addEventListener("change", ev => intentar(async () => {
 
 
 // ------------------------------------------------------------------ Elementos secundarios: costaneras (pestaña 8)
-const cos = { nombre: null, datos: null, res: null, sel: null };
+const cos = { nombre: null, datos: null, res: null, sel: null, ids: new Set() };
 const colorFU = r => r == null ? "#1f4e9c" : r > 1 ? "#b00020" : r > 0.7 ? "#e0a000" : "#1b6e20";
 
 async function cargarCostaneras(elegir) {
@@ -2758,6 +2758,8 @@ async function abrirCostaneras(nombre) {
     else if (el.dataset.defecto != null) el.value = el.dataset.defecto;
   });
   cosTablaPerfiles(par.perfiles || {});
+  cos.ids = new Set((par.ids?.length ? par.ids : (r.datos.elegidas || [])).map(String));
+  cosElegidas();
   $("#cos-contenido").classList.remove("oculto");
   $("#cos-res").classList.add("oculto");
   $("#cos-estado").textContent = "";
@@ -2784,6 +2786,7 @@ function cosParametros() {
     else if (el.type === "number") p[k] = Number(v);
     else p[k] = v;
   });
+  p.ids = [...cos.ids].map(i => isNaN(i) ? i : Number(i));
   p.perfiles = {};
   $$("[data-perfil]").forEach(el => { if (el.value.trim()) p.perfiles[el.dataset.perfil] = el.value.trim(); });
   return p;
@@ -2791,6 +2794,7 @@ function cosParametros() {
 
 async function cosVerificar() {
   if (!cos.nombre) throw new Error("Primero sube las costaneras desde Revit");
+  if (!cos.ids.size) throw new Error("Elige en la planta (clic) las costaneras que quieres verificar");
   const nombre = cos.nombre;
   $("#cos-estado").textContent = "Verificando…";
   const d = await conAvance("cos", P(`/costaneras/${encodeURIComponent(nombre)}/avance`), $("#btn-costaneras"),
@@ -2812,10 +2816,23 @@ function cosPlanta() {
   const hijos = [];
   for (const v of d.vigas || []) hijos.push(s("line", { x1: v.p0[0], y1: -v.p0[1], x2: v.p1[0], y2: -v.p1[1], stroke: "#999", "stroke-width": 0.6 * k }));
   for (const c of d.costaneras || []) {
-    const r = res[c.id];
-    const ln = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: colorFU(r?.FU), "stroke-width": (cos.sel === c.id ? 1.1 : 0.55) * k, style: "cursor:pointer" });
-    const t = s("title"); t.textContent = r ? `Costanera ${c.id} · ${r.perfil || "?"} · FU ${r.FU != null ? r.FU.toFixed(2) : "—"}` : `Costanera ${c.id} · ${c.tipo}`;
-    ln.append(t); ln.addEventListener("click", () => r && cosDetalle(c.id));
+    const elegida = cos.ids.has(String(c.id)), r = elegida ? res[c.id] : null;
+    const color = !elegida ? "#b7c3d6" : r ? colorFU(r.FU) : "#1f4e9c";
+    const ln = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: color,
+      "stroke-width": (cos.sel === c.id ? 1.3 : elegida ? 0.8 : 0.45) * k, style: "cursor:pointer" });
+    const t = s("title"); t.textContent = `Costanera ${c.id} · ${c.tipo}` + (r ? ` · FU ${r.FU != null ? r.FU.toFixed(2) : "—"}` : "") +
+      (elegida ? " · elegida (clic para quitarla)" : " · clic para elegirla");
+    // franja invisible más ancha para hacer clic con facilidad
+    const zona = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: "transparent", "stroke-width": 2.5 * k, style: "cursor:pointer", "data-cos-id": c.id });
+    ln.append(t); zona.append(t.cloneNode(true));
+    hijos.push(zona);
+    zona.addEventListener("click", () => ln.dispatchEvent(new Event("click")));
+    ln.addEventListener("click", () => {
+      const id = String(c.id);
+      if (cos.ids.has(id)) cos.ids.delete(id); else cos.ids.add(id);
+      cosElegidas(); cosPlanta();
+      if (cos.ids.has(id) && res[c.id]) cosDetalle(c.id);
+    });
     hijos.push(ln);
     if (r) {
       const L = r.L, P_ = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / L, -(c.p0[1] + (c.p1[1] - c.p0[1]) * x / L)];
@@ -2824,6 +2841,12 @@ function cosPlanta() {
     }
   }
   svg.replaceChildren(...hijos);
+}
+
+function cosElegidas() {
+  const n = cos.ids.size;
+  $("#cos-elegidas").textContent = n ? `${n} costanera(s) elegida(s) para verificar` : "Ninguna elegida: haz clic en la planta sobre las más críticas";
+  $("#cos-elegidas").className = n ? "tenue" : "nocumple";
 }
 
 function cosMostrar(d) {
@@ -2835,7 +2858,7 @@ function cosMostrar(d) {
   const leidos = {}; for (const [tp, n] of Object.entries(d.perfiles || {})) leidos[tp] = n;
   cosTablaPerfiles(cosParametros().perfiles, leidos);
   $("#cos-sistemas").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Sistema", "Costaneras", "Perfiles", "FU máx.", "Costanera más exigida"].map(t => h("th", {}, t)))),
+    h("thead", {}, h("tr", {}, ...["Sistema", "Verificadas", "Perfiles", "FU máx.", "Costanera más exigida"].map(t => h("th", {}, t)))),
     h("tbody", {}, d.sistemas.map(x => h("tr", {}, h("td", {}, x.nombre), h("td", {}, String(x.n)), h("td", {}, x.perfiles.join(", ")),
       celda(x.FU_max || null), h("td", {}, x.peor != null ? h("a", { href: "#", onclick: ev => { ev.preventDefault(); cosDetalle(x.peor); } }, String(x.peor)) : "—")))));
   $("#cos-props").replaceChildren(
@@ -2903,6 +2926,7 @@ function cosDetalle(id) {
 
 $("#sel-costaneras").addEventListener("change", ev => ev.target.value && intentar(() => abrirCostaneras(ev.target.value)));
 $("#btn-costaneras").addEventListener("click", () => intentar(cosVerificar));
+$("#btn-cos-limpiar").addEventListener("click", () => { cos.ids.clear(); cosElegidas(); cosPlanta(); });
 $("#btn-borrar-costaneras").addEventListener("click", () => intentar(async () => {
   if (!cos.nombre || !confirm(`¿Eliminar ${cos.nombre} de este proyecto?`)) return;
   await api("DELETE", P(`/costaneras/${encodeURIComponent(cos.nombre)}`));

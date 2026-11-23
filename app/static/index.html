@@ -506,11 +506,16 @@
       <div id="cos-contenido" class="oculto">
         <div class="panel">
           <div class="panel-tit"><span>Planta del techo</span>
-            <span class="acciones"><button class="pri" id="btn-costaneras">▶ Verificar costaneras</button></span></div>
+            <span class="acciones"><button class="sec" id="btn-cos-limpiar">Quitar todas</button>
+              <button class="pri" id="btn-costaneras">▶ Verificar las elegidas</button></span></div>
+          <p class="tenue">Elige con un clic en la planta las costaneras más críticas (mayor luz, mayor ancho colaborante, de
+            borde o esquina para el viento, con voladizo); otro clic la quita. Las que selecciones en Revit antes del botón
+            llegan ya elegidas. Las demás se usan solo para medir la separación.</p>
+          <div id="cos-elegidas" class="tenue"></div>
           <div id="cos-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="cos-avance-relleno" class="relleno-avance"></div></div>
             <span id="cos-avance-txt"></span></div>
           <svg id="cos-planta" viewBox="0 0 100 60" role="img" aria-label="Planta del techo con costaneras y vigas de apoyo"></svg>
-          <div class="tenue sap-leyenda"><span style="color:#888">━ viga de apoyo</span> <span style="color:#1f4e9c">━ costanera</span>
+          <div class="tenue sap-leyenda"><span style="color:#888">━ viga de apoyo</span> <span style="color:#b7c3d6">━ costanera</span> <span style="color:#1f4e9c">━ elegida</span>
             <span>● apoyo</span> <span style="color:#c06000">✕ tensor</span>
             · diseño: <span style="color:#1b6e20">━ ≤0,7</span> <span style="color:#e0a000">━ ≤1</span> <span style="color:#b00020">━ &gt;1</span></div>
         </div>
