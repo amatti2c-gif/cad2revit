@@ -2751,6 +2751,7 @@ async function cargarCostaneras(elegir) {
 async function abrirCostaneras(nombre) {
   const r = await api("GET", P(`/costaneras/${encodeURIComponent(nombre)}`));
   cos.nombre = nombre; cos.datos = r.datos; cos.res = null; cos.sel = null;
+  cos.vista = null; cos.vigasApoyo = null;
   const par = r.ajustes || {};
   $$("[data-cos]").forEach(el => {
     const v = par[el.dataset.cos];
@@ -2803,55 +2804,150 @@ async function cosVerificar() {
   $("#cos-estado").textContent = "Listo";
 }
 
+// vigas que soportan alguna costanera: cruzan en planta una costanera y pasan bajo ella (como en el cálculo)
+function cosVigasApoyo() {
+  const d = cos.datos, tol = Number($('[data-cos="tol_apoyo"]')?.value) || 1.0;
+  const cs = d.costaneras || [];
+  return (d.vigas || []).filter(v => {
+    const ex = v.p1[0] - v.p0[0], ey = v.p1[1] - v.p0[1], ez = v.p1[2] - v.p0[2];
+    return cs.some(c => {
+      const dx = c.p1[0] - c.p0[0], dy = c.p1[1] - c.p0[1], dz = c.p1[2] - c.p0[2];
+      const den = dx * ey - dy * ex;
+      if (Math.abs(den) < 1e-9) return false;
+      const wx = v.p0[0] - c.p0[0], wy = v.p0[1] - c.p0[1];
+      const t = (wx * ey - wy * ex) / den, u = (wx * dy - wy * dx) / den;
+      if (t < -0.02 || t > 1.02 || u < -0.02 || u > 1.02) return false;
+      const bajo = (c.p0[2] + dz * t) - (v.p0[2] + ez * u);
+      return bajo >= -0.10 && bajo <= tol;
+    });
+  });
+}
+
+// planta del techo: solo costaneras y sus vigas de apoyo; trazos y textos en píxeles (no crecen con el edificio);
+// rueda = zoom, arrastrar = mover, doble clic = ver todo; las etiquetas de FU no se tapan entre sí
 function cosPlanta() {
   const svg = $("#cos-planta"), d = cos.datos; if (!svg || !d) return;
-  const todas = [...(d.costaneras || []), ...(d.vigas || [])];
-  if (!todas.length) { svg.replaceChildren(); return; }
-  const xs = todas.flatMap(e => [e.p0[0], e.p1[0]]), ys = todas.flatMap(e => [e.p0[1], e.p1[1]]);
+  const cs = d.costaneras || [];
+  if (!cs.length) { svg.replaceChildren(); return; }
+  if (!cos.vigasApoyo) cos.vigasApoyo = cosVigasApoyo();
+  const xs = cs.flatMap(e => [e.p0[0], e.p1[0]]), ys = cs.flatMap(e => [e.p0[1], e.p1[1]]);
   const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
-  const ancho = Math.max(x1 - x0, 1), alto = Math.max(y1 - y0, 1), m = 0.05 * Math.max(ancho, alto);
-  svg.setAttribute("viewBox", `${x0 - m} ${-y1 - m} ${ancho + 2 * m} ${alto + 2 * m}`);
-  const k = Math.max(ancho, alto) / 100;
+  const m = 0.06 * Math.max(x1 - x0, y1 - y0, 1);
+  const todo = { x: x0 - m, y: -y1 - m, w: Math.max(x1 - x0, 1) + 2 * m, h: Math.max(y1 - y0, 1) + 2 * m };
+  const v0 = cos.vista || todo;
+  const caja = svg.getBoundingClientRect(), cw = caja.width || 800, chh = caja.height || 480;
+  const esc = Math.min(cw / v0.w, chh / v0.h);                                     // px por metro
+  // zona realmente visible (misma proporción que el dibujo en pantalla)
+  const vb = { x: v0.x - (cw / esc - v0.w) / 2, y: v0.y - (chh / esc - v0.h) / 2, w: cw / esc, h: chh / esc };
+  svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+  const px = 1 / esc;
   const res = {}; for (const r of cos.res?.costaneras || []) res[r.id] = r;
-  const hijos = [];
-  for (const v of d.vigas || []) hijos.push(s("line", { x1: v.p0[0], y1: -v.p0[1], x2: v.p1[0], y2: -v.p1[1], stroke: "#999", "stroke-width": 0.6 * k }));
-  for (const c of d.costaneras || []) {
+  const linea = (a, b, color, ancho, extra = {}) => s("line", { x1: a[0], y1: -a[1], x2: b[0], y2: -b[1], stroke: color,
+    "stroke-width": ancho, "vector-effect": "non-scaling-stroke", ...extra });
+  const capaVigas = [], capaCost = [], capaMarcas = [], capaTextos = [];
+  for (const v of cos.vigasApoyo) capaVigas.push(linea(v.p0, v.p1, "#a0a0a0", 1.5));
+  const etiquetas = [];
+  for (const c of cs) {
     const elegida = cos.ids.has(String(c.id)), r = elegida ? res[c.id] : null;
     const color = !elegida ? "#b7c3d6" : r ? colorFU(r.FU) : "#1f4e9c";
-    const ln = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: color,
-      "stroke-width": (cos.sel === c.id ? 1.3 : elegida ? 0.8 : 0.45) * k, style: "cursor:pointer" });
-    const t = s("title"); t.textContent = `Costanera ${c.id} · ${c.tipo}` + (r ? ` · FU ${r.FU != null ? r.FU.toFixed(2) : "—"}` : "") +
+    const ln = linea(c.p0, c.p1, color, cos.sel === c.id ? 3.5 : elegida ? 2.2 : 1.2, { "pointer-events": "none" });
+    const zona = linea(c.p0, c.p1, "transparent", 10, { style: "cursor:pointer", "data-cos-id": c.id });
+    const t = s("title"); t.textContent = `Costanera ${c.id} · ${c.tipo}` + (r?.FU != null ? ` · FU ${r.FU.toFixed(2)}` : "") +
       (elegida ? " · elegida (clic para quitarla)" : " · clic para elegirla");
-    // franja invisible más ancha para hacer clic con facilidad
-    const zona = s("line", { x1: c.p0[0], y1: -c.p0[1], x2: c.p1[0], y2: -c.p1[1], stroke: "transparent", "stroke-width": 2.5 * k, style: "cursor:pointer", "data-cos-id": c.id });
-    ln.append(t); zona.append(t.cloneNode(true));
-    hijos.push(zona);
-    zona.addEventListener("click", () => ln.dispatchEvent(new Event("click")));
-    ln.addEventListener("click", () => {
+    zona.append(t);
+    zona.addEventListener("click", () => {
+      if (cos.arrastro) return;
       const id = String(c.id);
       if (cos.ids.has(id)) cos.ids.delete(id); else cos.ids.add(id);
       cosElegidas(); cosPlanta();
       if (cos.ids.has(id) && res[c.id]) cosDetalle(c.id);
     });
-    hijos.push(ln);
-    if (r) {
-      const L = r.L, P_ = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / L, -(c.p0[1] + (c.p1[1] - c.p0[1]) * x / L)];
-      // FU sobre el tramo verificado (el de mayor luz)
-      const tv = r.tramo_verificado;
-      if (tv && r.FU != null) {
-        const [ax, ay] = P_(tv.x0), [bx, by] = P_(tv.x1);
-        hijos.push(s("line", { x1: ax, y1: ay, x2: bx, y2: by, stroke: colorFU(r.FU), "stroke-width": 1.6 * k, "stroke-linecap": "round", "pointer-events": "none" }));
-        const [px, py] = P_((tv.x0 + tv.x1) / 2);
-        const txt = s("text", { x: px, y: py - 1.2 * k, "font-size": 2.6 * k, "font-weight": 700, "text-anchor": "middle", fill: colorFU(r.FU),
-          stroke: "#fff", "stroke-width": 0.5 * k, "paint-order": "stroke", "pointer-events": "none" });
-        txt.textContent = `FU ${r.FU.toFixed(2)}`;
-        hijos.push(txt);
-      }
-      for (const a of r.apoyos) { const [px, py] = P_(a.x); hijos.push(s("circle", { cx: px, cy: py, r: 0.6 * k, fill: "#333" })); }
-      for (const tx of r.tensores_x || []) { const [px, py] = P_(tx); hijos.push(s("path", { d: `M${px - 0.5 * k},${py - 0.5 * k}l${k},${k}m0,${-k}l${-k},${k}`, stroke: "#c06000", "stroke-width": 0.3 * k })); }
+    capaCost.push(ln, zona);
+    if (!r) continue;
+    const L = r.L, P_ = x => [c.p0[0] + (c.p1[0] - c.p0[0]) * x / L, c.p0[1] + (c.p1[1] - c.p0[1]) * x / L];
+    const tv = r.tramo_verificado;
+    if (tv && r.FU != null) {
+      const [ax, ay] = P_(tv.x0), [bx, by] = P_(tv.x1);
+      const visible = Math.max(ax, bx) >= vb.x && Math.min(ax, bx) <= vb.x + vb.w && Math.max(-ay, -by) >= vb.y && Math.min(-ay, -by) <= vb.y + vb.h;
+      capaCost.push(linea(P_(tv.x0), P_(tv.x1), colorFU(r.FU), cos.sel === c.id ? 6 : 4.5, { "stroke-linecap": "round", "pointer-events": "none" }));
+      if (visible) etiquetas.push({ r, P_, tv });
+    }
+    for (const a of r.apoyos) { const [qx, qy] = P_(a.x); capaMarcas.push(s("circle", { cx: qx, cy: -qy, r: 2.6 * px, fill: "#333", "pointer-events": "none" })); }
+    for (const tx of r.tensores_x || []) {
+      const [qx, qy] = P_(tx), e = 3 * px;
+      capaMarcas.push(s("path", { d: `M${qx - e},${-qy - e}L${qx + e},${-qy + e}M${qx + e},${-qy - e}L${qx - e},${-qy + e}`,
+        stroke: "#c06000", "stroke-width": 1.4, "vector-effect": "non-scaling-stroke", "pointer-events": "none" }));
     }
   }
-  svg.replaceChildren(...hijos);
+  // etiquetas: de la más exigida a la menos; cada una prueba posiciones a lo largo de su tramo y a ambos lados de la
+  // línea hasta encontrar un lugar libre; si no cabe, queda en el detalle y en el globo de la línea (o con zoom)
+  const fs = 11 * px, puestas = [];
+  const choca = (b) => puestas.some(o => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+  etiquetas.sort((a, b) => b.r.FU - a.r.FU);
+  for (const { r, P_, tv } of etiquetas) {
+    const txt = `FU ${r.FU.toFixed(2)}`, w = txt.length * 6.3 * px, hh = 12 * px;
+    let hecho = false;
+    for (const f of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+      for (const lado of [-1, 1]) {
+        const [qx, qy] = P_(tv.x0 + (tv.x1 - tv.x0) * f);
+        const cy = -qy + lado * (hh / 2 + 3 * px);
+        const b = { x0: qx - w / 2 - 2 * px, x1: qx + w / 2 + 2 * px, y0: cy - hh / 2, y1: cy + hh / 2 };
+        if (b.x1 < vb.x || b.x0 > vb.x + vb.w || b.y1 < vb.y || b.y0 > vb.y + vb.h || choca(b)) continue;
+        puestas.push(b);
+        const e = s("text", { x: qx, y: cy, "font-size": fs, "font-weight": 700, "text-anchor": "middle", "dominant-baseline": "central",
+          fill: colorFU(r.FU), stroke: "#fff", "stroke-width": 3, "paint-order": "stroke", "vector-effect": "non-scaling-stroke",
+          "pointer-events": "none" });
+        e.textContent = txt;
+        capaTextos.push(e);
+        hecho = true;
+        break;
+      }
+      if (hecho) break;
+    }
+  }
+  const ocultas = etiquetas.length - capaTextos.length;
+  $("#cos-planta-nota").textContent = (ocultas > 0 ? `${ocultas} FU no caben a esta escala: acerca con la rueda del mouse. ` : "") +
+    "Rueda: zoom · arrastrar: mover · doble clic: ver todo.";
+  svg.replaceChildren(...capaVigas, ...capaCost, ...capaMarcas, ...capaTextos);
+}
+
+// zoom y arrastre de la planta
+(() => {
+  const svg = $("#cos-planta"); if (!svg) return;
+  const actual = () => { const [x, y, w, h] = svg.getAttribute("viewBox").split(" ").map(Number); return { x, y, w, h }; };
+  const aMundo = (ev, vb) => {
+    const c = svg.getBoundingClientRect(), esc = Math.min(c.width / vb.w, c.height / vb.h);
+    const ox = (c.width - vb.w * esc) / 2, oy = (c.height - vb.h * esc) / 2;
+    return [vb.x + (ev.clientX - c.left - ox) / esc, vb.y + (ev.clientY - c.top - oy) / esc, esc];
+  };
+  svg.addEventListener("wheel", ev => {
+    if (!cos.datos) return;
+    ev.preventDefault();
+    const vb = actual(), [mx, my] = aMundo(ev, vb), f = ev.deltaY > 0 ? 1.25 : 0.8;
+    cos.vista = { x: mx - (mx - vb.x) * f, y: my - (my - vb.y) * f, w: vb.w * f, h: vb.h * f };
+    cosPlanta();
+  }, { passive: false });
+  let ini = null;
+  svg.addEventListener("pointerdown", ev => { ini = { cx: ev.clientX, cy: ev.clientY, vb: actual() }; cos.arrastro = false; });
+  window.addEventListener("pointermove", ev => {
+    if (!ini) return;
+    const dx = ev.clientX - ini.cx, dy = ev.clientY - ini.cy;
+    if (!cos.arrastro && Math.hypot(dx, dy) < 4) return;
+    cos.arrastro = true;
+    const c = svg.getBoundingClientRect(), esc = Math.min(c.width / ini.vb.w, c.height / ini.vb.h);
+    cos.vista = { ...ini.vb, x: ini.vb.x - dx / esc, y: ini.vb.y - dy / esc };
+    cosPlanta();
+  });
+  window.addEventListener("pointerup", () => { ini = null; setTimeout(() => { cos.arrastro = false; }, 0); });
+  svg.addEventListener("dblclick", () => { cos.vista = null; cosPlanta(); });
+  window.addEventListener("resize", () => { if ($("#tab-secundarios").classList.contains("activa")) cosPlanta(); });
+})();
+
+// valores seguidos iguales: «10 × 3.00»
+function compactar(lista) {
+  const g = [];
+  for (const v of lista) { if (g.length && g[g.length - 1][0] === v) g[g.length - 1][1]++; else g.push([v, 1]); }
+  return g.map(([v, n]) => n > 1 ? `${n} × ${v}` : v).join(" · ");
 }
 
 function cosElegidas() {
@@ -2880,15 +2976,16 @@ function cosMostrar(d) {
       h("td", {}, f2(p.peso_kgf_m)), h("td", {}, f0(p.phiMnxo_kgfm)), h("td", {}, f0(p.phiMny_kgfm)), h("td", {}, f0(p.phiVn_kgf))))));
   const filas = [...d.costaneras].sort((a, b) => (b.FU ?? 99) - (a.FU ?? 99));
   $("#cos-tabla").replaceChildren(
-    h("thead", {}, h("tr", {}, ...["Id", "Sistema", "Perfil", "Largo (m)", "Luces (m)", "Tramo verificado", "Tensores", "Ancho colab. (m)", "Pend. (°)", "FU", "Manda", "Notas"].map(t => h("th", {}, t)))),
+    h("thead", {}, h("tr", {}, ...["Id", "Sistema", "Perfil", "Largo (m)", "Luces (m)", "Tramo que manda", "Zona viento", "Tensores", "Ancho colab. (m)", "Pend. (°)", "FU", "Manda", "Combinación", "Notas"].map(t => h("th", {}, t)))),
     h("tbody", {}, filas.map(c => {
       const peor = c.verificaciones.reduce((m, v) => (!m || v.razon > m.razon) ? v : m, null);
       const tr = h("tr", { style: "cursor:pointer", class: cos.sel === c.id ? "sel" : "" },
         h("td", {}, String(c.id)), h("td", {}, String(c.sistema ?? "")), h("td", { class: c.perfil ? "" : "nocumple" }, c.perfil || "sin perfil"),
-        h("td", {}, f2(c.L)), h("td", {}, c.tramos.map(t => (t.tipo === "voladizo" ? "v " : "") + f2(t.luz)).join(" · ") || "—"),
-        h("td", {}, c.tramo_verificado ? `${c.tramo_verificado.n} · ${f2(c.tramo_verificado.luz)} m` : "—"),
-        h("td", {}, c.tramos.filter(t => t.tipo === "tramo").map(t => ["—", "L/2", "L/3"][t.tensores] || "").join(" · ")),
-        h("td", { title: c.origen_s }, f2(c.s)), h("td", {}, f2(c.theta)), celda(c.FU), h("td", {}, peor ? peor.verificacion : ""),
+        h("td", {}, f2(c.L)), h("td", {}, compactar(c.tramos.map(t => (t.tipo === "voladizo" ? "v " : "") + f2(t.luz))) || "—"),
+        h("td", {}, c.tramo_verificado ? `${c.tramo_verificado.n} de ${c.tramo_verificado.n_tramos ?? "?"} · ${f2(c.tramo_verificado.luz)} m · ${c.tramo_verificado.posicion ?? ""}` : "—"),
+        h("td", { title: "NCh432 componentes y revestimientos: 1 interior, 2 borde, 3 esquina" }, (c.tramo_verificado?.zonas || []).join(", ") || "—"),
+        h("td", {}, compactar(c.tramos.filter(t => t.tipo === "tramo").map(t => ["—", "L/2", "L/3"][t.tensores] || ""))),
+        h("td", { title: c.origen_s }, f2(c.s)), h("td", {}, f2(c.theta)), celda(c.FU), h("td", {}, c.manda?.verificacion || (peor ? peor.verificacion : "")), h("td", {}, c.manda?.combo || ""),
         h("td", {}, c.notas.join("; ")));
       tr.addEventListener("click", () => cosDetalle(c.id));
       return tr;
@@ -2933,7 +3030,7 @@ function cosDetalle(id) {
   } else svg.replaceChildren();
   $("#cos-det-tramos").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Tramo", "Desde (m)", "Hasta (m)", "Luz (m)", "Tensores", "Lr (kgf/m²)", "Área viento (m²)", "GCp +", "GCp − por zona"].map(t => h("th", {}, t)))),
-    h("tbody", {}, c.tramos.map((t, i) => h("tr", { class: t.verificado ? "sel" : "" }, h("td", {}, `${i + 1} · ${t.tipo}` + (t.verificado ? " · verificado (mayor luz)" : "")), h("td", {}, f2(t.x0)), h("td", {}, f2(t.x1)), h("td", {}, f2(t.luz)),
+    h("tbody", {}, c.tramos.map((t, i) => h("tr", { class: t.verificado ? "sel" : "" }, h("td", {}, `${i + 1} · ${t.tipo}` + (t.manda ? " · manda" : t.verificado ? " · verificado (mayor luz)" : "")), h("td", {}, f2(t.x0)), h("td", {}, f2(t.x1)), h("td", {}, f2(t.luz)),
       h("td", {}, t.tipo === "tramo" ? (["ninguno", "1 (L/2)", "2 (L/3)"][t.tensores] || String(t.tensores)) : "—"), h("td", {}, f0(t.Lr_kgf_m2)), h("td", {}, f2(t.area)),
       h("td", {}, f2(t.GCp_pos)), h("td", {}, Object.entries(t.GCp_neg || {}).map(([z, g]) => `zona ${z}: ${f2(g)}`).join(" · "))))));
   $("#cos-det-ver").replaceChildren(

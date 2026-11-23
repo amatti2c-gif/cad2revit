@@ -839,9 +839,13 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
         segmentos.append((frenos[-1], len(xs) - 1, True))
     # tramo que se verifica: el de mayor luz entre apoyos (la viga sigue siendo continua para los esfuerzos)
     interiores = [j for j, tr in enumerate(cg["tramos"]) if tr["tipo"] == "tramo"]
-    j_crit = max(interiores, key=lambda j: cg["tramos"][j]["x1"] - cg["tramos"][j]["x0"])
-    tc = cg["tramos"][j_crit]
-    en_tramo = (xs >= tc["x0"] - 1e-6) & (xs <= tc["x1"] + 1e-6)
+    luz_max = max(cg["tramos"][j]["x1"] - cg["tramos"][j]["x0"] for j in interiores)
+    # los tramos de la misma luz (±2 %) se verifican todos: en una viga continua el de extremo tiene más momento que uno
+    # interior de igual luz; manda el que dé el mayor FU
+    J = [j for j in interiores if cg["tramos"][j]["x1"] - cg["tramos"][j]["x0"] >= 0.98 * luz_max]
+    en_tramo = np.zeros(len(xs), dtype=bool)
+    for j in J:
+        en_tramo |= (xs >= cg["tramos"][j]["x0"] - 1e-6) & (xs <= cg["tramos"][j]["x1"] + 1e-6)
     phiMnxo = PHI_B * cap["Mnxo"]
     phiMny = PHI_B * cap["Mny"]
     phiVn = PHI_V * cap["Vn"]
@@ -877,7 +881,7 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
             peor["corte"] = (float(rv[i]), nombre, i, float(Vx[i]))
         rmv = np.sqrt((Mx / phiMnxo) ** 2 + (Vx / phiVn) ** 2)
         # H2 se verifica donde actúan juntos: en los apoyos
-        ia = [i for i in i_apoyos if en_tramo[i]]          # los dos apoyos del tramo
+        ia = [i for i in i_apoyos if en_tramo[i]]          # los apoyos de los tramos verificados
         j = ia[int(np.argmax(rmv[ia]))]
         if rmv[j] > peor["flexion_corte"][0]:
             peor["flexion_corte"] = (float(rmv[j]), nombre, j, float(Mx[j]), float(Vx[j]))
@@ -905,8 +909,8 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
                                ("W presión", {"W+": 1}, par.limite_viento), ("W succión", {"W-": 1}, par.limite_viento)):
         v = comb(cmb, "vx")
         peor_d = (0.0, None, 0.0, 0.0)
-        for tr in [tc]:
-            sel = en_tramo
+        for tr in [cg["tramos"][j] for j in J]:
+            sel = (xs >= tr["x0"] - 1e-6) & (xs <= tr["x1"] + 1e-6)
             Ls = tr["x1"] - tr["x0"]
             Lref = Ls if tr["tipo"] == "tramo" else 2 * Ls
             if Lref <= 0:
@@ -926,6 +930,13 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
                         "x": float((peor_d[1]["x0"] + peor_d[1]["x1"]) / 2),
                         "demanda": f"δ {peor_d[2]:.1f} mm", "capacidad": f"L/{lim:g} = {peor_d[3] * 1000 / lim:.1f} mm",
                         "notas": ["voladizo: L = 2·largo"] if peor_d[1]["tipo"] == "voladizo" else []})
+    # tramo que manda: el que contiene la verificación con mayor razón
+    peor_v = max(ver, key=lambda v: v["razon"]) if ver else None
+    j_crit = J[0]
+    if peor_v:
+        cand = [j for j in J if cg["tramos"][j]["x0"] - 1e-6 <= peor_v["x"] <= cg["tramos"][j]["x1"] + 1e-6]
+        j_crit = cand[0] if cand else J[0]
+    tc = cg["tramos"][j_crit]
     # diagramas (envolvente de Mx mayorado) para dibujar
     env_max = np.max([comb(cmb, "Mx") for cmb in combos.values()], axis=0)
     env_min = np.min([comb(cmb, "Mx") for cmb in combos.values()], axis=0)
@@ -934,13 +945,18 @@ def _disenar(cg, gen, pf, cap, par, qh, h, xy, a_cache) -> dict:
     for j, tr in enumerate(cg["tramos"]):
         tramos_out.append({**{k: (float(v) if isinstance(v, (float, np.floating)) else v) for k, v in tr.items()},
                            "luz": float(tr["x1"] - tr["x0"]), "Lr_kgf_m2": lr_info[j], **w_info[j],
-                           "zonas": sorted({int(z) for z in zonas[tramo_de == j]}), "verificado": j == j_crit})
+                           "zonas": sorted({int(z) for z in zonas[tramo_de == j]}), "verificado": j in J, "manda": j == j_crit,
+                           "posicion": "extremo" if j in (min(interiores), max(interiores)) else "interior"})
     reacciones = {}
     for nombre in casos:
         reacciones[nombre] = [float(kgf(sol[nombre]["Rx"][i])) for i in sorted(i_apoyos)]
     base.update({
         "tramos": tramos_out, "tensores_x": sorted(tensores_x), "verificaciones": ver,
-        "tramo_verificado": {"n": j_crit + 1, "x0": float(tc["x0"]), "x1": float(tc["x1"]), "luz": float(tc["x1"] - tc["x0"])},
+        "tramo_verificado": {"n": j_crit + 1, "x0": float(tc["x0"]), "x1": float(tc["x1"]), "luz": float(tc["x1"] - tc["x0"]),
+                             "posicion": "extremo" if j_crit in (min(interiores), max(interiores)) else "interior",
+                             "zonas": sorted({int(z) for z in zonas[tramo_de == j_crit]}),
+                             "n_tramos": len(interiores)},
+        "manda": {"verificacion": peor_v["verificacion"], "combo": peor_v["combo"]} if peor_v else None,
         "FU": max((v["razon"] for v in ver), default=None),
         "cargas": {"D_kgf_m": d_lin * 1000 / G_ACC, "peso_propio_kgf_m": pr["peso_kgf_m"],
                    "Lr_kgf_m": float(np.max(lr_el)) * 1000 / G_ACC,
