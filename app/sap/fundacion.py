@@ -117,6 +117,9 @@ def _viga_sobre_resortes(xs: np.ndarray, EI: float, k_lin: float, P: np.ndarray,
     if not estable or not activos.any():
         return {"estable": False}
     q = np.where(activos, -k_lin * v, 0.0)                               # tonf/m a lo largo de la viga
+    # equilibrio vertical: la reacción del suelo debe igualar las cargas (si no, la iteración no convergió)
+    if abs(P.sum() + (q * trib).sum()) > 1e-6 * max(np.abs(P).sum(), 1e-9):
+        return {"estable": False, "sin_convergencia": True}
     # esfuerzos internos: desde la izquierda, sumando cargas y reacciones del suelo
     R = q * trib                                                         # fuerza del suelo en cada nudo (+ arriba)
     V = np.zeros(n)
@@ -231,7 +234,13 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     xs_ap = [a["x"] for a in apoyos]
     x0, x1 = min(xs_ap) - pf.voladizo, max(xs_ap) + pf.voladizo
     n_el = max(int(math.ceil((x1 - x0) / pf.dx)), 2)
-    xs = np.unique(np.round(np.concatenate([np.linspace(x0, x1, n_el + 1), xs_ap]), 6))
+    malla = np.linspace(x0, x1, n_el + 1)
+    paso_m = (x1 - x0) / n_el
+    # cada apoyo va a un nudo: si cae cerca de uno de la malla (menos de ¼ del elemento) se usa ese nudo; si no, se
+    # agrega. Así no quedan elementos de largo casi nulo (con EI/L³ enorme, la solución pierde el equilibrio)
+    extra = [x for x in xs_ap if np.min(np.abs(malla - x)) > 0.25 * paso_m]
+    xs = np.unique(np.round(np.concatenate([malla, extra]), 6))
+    xs = xs[np.concatenate([[True], np.diff(xs) > 0.2 * paso_m])] if len(xs) > 2 else xs
     L = x1 - x0
     nodo_de = {a["nudo"]: int(np.argmin(np.abs(xs - a["x"]))) for a in apoyos}
     # sección (m)

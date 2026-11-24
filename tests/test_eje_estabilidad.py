@@ -62,3 +62,14 @@ def test_pilar_mas_largo_que_el_eje_se_recorta():
     assert min(zs) == 0.0 and min(mod.nudos[n][1] for n in mod.apoyos) == 0.0
     sin = mallar(eje, opciones={"recortar_pilares": False})
     assert min(z for _, z in sin.nudos.values()) == -1.65
+
+
+def test_fundacion_apoyos_casi_en_nudos_de_la_malla():
+    """Apoyos a micrómetros de un nudo de la malla no deben crear elementos de largo casi nulo (sin equilibrio)."""
+    from app.sap.fundacion import ParametrosFundacion, analizar_fundacion
+    xs = [0.907 + 0.5 * i + 6e-6 for i in range(40)]               # cada 0,5 m, casi sobre la malla de 0,1 m
+    apoyos = [{"nudo": f"N{i}", "x": x, "z": 0.0, "tipo": "x", "casos": {"DEAD": [0.0, 0.3, 0.0]}} for i, x in enumerate(xs)]
+    o = analizar_fundacion(apoyos, {"C1_1.4D": {"DEAD": 1.4}}, {"DEAD": "DEAD"}, ParametrosFundacion())
+    mu = {v["verificacion"]: v.get("Mu_tonfm") for v in o["viga"]}
+    # carga casi uniforme sobre suelo elástico: momentos chicos
+    assert max(abs(x or 0) for x in mu.values()) < 1.0
