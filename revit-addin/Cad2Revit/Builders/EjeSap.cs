@@ -172,7 +172,21 @@ namespace Cad2Revit
                     var bb = f.get_BoundingBox(null);
                     if (bb == null) continue;
                     XYZ pb, pt;
-                    if (f.Location is LocationPoint lp) { pb = new XYZ(lp.Point.X, lp.Point.Y, bb.Min.Z); pt = new XYZ(lp.Point.X, lp.Point.Y, bb.Max.Z); }
+                    if (f.Location is LocationPoint lp)
+                    {
+                        // altura del pilar por sus niveles y desfases (la caja envolvente puede incluir piezas anidadas,
+                        // placas o anclajes que lo alargan); si faltan, la caja envolvente
+                        double zb = bb.Min.Z, zt = bb.Max.Z;
+                        var nb = _doc.GetElement(f.get_Parameter(BuiltInParameter.FAMILY_BASE_LEVEL_PARAM)?.AsElementId() ?? ElementId.InvalidElementId) as Level;
+                        var nt = _doc.GetElement(f.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_PARAM)?.AsElementId() ?? ElementId.InvalidElementId) as Level;
+                        if (nb != null && nt != null)
+                        {
+                            zb = nb.Elevation + (f.get_Parameter(BuiltInParameter.FAMILY_BASE_LEVEL_OFFSET_PARAM)?.AsDouble() ?? 0);
+                            zt = nt.Elevation + (f.get_Parameter(BuiltInParameter.FAMILY_TOP_LEVEL_OFFSET_PARAM)?.AsDouble() ?? 0);
+                            if (zt <= zb) { zb = bb.Min.Z; zt = bb.Max.Z; }
+                        }
+                        pb = new XYZ(lp.Point.X, lp.Point.Y, zb); pt = new XYZ(lp.Point.X, lp.Point.Y, zt);
+                    }
                     else if (f.Location is LocationCurve lcc) { pb = lcc.Curve.GetEndPoint(0); pt = lcc.Curve.GetEndPoint(1); }
                     else continue;
                     if (D(pb) > tolerancia || D(pt) > tolerancia) continue;

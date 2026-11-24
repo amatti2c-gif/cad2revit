@@ -217,6 +217,41 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
     # el hormigón (fundaciones, sobrecimientos, pedestales) no entra en el modelo: solo acero y muros de madera
     pilares = [dict(p) for p in eje.get("pilares", []) if p.get("material") not in ("madera", "hormigon") and str(p.get("id")) not in excluir]
     vigas = [dict(v) for v in eje.get("vigas", []) if v.get("material") not in ("madera", "hormigon") and str(v.get("id")) not in excluir]
+    # pilares más largos que lo que trabaja en el eje (en Revit bajan bajo el sello o suben sobre el techo): se recortan
+    # abajo a la base de los muros y arriba al elemento más alto que se une a ellos (viga o borde superior de un muro)
+    if op.get("recortar_pilares", True):
+        muros_eje = [w for w in eje.get("muros", []) if str(w.get("id")) not in excluir and w.get("material") != "hormigon"]
+
+        def tope_muro(w, x):
+            per = sorted((float(a_), float(b_)) for a_, b_ in w.get("perfil") or [])
+            if not per:
+                return None
+            if x <= per[0][0]:
+                return per[0][1]
+            if x >= per[-1][0]:
+                return per[-1][1]
+            return next(za + (zb - za) * (x - xa) / (xb - xa) for (xa, za), (xb, zb) in zip(per, per[1:]) if xa <= x <= xb and xb > xa)
+        for p in pilares:
+            xp = (p["x0"] + p["x1"]) / 2
+            junto = [w for w in muros_eje if min(w["x0"], w["x1"]) - 0.25 <= xp <= max(w["x0"], w["x1"]) + 0.25]
+            base = min((w["z0"] for w in junto), default=min((w["z0"] for w in muros_eje), default=None))
+            altos = [tope_muro(w, xp) for w in junto]
+            for v in vigas:
+                xa, xb = sorted((v["x0"], v["x1"]))
+                if xb - xa > 1e-6 and xa - 0.25 <= xp <= xb + 0.25:
+                    t = min(max((xp - v["x0"]) / (v["x1"] - v["x0"]), 0.0), 1.0)
+                    altos.append(v["z0"] + (v["z1"] - v["z0"]) * t)
+            altos = [z for z in altos if z is not None and z > p["z0"] + 0.5]
+            cambios = []
+            if base is not None and p["z0"] < base - 0.05 and base < p["z1"] - 0.5:
+                cambios.append(f"base {p['z0']:.2f} → {base:.2f} m")
+                p["z0"] = base
+            if altos and p["z1"] > max(altos) + 0.05:
+                cambios.append(f"cabeza {p['z1']:.2f} → {max(altos):.2f} m")
+                p["z1"] = max(altos)
+            if cambios:
+                mod.avisos.append(f"Pilar {p.get('id')} recortado a lo que trabaja en el eje ({', '.join(cambios)}); "
+                                  "en Revit es más largo")
     # pilar que no llega a la viga por poco (justificación de la viga, desfase de nivel): se prolonga hasta la viga más
     # cercana que pasa sobre él a menos de 0,30 m de su cabeza
     for p in pilares:
@@ -230,7 +265,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
             zv = v["z0"] + (v["z1"] - v["z0"]) * t
             if abs(zv - p["z1"]) <= 0.30 and (mejor is None or abs(zv - p["z1"]) < abs(mejor - p["z1"])):
                 mejor = zv
-        if mejor is not None and abs(mejor - p["z1"]) > 1e-4:
+        if mejor is not None and abs(mejor - p["z1"]) > 0.005:
             mod.avisos.append(f"Pilar {p.get('id')}: su cabeza (z {p['z1']:.2f} m) se unió a la viga en z {mejor:.2f} m")
             p["z1"] = mejor
     xs_pilar = sorted({round((p["x0"] + p["x1"]) / 2, 4) for p in pilares})

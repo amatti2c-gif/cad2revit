@@ -48,3 +48,17 @@ def test_apoyos_y_uniones_a_mano():
     # quitar un apoyo («libre»)
     mod2 = mallar(eje, opciones={"apoyos_nudo": {"4,0": "libre"}})
     assert (4.0, 0.0) not in {mod2.nudos[n] for n in mod2.apoyos}
+
+
+def test_pilar_mas_largo_que_el_eje_se_recorta():
+    eje = {"eje": "G", "pilares": [_p("P1", 0.0, 4.95, z0=-1.65), _p("P2", 4.0, 4.95, z0=-1.65)],
+           "vigas": [_v("V1", 0.0, 3.2, 4.0, 3.2)],
+           "muros": [{"id": "M1", "tipo": "Muro marco plataforma", "material": "madera", "x0": 0.0, "x1": 4.0, "z0": 0.0,
+                      "espesor": 0.1, "perfil": [[0.0, 3.48], [4.0, 3.48]], "vanos": []}]}
+    mod = mallar(eje)
+    zs = [z for _, z in mod.nudos.values()]
+    assert min(zs) == 0.0 and max(zs) == 3.2         # muro y pilar unidos a la viga
+    assert sum("recortado" in a for a in mod.avisos) == 2
+    assert min(zs) == 0.0 and min(mod.nudos[n][1] for n in mod.apoyos) == 0.0
+    sin = mallar(eje, opciones={"recortar_pilares": False})
+    assert min(z for _, z in sin.nudos.values()) == -1.65
