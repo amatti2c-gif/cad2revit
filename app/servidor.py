@@ -2155,6 +2155,82 @@ def resultado_costaneras(pid: str, nombre: str):
     return json.loads(r.read_text(encoding="utf-8"))
 
 
+# ------------------------------------------------------------------ memoria de cálculo (pestaña 9)
+class PedidoMemoria(BaseModel):
+    ejes: list[str] = []
+    techos: list[str] = []
+    opciones: dict = {}
+
+
+@app.get("/api/proyectos/{pid}/memoria")
+def memoria_config(pid: str):
+    """Capítulos disponibles, configuraciones rápidas, opciones guardadas y qué resultados hay para la memoria."""
+    from app.memoria import CAPITULOS, PRESETS, opciones_por_defecto
+    from app.sap.eje_pynite import VERSION_RESULTADO
+    d = _proyecto(pid)
+    ejes = []
+    for f in sorted((d / "sap").glob("*.sap.json")):
+        nombre = f.name[: -len(".sap.json")]
+        rf, ff = f.with_name(nombre + ".resultado.json"), f.with_name(nombre + ".fundacion.json")
+        res = json.loads(rf.read_text(encoding="utf-8")) if rf.is_file() else None
+        ejes.append({"nombre": nombre, "analizado": bool(res), "vigente": bool(res and res.get("version") == VERSION_RESULTADO),
+                     "fecha": (res or {}).get("fecha"), "fundacion": ff.is_file()})
+    techos = []
+    for f in sorted((d / "costaneras").glob("*.costaneras.json")):
+        nombre = f.name[: -len(".costaneras.json")]
+        rf = f.with_name(nombre + ".resultado.json")
+        res = json.loads(rf.read_text(encoding="utf-8")) if rf.is_file() else None
+        techos.append({"nombre": nombre, "verificado": bool(res), "fecha": (res or {}).get("fecha"),
+                       "n": len((res or {}).get("costaneras") or [])})
+    g = d / "memoria.json"
+    guardadas = json.loads(g.read_text(encoding="utf-8")) if g.is_file() else {}
+    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+    return {"capitulos": [{"clave": k, "titulo": t, "detalles": [{"clave": a, "titulo": b} for a, b in det]} for k, t, det in CAPITULOS],
+            "presets": PRESETS, "defecto": opciones_por_defecto(), "guardadas": guardadas, "ejes": ejes, "techos": techos,
+            "proyecto": meta.get("nombre", pid)}
+
+
+@app.put("/api/proyectos/{pid}/memoria")
+def memoria_guardar(pid: str, pedido: PedidoMemoria):
+    d = _proyecto(pid)
+    (d / "memoria.json").write_text(json.dumps(pedido.model_dump(), ensure_ascii=False), encoding="utf-8")
+    return {"ok": True}
+
+
+@app.post("/api/proyectos/{pid}/memoria/word")
+def memoria_word(pid: str, pedido: PedidoMemoria):
+    """Memoria de cálculo en Word con los ejes, fundaciones y costaneras elegidos y los capítulos activados."""
+    from app.memoria import generar_memoria
+    d = _proyecto(pid)
+    (d / "memoria.json").write_text(json.dumps(pedido.model_dump(), ensure_ascii=False), encoding="utf-8")
+    leer = lambda f: json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+    ejes = []
+    for nombre in pedido.ejes:
+        f = _eje_sap(d, nombre)
+        res = leer(f.with_name(nombre + ".resultado.json"))
+        if not res:
+            raise HTTPException(409, f"El {nombre} no tiene análisis: analízalo en la pestaña 6")
+        ejes.append({"nombre": nombre, "eje": leer(f), "ajustes": _ajustes_eje(f), "resultado": res,
+                     "fundacion": leer(f.with_name(nombre + ".fundacion.json"))})
+    techos = []
+    for nombre in pedido.techos:
+        f = _costaneras(d, nombre)
+        res = leer(f.with_name(nombre + ".resultado.json"))
+        if not res:
+            raise HTTPException(409, f"Las costaneras de {nombre} no están verificadas: verifícalas en la pestaña 8")
+        techos.append({"nombre": nombre, "resultado": res})
+    if not ejes and not techos:
+        raise HTTPException(400, "Elige al menos un eje o un techo con resultados")
+    meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+    try:
+        contenido = generar_memoria(meta.get("nombre", pid), ejes, techos, pedido.opciones or {})
+    except (ValueError, TypeError, KeyError) as e:
+        raise HTTPException(400, f"No se pudo armar la memoria: {e}")
+    nombre_arch = re.sub(r"[^\w.\-]", "_", f"MC_{meta.get('nombre', pid)}.docx")
+    return Response(contenido, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers={"Content-Disposition": f'attachment; filename="{nombre_arch}"'})
+
+
 class SeccionHormigon(BaseModel):
     b: float                      # mm
     h: float                      # mm

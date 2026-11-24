@@ -34,6 +34,7 @@
     <button data-tab="sap">6 · Análisis y diseño</button>
     <button data-tab="fundaciones">7 · Fundaciones</button>
     <button data-tab="secundarios">8 · Elementos secundarios</button>
+    <button data-tab="memoria">9 · Memoria de cálculo</button>
     <span id="badge-errores" class="badge oculto" hidden></span>
   </nav>
 
@@ -597,6 +598,52 @@
             <div class="tabla-wrap"><table class="tabla sap-tabla" id="cos-det-ver"></table></div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ======================= MEMORIA DE CÁLCULO ======================= -->
+    <section id="tab-memoria" class="tab">
+      <div class="panel">
+        <div class="panel-tit"><span>Memoria de cálculo (Word)</span>
+          <span class="acciones"><button class="sec" id="btn-mc-guardar">Guardar opciones</button>
+            <button class="pri" id="btn-mc-generar">▶ Generar Word</button></span></div>
+        <p class="tenue">Arma la memoria con los resultados guardados de las pestañas 6 (ejes), 7 (fundaciones) y 8 (costaneras).
+          Elige qué ejes y techos entran, y activa o quita capítulos y sus detalles; la numeración se ajusta sola. Las
+          observaciones automáticas listan los datos a revisar (valores ingresados distintos de la norma, verificaciones que no
+          cumplen, datos que faltan).</p>
+        <div class="fila-sap mc-presets"><strong>Configuración rápida:</strong>
+          <button class="sec" data-mc-preset="acero">Solo modelación de acero</button>
+          <button class="sec" data-mc-preset="acero_fundaciones">Acero y fundaciones</button>
+          <button class="sec" data-mc-preset="completa">Acero, fundaciones y costaneras</button>
+          <button class="sec" data-mc-preset="costaneras">Solo costaneras</button>
+        </div>
+      </div>
+      <div class="sap-cols">
+        <div class="panel"><div class="panel-tit"><span>Qué entra en la memoria</span></div>
+          <div class="mc-sub">Ejes (análisis y diseño)</div><div id="mc-ejes" class="mc-lista"></div>
+          <div class="mc-sub">Techos (costaneras)</div><div id="mc-techos" class="mc-lista"></div>
+          <div class="mc-sub">Alcance (texto que se agrega en los antecedentes)</div>
+          <textarea id="mc-alcance" rows="3" placeholder="Ej.: Se resume el eje 2, representativo del edificio; los demás ejes se diseñan con el mismo procedimiento."></textarea>
+          <div class="mc-sub">Observaciones adicionales (una por línea)</div>
+          <textarea id="mc-obs" rows="4" placeholder="Se agregan al final de las observaciones automáticas"></textarea>
+        </div>
+        <div class="panel"><div class="panel-tit"><span>Portada y firma</span></div>
+          <div class="sap-form">
+            <label>Proyecto <input data-mc="proyecto" placeholder="nombre del proyecto en la app"></label>
+            <label>Ubicación <input data-mc="ubicacion" placeholder="Castro, Región de Los Lagos"></label>
+            <label>Descripción <input data-mc="descripcion" placeholder="según lo incluido"></label>
+            <label>Revisión <input data-mc="revision" value="A"></label>
+            <label>Fecha <input data-mc="fecha" type="date"></label>
+            <label>Empresa <input data-mc="empresa"></label>
+            <label>Ingeniero calculista <input data-mc="calculista"></label>
+            <label>RUT / registro <input data-mc="rut"></label>
+            <label>Título «resumida» <select data-mc="resumida"><option value="true" selected>sí</option><option value="false">no</option></select></label>
+          </div></div>
+      </div>
+      <div class="panel"><div class="panel-tit"><span>Capítulos y detalles</span>
+          <span class="acciones"><button class="sec" id="btn-mc-todo">Marcar todo</button></span></div>
+        <div id="mc-capitulos" class="mc-capitulos"></div>
+        <div id="mc-estado" class="tenue"></div>
       </div>
     </section>
 

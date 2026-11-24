@@ -67,6 +67,7 @@ function irA(tab) {
   if (tab === "sap") intentar(cargarSap);
   if (tab === "fundaciones") intentar(cargarFundacion);
   if (tab === "secundarios") intentar(() => cargarCostaneras());
+  if (tab === "memoria") intentar(cargarMemoria);
 }
 $$(".pestanas button").forEach(b => b.addEventListener("click", () => irA(b.dataset.tab)));
 
@@ -3274,6 +3275,100 @@ $("#inp-costaneras").addEventListener("change", ev => intentar(async () => {
   await cargarCostaneras(r.nombre);
 }));
 $$("[data-cos]").forEach(el => { el.dataset.defecto = el.value; });
+
+// ------------------------------------------------------------------ Memoria de cálculo (pestaña 9)
+const mc = { cfg: null, opciones: null, ejes: new Set(), techos: new Set() };
+
+async function cargarMemoria() {
+  if (!estado.proyecto) return;
+  const c = await api("GET", P("/memoria"));
+  mc.cfg = c;
+  const g = c.guardadas || {};
+  mc.opciones = JSON.parse(JSON.stringify(c.defecto));
+  for (const [k, v] of Object.entries((g.opciones || {}).capitulos || {})) Object.assign(mc.opciones.capitulos[k] || {}, v);
+  mc.opciones.datos = { ...(g.opciones || {}).datos };
+  mc.ejes = new Set(g.ejes?.length ? g.ejes : c.ejes.filter(e => e.analizado).map(e => e.nombre));
+  mc.techos = new Set(g.techos?.length ? g.techos : c.techos.filter(t => t.verificado).map(t => t.nombre));
+  $("#mc-alcance").value = (g.opciones || {}).alcance || "";
+  $("#mc-obs").value = (g.opciones || {}).observaciones_extra || "";
+  $$("[data-mc]").forEach(el => {
+    const v = mc.opciones.datos[el.dataset.mc];
+    el.value = v != null ? String(v) : (el.dataset.mc === "revision" ? "A" : el.dataset.mc === "resumida" ? "true" : el.dataset.mc === "fecha" ? new Date().toISOString().slice(0, 10) : "");
+  });
+  if (!$('[data-mc="proyecto"]').value) $('[data-mc="proyecto"]').placeholder = c.proyecto;
+  mcFuentes();
+  mcCapitulos();
+}
+
+function mcFuentes() {
+  const c = mc.cfg, fecha = x => x ? x.slice(0, 16).replace("T", " ") : "";
+  const item = (set, nombre, ok, texto) => h("label", { class: "mc-item" + (ok ? "" : " tenue") },
+    h("input", { type: "checkbox", checked: set.has(nombre) && ok, disabled: !ok, onchange: ev => { ev.target.checked ? set.add(nombre) : set.delete(nombre); mcCapitulos(); } }),
+    ` ${nombre} `, h("span", { class: "tenue" }, texto));
+  $("#mc-ejes").replaceChildren(...(c.ejes.length ? c.ejes.map(e => item(mc.ejes, e.nombre, e.analizado,
+    e.analizado ? `· analizado ${fecha(e.fecha)}${e.vigente ? "" : " (versión anterior: vuelve a analizar)"}${e.fundacion ? " · con fundación" : " · sin fundación"}` : "· sin análisis (pestaña 6)"))
+    : [h("span", { class: "tenue" }, "No hay ejes: expórtalos desde Revit con «Eje a análisis».")]));
+  $("#mc-techos").replaceChildren(...(c.techos.length ? c.techos.map(t => item(mc.techos, t.nombre, t.verificado,
+    t.verificado ? `· ${t.n} costanera(s) verificada(s) ${fecha(t.fecha)}` : "· sin verificar (pestaña 8)"))
+    : [h("span", { class: "tenue" }, "No hay techos: expórtalos desde Revit con «Costaneras a análisis».")]));
+}
+
+// capítulos con su número (solo los que entran) y sus detalles
+function mcCapitulos() {
+  const caps = mc.opciones.capitulos;
+  const hayFun = mc.cfg.ejes.some(e => mc.ejes.has(e.nombre) && e.fundacion), hayEjes = mc.ejes.size > 0, hayTechos = mc.techos.size > 0;
+  const aplica = k => ({ acero: hayEjes, madera: hayEjes, deformaciones: hayEjes, modelo: hayEjes, fundacion: hayFun, costaneras: hayTechos })[k] ?? true;
+  let n = 0;
+  $("#mc-capitulos").replaceChildren(...mc.cfg.capitulos.map(cap => {
+    const o = caps[cap.clave], entra = o.incluir && aplica(cap.clave);
+    if (entra && cap.clave !== "firma") n++;
+    const fila = h("div", { class: "mc-cap" + (entra ? "" : " mc-fuera") },
+      h("label", { class: "mc-cap-tit" }, h("input", { type: "checkbox", checked: o.incluir,
+        onchange: ev => { o.incluir = ev.target.checked; mcCapitulos(); } }),
+        ` ${entra && cap.clave !== "firma" ? n + ". " : ""}${cap.titulo}`,
+        aplica(cap.clave) ? "" : h("span", { class: "tenue" }, cap.clave === "fundacion" ? " — ningún eje elegido tiene fundación (pestaña 7)" :
+          cap.clave === "costaneras" ? " — no hay techos elegidos" : " — no hay ejes elegidos")),
+      cap.detalles.length ? h("div", { class: "mc-det" }, ...cap.detalles.map(d => h("label", {},
+        h("input", { type: "checkbox", checked: o[d.clave] !== false, disabled: !o.incluir, onchange: ev => { o[d.clave] = ev.target.checked; } }),
+        ` ${d.titulo}`))) : null);
+    return fila;
+  }));
+  $("#mc-estado").textContent = `${n} capítulo(s) · ${mc.ejes.size} eje(s) · ${mc.techos.size} techo(s)`;
+}
+
+function mcPedido() {
+  const datos = {};
+  $$("[data-mc]").forEach(el => { const v = el.value.trim(); if (v !== "") datos[el.dataset.mc] = v === "true" ? true : v === "false" ? false : v; });
+  return { ejes: [...mc.ejes], techos: [...mc.techos],
+    opciones: { capitulos: mc.opciones.capitulos, datos, alcance: $("#mc-alcance").value.trim(), observaciones_extra: $("#mc-obs").value } };
+}
+
+$$("[data-mc-preset]").forEach(b => b.addEventListener("click", () => {
+  const pr = mc.cfg.presets[b.dataset.mcPreset] || {};
+  for (const [k, o] of Object.entries(mc.opciones.capitulos)) o.incluir = pr[k] ?? true;
+  if (pr.costaneras) mc.cfg.techos.filter(t => t.verificado).forEach(t => mc.techos.add(t.nombre));
+  if (pr.costaneras === false) mc.techos.clear();
+  if (b.dataset.mcPreset === "costaneras") mc.ejes.clear();
+  else if (!mc.ejes.size) mc.cfg.ejes.filter(e => e.analizado).forEach(e => mc.ejes.add(e.nombre));
+  mcFuentes(); mcCapitulos();
+  toast(`Configuración: ${b.textContent}`);
+}));
+$("#btn-mc-todo").addEventListener("click", () => {
+  for (const o of Object.values(mc.opciones.capitulos)) for (const k of Object.keys(o)) o[k] = true;
+  mcCapitulos();
+});
+$("#btn-mc-guardar").addEventListener("click", () => intentar(async () => { await api("PUT", P("/memoria"), mcPedido()); toast("Opciones de la memoria guardadas"); }));
+$("#btn-mc-generar").addEventListener("click", () => intentar(async () => {
+  const b = $("#btn-mc-generar"); b.disabled = true; $("#mc-estado").textContent = "Generando la memoria…";
+  try {
+    const r = await fetch(P("/memoria/word"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(mcPedido()) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `el servidor respondió ${r.status}`);
+    const nombre = (r.headers.get("Content-Disposition") || "").match(/filename="([^"]+)"/)?.[1] || "memoria.docx";
+    const a = h("a", { href: URL.createObjectURL(await r.blob()), download: nombre });
+    document.body.append(a); a.click(); a.remove();
+    toast(`Memoria generada: ${nombre}`);
+  } finally { b.disabled = false; mcCapitulos(); }
+}));
 
 // ------------------------------------------------------------------ inicio
 fetch("/salud").then(r => r.json()).then(v => {

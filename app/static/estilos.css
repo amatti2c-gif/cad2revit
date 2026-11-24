@@ -301,3 +301,15 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 
 .cos-modo { display: inline-flex; gap: 10px; margin-right: 10px; font-size: 13px; }
 .cos-modo label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+
+.mc-presets { margin-top: 6px; }
+.mc-sub { font-weight: 600; font-size: 13px; margin: 10px 0 4px; }
+.mc-lista { display: grid; gap: 4px; font-size: 13px; }
+.mc-item { display: flex; gap: 4px; align-items: baseline; }
+#tab-memoria textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; }
+.mc-capitulos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px 18px; }
+.mc-cap { padding: 6px 8px; border: 1px solid var(--borde); border-radius: var(--radio); }
+.mc-cap-tit { font-weight: 600; font-size: 13px; }
+.mc-det { display: grid; gap: 2px; margin: 4px 0 0 22px; font-size: 12.5px; }
+.mc-fuera { opacity: .55; }
+#tab-memoria .sap-form input, #tab-memoria .sap-form select { width: 280px; }
