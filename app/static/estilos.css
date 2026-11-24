@@ -331,3 +331,12 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .sap-sel .chip { font-size: 12px; padding: 2px 8px; margin: 2px 4px 2px 0; }
 .sap-sel .chip.fuera { color: #666; border-style: dashed; }
 .sap-sel .chip.sug { border-color: #d0702a; color: #8a4410; }
+
+.sap-modo { font-size: 13px; margin-bottom: 6px; }
+.sap-modo label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.sap-menu { position: absolute; z-index: 50; background: #fff; border: 1px solid var(--borde); border-radius: var(--radio);
+  box-shadow: 0 6px 20px rgba(0,0,0,.15); padding: 6px; display: grid; gap: 2px; min-width: 240px; font-size: 13px; }
+.sap-menu-tit { font-weight: 600; padding: 2px 6px 6px; color: #444; }
+.sap-menu button { text-align: left; background: none; border: 0; padding: 5px 8px; border-radius: 4px; cursor: pointer; font: inherit; }
+.sap-menu button:hover { background: rgba(45,108,223,.1); }
+.sap-menu button.activo { font-weight: 600; color: #1f4e9c; }

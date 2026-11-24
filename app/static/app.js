@@ -1985,7 +1985,7 @@ $("#cerrar-comparacion").addEventListener("click", () => $("#comparacion").class
 // ------------------------------------------------------------------ Análisis y diseño de ejes exportados desde Revit
 // (PyNite en la nube; SAP2000 con el agente local queda como borrador opcional)
 const AGENTE = "http://127.0.0.1:8000";            // app local de sap2000-toolkit en la PC con SAP2000
-const sap = { auto: null, nombre: null, eje: null, vista: null, opciones: { excluir: [], apoyos: {}, secciones: {}, muros: {} }, razones: {} };
+const sap = { auto: null, nombre: null, eje: null, vista: null, modo: "elementos", opciones: { excluir: [], apoyos: {}, secciones: {}, muros: {}, apoyos_nudo: {}, uniones: {} }, razones: {} };
 
 function sapParametros() {
   const p = {};
@@ -2052,7 +2052,7 @@ async function sapAgente() {
 async function abrirEjeSap(nombre) {
   const r = await api("GET", P(`/sap/${encodeURIComponent(nombre)}`));
   sap.nombre = nombre; sap.eje = r.eje; sap.razones = {};
-  sap.opciones = Object.assign({ excluir: [], apoyos: {}, secciones: {}, muros: {} }, r.ajustes.opciones || {});
+  sap.opciones = Object.assign({ excluir: [], apoyos: {}, secciones: {}, muros: {}, apoyos_nudo: {}, uniones: {} }, r.ajustes.opciones || {});
   $("#sap-ancho").value = "";
   sapPonerParametros(r.ajustes.parametros || {});
   sapGaPlaceholder();
@@ -2088,6 +2088,7 @@ async function sapActualizar() {
 
 // ---- selección de elementos para la modelación (clic en el dibujo) y sugerencias para limpiar el eje
 function sapAlternar(id) {
+  if (sap.modo !== "elementos") return;
   id = String(id);
   const o = sap.opciones;
   if (o.excluir.includes(id)) o.excluir = o.excluir.filter(x => x !== id); else o.excluir.push(id);
@@ -2113,11 +2114,65 @@ function sapBarraSel() {
     h("div", {}, h("strong", {}, "Elementos para la modelación: "),
       `${total - exc.length} de ${total} incluidos. Haz clic en un elemento del dibujo para incluirlo o quitarlo (los que no son parte del sistema sismorresistente).`),
     exc.length ? h("div", {}, h("span", { class: "tenue" }, "Excluidos: "), ...exc.map(id => chip(id, `${sapNombreElem(id)} · ${id} ↺`, "incluir", "fuera"))) : null,
+    (Object.keys(o.apoyos_nudo || {}).length || Object.keys(o.uniones || {}).length) ? h("div", {},
+      h("span", { class: "tenue" }, `Cambiados a mano: ${Object.keys(o.apoyos_nudo || {}).length} apoyo(s), ` +
+        `${Object.values(o.uniones || {}).reduce((a, u) => a + Object.keys(u).length, 0)} unión(es) rotulada(s) `),
+      h("button", { class: "sec chip", onclick: () => { o.apoyos_nudo = {}; intentar(sapActualizar); } }, "Restablecer apoyos"),
+      h("button", { class: "sec chip", onclick: () => { o.uniones = {}; intentar(sapActualizar); } }, "Uniones rígidas")) : null,
     sug.length ? h("div", {}, h("span", { class: "nocumple" }, "Sugeridos para quitar: "),
       ...sug.map(s_ => chip(String(s_.id), `${sapNombreElem(String(s_.id))} · ${s_.id} (${s_.motivo})`, "quitar", "sug")),
       h("button", { class: "pri", onclick: () => { for (const s_ of sug) if (!o.excluir.includes(String(s_.id))) o.excluir.push(String(s_.id));
         sapTablaElementos(); intentar(sapActualizar); toast(`${sug.length} elemento(s) quitado(s) de la modelación`); } }, "Quitar sugeridos")) : null,
   ].filter(Boolean));
+}
+
+
+// ---- apoyos y uniones editables en el dibujo
+const TIPOS_APOYO = [["empotrado", "Empotrado (traslaciones y giro)"], ["rotula", "Fijo / rotulado (traslaciones)"],
+  ["deslizante", "Deslizante (solo vertical)"], ["x", "Solo horizontal"], ["libre", "Libre (sin apoyo)"]];
+function sapMenu(ev, titulo, opciones, actual, elegir) {
+  document.querySelector(".sap-menu")?.remove();
+  const menu = h("div", { class: "sap-menu" }, h("div", { class: "sap-menu-tit" }, titulo),
+    ...opciones.map(([v, t]) => h("button", { class: v === actual ? "activo" : "", onclick: () => { menu.remove(); elegir(v); } }, (v === actual ? "● " : "") + t)));
+  menu.style.left = `${ev.pageX + 8}px`; menu.style.top = `${ev.pageY + 8}px`;
+  document.body.append(menu);
+  setTimeout(() => document.addEventListener("click", function fuera(e) { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener("click", fuera); } }), 0);
+}
+const claveNudo = (x, z) => `${Number(x).toFixed(4)},${Number(z).toFixed(4)}`;
+function sapApoyo(ev, nudo) {
+  const v = sap.vista, [x, z] = v.nudos[nudo], k = claveNudo(x, z);
+  const actual = v.apoyos[nudo] || "libre", defecto = v.apoyos_defecto?.[nudo] || "libre";
+  const ops = TIPOS_APOYO.map(([a, t]) => [a, t + (a === defecto ? " · por defecto" : "")]);
+  sapMenu(ev, `Apoyo en x ${x.toFixed(2)}, z ${z.toFixed(2)} m`, ops, actual, tipo => {
+    sap.opciones.apoyos_nudo = sap.opciones.apoyos_nudo || {};
+    if (tipo === defecto) delete sap.opciones.apoyos_nudo[k]; else sap.opciones.apoyos_nudo[k] = tipo;
+    intentar(sapActualizar);
+  });
+}
+function sapUnion(id, lado) {
+  const u = sap.opciones.uniones = sap.opciones.uniones || {};
+  const o = u[id] = u[id] || {};
+  if (o[lado] === "rotula") delete o[lado]; else o[lado] = "rotula";
+  if (!Object.keys(o).length) delete u[id];
+  intentar(sapActualizar);
+}
+// extremos (nudos) de cada viga de Revit en el modelo: [{id, lado, nudo, rotulada}]
+function sapExtremosVigas() {
+  const v = sap.vista, e = sap.eje || {}, out = [];
+  for (const b of e.vigas || []) {
+    const segs = v.barras.filter(s_ => String(s_.origen) === String(b.id));
+    if (!segs.length) continue;
+    const cuenta = {};
+    for (const s_ of segs) for (const n of [s_.ni, s_.nj]) cuenta[n] = (cuenta[n] || 0) + 1;
+    const ext = Object.keys(cuenta).filter(n => cuenta[n] === 1);
+    for (const [lado, x, z] of [["i", b.x0, b.z0], ["j", b.x1, b.z1]]) {
+      const n = ext.sort((a, c) => Math.hypot(v.nudos[a][0] - x, v.nudos[a][1] - z) - Math.hypot(v.nudos[c][0] - x, v.nudos[c][1] - z))[0];
+      if (!n) continue;
+      const seg = segs.find(s_ => s_.ni === n || s_.nj === n), lib = v.liberaciones?.[seg.nombre] || [false, false];
+      out.push({ id: String(b.id), lado, nudo: n, rotulada: seg.ni === n ? lib[0] : lib[1], seccion: b.seccion });
+    }
+  }
+  return out;
 }
 
 function sapDibujar() {
@@ -2151,12 +2206,52 @@ function sapDibujar() {
     z.addEventListener("click", () => sapAlternar(b.origen));
     hijos.push(z);
   }
-  for (const [n, t] of Object.entries(v.apoyos)) {
-    const [x, z] = Pn(n), d = k * 6;
-    hijos.push(t === "x" ? s("circle", { cx: x, cy: -z + d * 0.7, r: d * 0.7, fill: "none", stroke: "#222", "stroke-width": k })
-      : t === "empotrado"
-      ? s("rect", { x: x - d, y: -z, width: 2 * d, height: d, fill: "#222" })
-      : s("polygon", { points: `${x},${-z} ${x - d},${-z + 1.6 * d} ${x + d},${-z + 1.6 * d}`, fill: "none", stroke: "#222", "stroke-width": k }));
+  const modoAp = sap.modo === "apoyos";
+  const simbolo = (n, t, quitado) => {
+    const [x, z] = Pn(n), d = k * (modoAp ? 8 : 6), col = quitado ? "#9a9a9a" : (sap.opciones.apoyos_nudo || {})[claveNudo(x, z)] ? "#2d6cdf" : "#222";
+    const g = s("g", { style: modoAp ? "cursor:pointer" : "" });
+    const tri = () => s("polygon", { points: `${x},${-z} ${x - d},${-z + 1.6 * d} ${x + d},${-z + 1.6 * d}`, fill: "none", stroke: col, "stroke-width": k * 1.2, "stroke-dasharray": quitado ? `${k * 2} ${k * 2}` : "" });
+    if (t === "x") g.append(s("circle", { cx: x, cy: -z + d * 0.7, r: d * 0.7, fill: "none", stroke: col, "stroke-width": k }));
+    else if (t === "empotrado") g.append(s("rect", { x: x - d, y: -z, width: 2 * d, height: d, fill: col }));
+    else if (t === "deslizante") g.append(tri(), s("line", { x1: x - d * 1.2, y1: -z + 2.1 * d, x2: x + d * 1.2, y2: -z + 2.1 * d, stroke: col, "stroke-width": k * 1.2 }),
+      s("circle", { cx: x - d * 0.5, cy: -z + 1.85 * d, r: d * 0.22, fill: col }), s("circle", { cx: x + d * 0.5, cy: -z + 1.85 * d, r: d * 0.22, fill: col }));
+    else g.append(tri());
+    const nombres = Object.fromEntries(TIPOS_APOYO);
+    g.append(Object.assign(s("title"), { textContent: (quitado ? "Apoyo quitado (libre)" : nombres[t] || t) + (modoAp ? " · clic para cambiarlo" : "") }));
+    if (modoAp) {
+      g.append(s("rect", { x: x - d * 1.4, y: -z - d * 0.4, width: d * 2.8, height: d * 2.8, fill: "transparent" }));
+      g.addEventListener("click", ev => { ev.stopPropagation(); sapApoyo(ev, n); });
+    }
+    hijos.push(g);
+  };
+  for (const [n, t] of Object.entries(v.apoyos)) simbolo(n, t, false);
+  for (const [n, t] of Object.entries(v.apoyos_defecto || {})) if (!v.apoyos[n] && v.nudos[n]) simbolo(n, t, true);
+  if (modoAp) {
+    // nudos de las barras sin apoyo: un clic agrega uno
+    const conApoyo = new Set([...Object.keys(v.apoyos), ...Object.keys(v.apoyos_defecto || {})]);
+    // solo los extremos de cada elemento de Revit (no los nudos intermedios de la malla)
+    const extremos = new Set();
+    const porOrigen = {};
+    for (const b of v.barras) for (const n of [b.ni, b.nj]) { const c = porOrigen[b.origen] ||= {}; c[n] = (c[n] || 0) + 1; }
+    for (const c of Object.values(porOrigen)) for (const [n, k_] of Object.entries(c)) if (k_ === 1) extremos.add(n);
+    for (const n of extremos) {
+      if (conApoyo.has(n)) continue;
+      const [x, z] = Pn(n);
+      const c = s("circle", { cx: x, cy: -z, r: k * 4, fill: "#fff", stroke: "#2d6cdf", "stroke-width": k, style: "cursor:pointer" });
+      c.append(Object.assign(s("title"), { textContent: "Nudo sin apoyo · clic para poner uno" }));
+      c.addEventListener("click", ev => { ev.stopPropagation(); sapApoyo(ev, n); });
+      hijos.push(c);
+    }
+  }
+  if (sap.modo === "uniones") {
+    for (const u of sapExtremosVigas()) {
+      const [x, z] = Pn(u.nudo);
+      const c = s("circle", { cx: x, cy: -z, r: k * 6, fill: u.rotulada ? "#fff" : "#1f4e9c", stroke: "#1f4e9c", "stroke-width": k * 1.5, style: "cursor:pointer" });
+      c.append(Object.assign(s("title"), { textContent: `Viga ${u.id} (${u.seccion}), extremo ${u.lado === "i" ? "inicial" : "final"}: ` +
+        (u.rotulada ? "rotulada · clic para hacerla rígida" : "rígida (empotrada) · clic para rotularla") }));
+      c.addEventListener("click", ev => { ev.stopPropagation(); sapUnion(u.id, u.lado); });
+      hijos.push(c);
+    }
   }
   // excluidos (gris) y sin apoyo en el plano (naranjo), desde los datos de Revit: clic para incluir o quitar
   const e = sap.eje || {}, exc = new Set(sap.opciones.excluir.map(String)), suelto = new Set((v.sin_apoyo || []).map(String));
@@ -2212,7 +2307,7 @@ function sapTablaElementos() {
   for (const p of e.pilares || []) {
     filas.push(h("tr", {}, h("td", {}, incluir(p.id)), h("td", {}, "Pilar"), h("td", {}, p.id), h("td", {}, p.seccion),
       h("td", {}, `x ${((p.x0 + p.x1) / 2).toFixed(2)} · z ${p.z0.toFixed(2)}–${p.z1.toFixed(2)}`),
-      h("td", {}, selector([["", "base por defecto"], ["rotula", "rotulada"], ["empotrado", "empotrada"]], o.apoyos[p.id],
+      h("td", {}, selector([["", "base por defecto"], ["empotrado", "empotrada"], ["rotula", "fija (rotulada)"], ["deslizante", "deslizante"]], o.apoyos[p.id],
         v => { if (v) o.apoyos[p.id] = v; else delete o.apoyos[p.id]; }))));
   }
   for (const b of e.vigas || []) {
@@ -3575,3 +3670,5 @@ intentar(async () => {
   if (tab && $(`#tab-${tab}`)) irA(tab);
   if (q.toString()) history.replaceState(null, "", location.pathname);
 });
+
+$$('input[name="sap-modo"]').forEach(el => el.addEventListener("change", () => { sap.modo = el.value; if (sap.vista) sapDibujar(); }));

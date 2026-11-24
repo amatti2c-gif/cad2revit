@@ -226,6 +226,10 @@
               <button class="pri" id="btn-sap-nube">▶ Analizar y diseñar</button></span></div>
           <div id="sap-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="sap-avance-relleno"></div></div>
             <span id="sap-avance-txt"></span></div>
+          <div class="fila-sap sap-modo"><strong>Editar en el dibujo:</strong>
+            <label><input type="radio" name="sap-modo" value="elementos" checked> elementos (incluir o quitar)</label>
+            <label><input type="radio" name="sap-modo" value="apoyos"> apoyos (empotrado, fijo, deslizante, libre)</label>
+            <label><input type="radio" name="sap-modo" value="uniones"> uniones de vigas (rígida o rotulada)</label></div>
           <svg id="sap-lienzo" viewBox="0 0 100 50"></svg>
           <div class="tenue sap-leyenda"><span style="color:#1f4e9c">━ pilar</span> <span style="color:#c06000">━ techo</span>
             <span style="color:#555">━ viga</span> <span style="color:#7a3fb0">━ diagonal</span> <span style="color:#b98a4a">▮ muro (shell)</span>
@@ -254,7 +258,7 @@
               <label>Unión al pilar: rigidez (tonf/m) <input data-sap="muro.k_union_pilar" type="number" step="any" value="1337"></label>
               <label>Peso del muro (kgf/m²) <input data-sap="muro.peso" data-f="0.001" type="number" step="any" value="50"></label>
               <label>Tamaño de malla (m) <input data-sap="malla" type="number" step="any" value="0.5"></label>
-              <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">rotulada</option><option value="empotrado">empotrada</option></select></label>
+              <label>Base de pilares <select data-sap="apoyo_pilares"><option value="rotula">fija (rotulada)</option><option value="empotrado">empotrada</option><option value="deslizante">deslizante</option></select></label>
             </div>
 </div>
           <div class="panel"><div class="panel-tit"><span>Cargas (NCh1537, NCh432, NCh433:2026)</span></div>

@@ -24,3 +24,27 @@ def test_viga_sin_apoyo_y_pilar_corto():
     assert any("se unió a la viga" in a for a in mod.avisos)
     origenes = set(mod.origen.values())
     assert {"P1", "P2", "V1"} <= origenes and not ({"V2", "P3"} & origenes)
+
+
+def test_apoyos_y_uniones_a_mano():
+    import pytest
+    from app.sap.eje_cargas import ParametrosCargas, cargas_eje
+    from app.sap.eje_pynite import analizar
+    eje = {"eje": "T", "pilares": [_p("P1", 0.0, 3.0), _p("P2", 4.0, 3.0)], "vigas": [_v("V1", 0.0, 3.0, 4.0, 3.0)], "muros": []}
+    pc = ParametrosCargas()
+    # deslizante: solo el vertical restringido
+    mod = mallar(eje, opciones={"apoyos_nudo": {"0,0": "empotrado", "4,0": "deslizante"}})
+    tipos = {mod.nudos[n]: t for n, t in mod.apoyos.items()}
+    assert tipos[(0.0, 0.0)] == "empotrado" and tipos[(4.0, 0.0)] == "deslizante"
+    assert analizar(mod, cargas_eje(mod, pc), pc, fy=270e3 / 9.80665)["T"] > 0
+    # viga rotulada en el pilar P2 (base fija): P1 empotrado da la estabilidad lateral
+    mod = mallar(eje, opciones={"apoyos_nudo": {"0,0": "empotrado", "4,0": "rotula"}, "uniones": {"V1": {"j": "rotula"}}})
+    assert list(mod.liberaciones.values()) == [(False, True)]
+    assert analizar(mod, cargas_eje(mod, pc), pc, fy=270e3 / 9.80665)["T"] > 0
+    # mecanismo real (pilar deslizante con la viga rotulada arriba): el análisis lo rechaza
+    mod = mallar(eje, opciones={"apoyos_nudo": {"0,0": "empotrado", "4,0": "deslizante"}, "uniones": {"V1": {"j": "rotula"}}})
+    with pytest.raises(Exception):
+        analizar(mod, cargas_eje(mod, pc), pc, fy=270e3 / 9.80665)
+    # quitar un apoyo («libre»)
+    mod2 = mallar(eje, opciones={"apoyos_nudo": {"4,0": "libre"}})
+    assert (4.0, 0.0) not in {mod2.nudos[n] for n in mod2.apoyos}

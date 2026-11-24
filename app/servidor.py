@@ -1874,7 +1874,8 @@ def vista_eje_sap(pid: str, nombre: str, aj: AjustesEje):
         "sin_apoyo": mod.sin_apoyo,
         "sugeridos": [{"id": i, "motivo": "costanera de techo (sistema de vigas)"} for i in costaneras if i not in excl]
                      + [{"id": i, "motivo": "sin apoyo en el plano del eje"} for i in mod.sin_apoyo if i not in costaneras],
-        "nombre": mod.nombre, "nudos": mod.nudos, "apoyos": mod.apoyos,
+        "nombre": mod.nombre, "nudos": mod.nudos, "apoyos": mod.apoyos, "apoyos_defecto": mod.apoyos_defecto,
+        "liberaciones": {k: list(v) for k, v in mod.liberaciones.items()},
         "barras": [{"nombre": b, "ni": a, "nj": c, "seccion": sec, "rol": mod.roles.get(b), "origen": mod.origen.get(b)}
                    for b, a, c, sec in mod.barras],
         "areas": [{"nombre": a, "nudos": ns, "seccion": sec, "origen": mod.origen.get(a)} for a, ns, sec in mod.areas],
@@ -1928,7 +1929,13 @@ def analizar_eje_pynite(pid: str, nombre: str, aj: AjustesEje):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"No se pudo analizar el eje: {e}")
+        txt = str(e)
+        if "singular" in txt.lower() or "unstable" in txt.lower():
+            txt = ("el modelo es inestable (la matriz de rigidez es singular): revisa los apoyos (alguno deslizante o libre "
+                   "que deje el eje sin restricción horizontal o vertical) y las uniones rotuladas (una viga o pilar rotulado "
+                   "en ambos extremos sin otro elemento que lo estabilice), y quita los elementos que no son parte del sistema "
+                   "sismorresistente")
+        raise HTTPException(400, f"No se pudo analizar el eje: {txt}")
     finally:
         _AVANCE_ANALISIS.pop(f"{pid}/{nombre}", None)
     r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")

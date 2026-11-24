@@ -129,7 +129,10 @@ def shell_equivalente(L: float, H: float, t: float, p: ParametrosMuroMadera) -> 
 class ModeloEje:
     nombre: str
     nudos: dict = field(default_factory=dict)          # nombre → (x, z)
-    apoyos: dict = field(default_factory=dict)         # nombre → "rotula" | "empotrado" | "x" (solo horizontal)
+    apoyos: dict = field(default_factory=dict)         # nombre → "empotrado" | "rotula" (fijo) | "deslizante" (solo
+                                                       # vertical) | "x" (solo horizontal)
+    apoyos_defecto: dict = field(default_factory=dict) # los apoyos antes de los cambios a mano (para la interfaz)
+    liberaciones: dict = field(default_factory=dict)   # barra → (rótula en i, rótula en j): unión rotulada de la viga
     barras: list = field(default_factory=list)         # (nombre, ni, nj, seccion)
     areas: list = field(default_factory=list)          # (nombre, [n1..n4], seccion_area)
     materiales: dict = field(default_factory=dict)     # nombre → {tipo, E, nu, gamma}
@@ -509,6 +512,37 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         rol = "diagonal" if v.get("tipo") == "diagonal" else (
             "techo" if abs(v["z1"] - v["z0"]) > 0.05 or not encima(v) else "viga")
         barra(v["x0"], v["z0"], v["x1"], v["z1"], _seccion(v, mod.secciones, mod.avisos, op.get("secciones")), rol, str(v.get("id")))
+    # apoyos cambiados a mano en la interfaz, por la posición del nudo «x,z» (m): tipo o «libre» (sin apoyo)
+    mod.apoyos_defecto = dict(mod.apoyos)
+    for clave, tipo in (op.get("apoyos_nudo") or {}).items():
+        try:
+            xq, zq = (float(c) for c in str(clave).split(","))
+        except ValueError:
+            continue
+        n_ = next((n for n, (x_, z_) in mod.nudos.items() if abs(x_ - xq) < 2e-3 and abs(z_ - zq) < 2e-3), None)
+        if n_ is None:
+            continue
+        if tipo == "libre":
+            mod.apoyos.pop(n_, None)
+        elif tipo in ("empotrado", "rotula", "deslizante", "x"):
+            mod.apoyos[n_] = tipo
+    # uniones rotuladas de las vigas: {id viga: {"i": "rotula", "j": "rotula"}} (i = extremo inicial en Revit)
+    for v in vigas:
+        u = (op.get("uniones") or {}).get(str(v.get("id"))) or {}
+        if not u:
+            continue
+        segs = [b for b in mod.barras if mod.origen.get(b[0]) == str(v.get("id"))]
+        for lado, (xk, zk) in (("i", (v["x0"], v["z0"])), ("j", (v["x1"], v["z1"]))):
+            if u.get(lado) != "rotula":
+                continue
+            for nb, a_, b_, _ in segs:
+                for k_, n_ in ((0, a_), (1, b_)):
+                    x_, z_ = mod.nudos[n_]
+                    if abs(x_ - xk) < 2e-3 and abs(z_ - zk) < 2e-3:
+                        li = list(mod.liberaciones.get(nb, (False, False)))
+                        li[k_] = True
+                        mod.liberaciones[nb] = tuple(li)
+
     # elementos sin apoyo en el plano del eje (p. ej. la viga de cumbrera o costaneras que se apoyan en otros ejes): no
     # están conectados a ningún nudo con apoyo y dejarían la matriz singular → se sacan del modelo con un aviso
     vecinos: dict = {}
@@ -535,7 +569,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         if mod.roles.get(nb) != "pilar":
             continue
         base, cabeza = (a_, b_) if mod.nudos[a_][1] <= mod.nudos[b_][1] else (b_, a_)
-        if mod.apoyos.get(base) == "rotula" and grado.get(cabeza, 0) == 1 and cabeza not in en_area:
+        if mod.apoyos.get(base) in ("rotula", "deslizante", "x") and grado.get(cabeza, 0) == 1 and cabeza not in en_area:
             alcanzados.discard(cabeza)
             alcanzados.discard(base)
     sueltas = [b for b in mod.barras if b[1] not in alcanzados or b[2] not in alcanzados]
@@ -602,7 +636,7 @@ def escribir_s2k(mod: ModeloEje, ruta: str, cargas=None) -> None:
           [{"Joint": n, "CoordSys": "GLOBAL", "CoordType": "Cartesian", "XorR": x, "Y": 0, "Z": z, "SpecialJt": "No"}
            for n, (x, z) in mod.nudos.items()])
     tabla("JOINT RESTRAINT ASSIGNMENTS",
-          [{"Joint": n, "U1": "Yes", "U2": "Yes", "U3": "No" if t == "x" else "Yes", "R1": "Yes" if t == "empotrado" else "No",
+          [{"Joint": n, "U1": "No" if t == "deslizante" else "Yes", "U2": "Yes", "U3": "No" if t == "x" else "Yes", "R1": "Yes" if t == "empotrado" else "No",
             "R2": "Yes" if t == "empotrado" else "No", "R3": "Yes" if t == "empotrado" else "No"}
            for n, t in mod.apoyos.items()])
     tabla("CONNECTIVITY - FRAME", [{"Frame": f, "JointI": a, "JointJ": b, "IsCurved": "No"} for f, a, b, _ in mod.barras])
@@ -669,7 +703,7 @@ def construir_en_sap(mod: ModeloEje, sap_model) -> None:
         real[n] = r[0] if isinstance(r, (list, tuple)) else n
     for n, t in mod.apoyos.items():
         fijo = t == "empotrado"
-        check(sap_model.PointObj.SetRestraint(real[n], [True, True, t != "x", fijo, fijo, fijo]), message=f"apoyo {n}")
+        check(sap_model.PointObj.SetRestraint(real[n], [t != "deslizante", True, t != "x", fijo, fijo, fijo]), message=f"apoyo {n}")
     for f, a, b, s in mod.barras:
         r = sap_model.FrameObj.AddByPoint(real[a], real[b], "", s, f)
         check(r, message=f"barra {f}")

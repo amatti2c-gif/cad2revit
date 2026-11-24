@@ -149,6 +149,9 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         m.add_section(sec, g["A"], g["Iy"], g["Ix"], g["J"])          # PyNite: Iz = eje fuerte (flexión en el plano)
     for f, a, b, sec in mod.barras:
         m.add_member(f, a, b, "ACERO", sec)
+    # uniones rotuladas (liberación del momento en el plano, eje z local)
+    for f, (ri, rj) in (getattr(mod, "liberaciones", None) or {}).items():
+        m.def_releases(f, Rzi=bool(ri), Rzj=bool(rj))
     # PyNite no tiene triángulos: cada triángulo se divide en 3 cuadriláteros (centroide y puntos medios de los lados)
     sub = {}                                                          # área → [cuadriláteros de PyNite]
     extra = {}
@@ -175,9 +178,19 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
             sub[nombre].append(q)
     # apoyos y restricciones del plano (Z, RX, RY); los nudos solo de muros no tienen giro en el plano (RZ)
     con_barra = {x for _, a, b, _ in mod.barras for x in (a, b)}
+    # nudos donde todas las barras llegan rotuladas (y sin muros): el giro del nudo no tiene rigidez → se fija
+    lib = getattr(mod, "liberaciones", None) or {}
+    rigidas = {}
+    for f, a, b, _ in mod.barras:
+        ri, rj = lib.get(f, (False, False))
+        rigidas[a] = rigidas.get(a, 0) + (0 if ri else 1)
+        rigidas[b] = rigidas.get(b, 0) + (0 if rj else 1)
+    en_quad = {n for _, ns, _ in mod.areas for n in ns}
+    solo_rotulas = {n for n in con_barra if rigidas.get(n, 0) == 0 and n not in en_quad}
     for n in mod.nudos:
         t = mod.apoyos.get(n)
-        m.def_support(n, t is not None, t in ("rotula", "empotrado"), True, True, True, (t == "empotrado") or (n not in con_barra))
+        m.def_support(n, t in ("rotula", "empotrado", "x"), t in ("rotula", "empotrado", "deslizante"), True, True, True,
+                      (t == "empotrado") or (n not in con_barra) or (n in solo_rotulas))
     for n in extra.values():
         m.def_support(n, False, False, True, True, True, True)
 
@@ -256,7 +269,18 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     nmod = min(max(int(pc.modos), 1), nmax)
     Kc, Mc = K11.tocsc(), M11.tocsc()
     while True:
-        vals, vecs = sla.eigsh(Kc, k=nmod, M=Mc, sigma=0.0, which="LM")
+        try:
+            vals, vecs = sla.eigsh(Kc, k=nmod, M=Mc, sigma=0.0, which="LM")
+        except (sla.ArpackError, sla.ArpackNoConvergence, RuntimeError):
+            # modelos muy chicos (pocos grados de libertad con masa): problema denso K⁻¹·M·φ = (1/ω²)·φ
+            A = np.linalg.solve(Kc.toarray(), Mc.toarray())
+            mu, V = np.linalg.eig(A)
+            ok = (np.abs(mu.imag) < 1e-9 * max(np.abs(mu).max(), 1e-30)) & (mu.real > 1e-14 * max(np.abs(mu).max(), 1e-30))
+            mu, V = mu.real[ok], V.real[:, ok]
+            orden_d = np.argsort(-mu)[:nmod]
+            vals, vecs = 1.0 / mu[orden_d], V[:, orden_d]
+            nmod = len(vals)
+            nmax = min(nmax, nmod)
         orden = np.argsort(vals)
         vals, vecs = vals[orden], vecs[:, orden]
         mm = np.einsum("ij,ij->j", vecs, np.asarray(M11 @ vecs))
