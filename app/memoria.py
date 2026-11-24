@@ -14,7 +14,7 @@ from datetime import date
 from docx import Document
 from docx.enum.section import WD_ORIENT  # noqa: F401  (A4 vertical)
 from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_TAB_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
@@ -229,13 +229,18 @@ class _Doc:
         ajustes.append(uf)
         return p
 
-    def encabezado(self, izq, der):
+    def encabezado(self, izq, der, logo: bytes | None = None):
         s = self.d.sections[0]
         s.different_first_page_header_footer = True
         hp = s.header.paragraphs[0]
         hp.text = ""
-        r = hp.add_run(f"{izq}\t\t{der}")
+        hp.paragraph_format.tab_stops.add_tab_stop(Cm(8.5), WD_TAB_ALIGNMENT.CENTER)
+        hp.paragraph_format.tab_stops.add_tab_stop(Cm(17), WD_TAB_ALIGNMENT.RIGHT)
+        if logo:
+            hp.add_run().add_picture(io.BytesIO(logo), height=Cm(1.1))
+        r = hp.add_run(f"\t{izq}\t{der}")
         r.font.size, r.font.color.rgb = Pt(8), GRIS
+        _borde_inferior(hp)
         fp = s.footer.paragraphs[0]
         fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         for parte in ("Página ", "PAGE", " de ", "NUMPAGES"):
@@ -258,6 +263,120 @@ class _Doc:
         b = io.BytesIO()
         self.d.save(b)
         return b.getvalue()
+
+
+def _borde_inferior(p):
+    pPr = p._p.get_or_add_pPr()
+    bdr = OxmlElement("w:pBdr")
+    b = OxmlElement("w:bottom")
+    for k, v in (("w:val", "single"), ("w:sz", "4"), ("w:space", "4"), ("w:color", "A6A6A6")):
+        b.set(qn(k), v)
+    bdr.append(b)
+    pPr.append(bdr)
+
+
+def _bordes_celda(celda, ver: bool):
+    tcPr = celda._tc.get_or_add_tcPr()
+    b = OxmlElement("w:tcBorders")
+    for lado in ("top", "left", "bottom", "right"):
+        e = OxmlElement(f"w:{lado}")
+        e.set(qn("w:val"), "single" if ver else "nil")
+        if ver:
+            e.set(qn("w:sz"), "6")
+            e.set(qn("w:color"), "000000")
+        b.append(e)
+    tcPr.append(b)
+
+
+def _texto_celda(celda, texto, tam=8, negrita=False, centro=False, color=None):
+    celda.text = ""
+    p = celda.paragraphs[0]
+    p.paragraph_format.space_after = Pt(0)
+    if centro:
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(texto or "")
+    r.font.size, r.bold = Pt(tam), negrita
+    if color:
+        r.font.color.rgb = color
+    return p
+
+
+REVISIONES_DEFECTO = [{"rev": "0", "comentario": "Aprobado Cliente"},
+                      {"rev": "B", "ejecutor": "Andrés V.", "comentario": "A Cliente"},
+                      {"rev": "A", "comentario": "Coordinación Interna"}]
+
+
+def _portada(D: "_Doc", datos: dict, titulo: str, empresa: dict, revisiones: list[dict]):
+    """Portada con el formato de la oficina: logo y versión arriba, recuadro con el nombre del proyecto, título y tabla
+    de revisiones al pie (Ejecutor, Revisor, Aprobador con nombre/firma y fecha, y comentario)."""
+    d = D.d
+    t = d.add_table(rows=1, cols=2)
+    t.autofit = False
+    izq, der = t.rows[0].cells
+    for c, w in ((izq, 8.5), (der, 8.5)):
+        c.width = Cm(w)
+        _bordes_celda(c, False)
+    if empresa.get("logo"):
+        izq.paragraphs[0].add_run().add_picture(io.BytesIO(empresa["logo"]), width=Cm(2.6))
+    elif empresa.get("nombre"):
+        _texto_celda(izq, empresa["nombre"], tam=12, negrita=True)
+    p = _texto_celda(der, f"VERSIÓN {datos.get('version') or 1}", tam=10, negrita=True, color=AZUL)
+    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    D.p("", antes=24)
+    caja = d.add_table(rows=1, cols=1)
+    caja.style = "Table Grid"
+    caja.alignment = WD_TABLE_ALIGNMENT.CENTER
+    cel = caja.rows[0].cells[0]
+    cel.width = Cm(14.5)
+    trPr = caja.rows[0]._tr.get_or_add_trPr()
+    alto = OxmlElement("w:trHeight")
+    alto.set(qn("w:val"), "1474")
+    alto.set(qn("w:hRule"), "atLeast")
+    trPr.append(alto)
+    tcPr = cel._tc.get_or_add_tcPr()
+    va = OxmlElement("w:vAlign")
+    va.set(qn("w:val"), "center")
+    tcPr.append(va)
+    _texto_celda(cel, titulo.upper(), tam=12, negrita=True, centro=True)
+    if datos.get("ubicacion"):
+        q = cel.add_paragraph()
+        q.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        r = q.add_run(datos["ubicacion"])
+        r.font.size = Pt(10)
+    D.p(("MEMORIA DE CÁLCULO ESTRUCTURAL",), tam=20, alinear=WD_ALIGN_PARAGRAPH.CENTER, antes=110, despues=4)
+    if datos.get("resumida", True):
+        D.p("Resumida", tam=12, color=GRIS, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=0)
+    D.p("", antes=150 if len(revisiones) <= 3 else 110)
+    # tabla de revisiones: dos filas por revisión (nombre/firma y fecha) y la fila de títulos al pie
+    revs = revisiones or REVISIONES_DEFECTO
+    anchos = [1.4, 1.9, 3.0, 3.0, 3.0, 4.7]
+    tr = d.add_table(rows=2 * len(revs) + 1, cols=6)
+    tr.style = "Table Grid"
+    tr.alignment = WD_TABLE_ALIGNMENT.CENTER
+    tr.autofit = False
+    firma = empresa.get("firma_rev")          # revisión que lleva la firma escaneada del ejecutor (opcional)
+    for i, rv in enumerate(revs):
+        a, b = tr.rows[2 * i].cells, tr.rows[2 * i + 1].cells
+        _texto_celda(a[1], "Nombre / Firma", tam=7, negrita=True, color=AZUL)
+        _texto_celda(b[1], "Fecha", tam=7, negrita=True, color=AZUL)
+        for j, campo in ((2, "ejecutor"), (3, "revisor"), (4, "aprobador")):
+            _texto_celda(a[j], rv.get(campo) or "", tam=8, negrita=True, centro=True)
+            _texto_celda(b[j], rv.get(f"fecha_{campo}") or (rv.get("fecha") if rv.get(campo) else "") or "", tam=8, centro=True)
+        m = a[0].merge(b[0])
+        _texto_celda(m, rv.get("rev", ""), tam=9, negrita=True, centro=True)
+        m = a[5].merge(b[5])
+        _texto_celda(m, rv.get("comentario", ""), tam=8, negrita=True, centro=True)
+        for c in (m, tr.rows[2 * i].cells[0]):
+            tcPr = c._tc.get_or_add_tcPr()
+            va = OxmlElement("w:vAlign")
+            va.set(qn("w:val"), "center")
+            tcPr.append(va)
+    pie = tr.rows[-1].cells
+    for j, txt in enumerate(("REV.", "", "Ejecutor", "Revisor", "Aprobador", "COMENTARIOS")):
+        _texto_celda(pie[j], txt, tam=8, negrita=True, centro=True)
+    for fila in tr.rows:
+        for j, c in enumerate(fila.cells):
+            c.width = Cm(anchos[j])
 
 
 def _razon(r):
@@ -360,6 +479,7 @@ def observaciones(ejes: list[dict], techos: list[dict], caps: dict) -> list[tupl
                 obs.append(("Apoyos de costaneras cambiados a mano",
                             f"Costaneras {', '.join(editadas)}: tienen apoyos agregados o quitados en la app; deben corresponder a vigas o "
                             f"soportes reales."))
+        if techos:
             obs.append(("Alcance de la verificación de costaneras",
                         "No se verificaron el pandeo distorsional (AISI F4), el aplastamiento del alma en los apoyos (G5) ni las "
                         "conexiones; confirma el perfil con el proveedor."))
@@ -367,8 +487,13 @@ def observaciones(ejes: list[dict], techos: list[dict], caps: dict) -> list[tupl
 
 
 # ---------------------------------------------------------------------------------------------- memoria
-def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opciones: dict) -> bytes:
-    """ejes: [{nombre, eje, ajustes, resultado, fundacion}], techos: [{nombre, resultado}]."""
+def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opciones: dict, empresa: dict | None = None) -> bytes:
+    """ejes: [{nombre, eje, ajustes, resultado, fundacion}], techos: [{nombre, resultado}]; empresa: {nombre, logo
+    (bytes), firma (bytes)} para la portada, el encabezado y la firma."""
+    empresa = empresa or {}
+    # datos de la empresa (nombre, calculista, RUT) si la memoria no los trae
+    opciones = {**opciones, "datos": {**{k: v for k, v in (("empresa", empresa.get("nombre")), ("calculista", empresa.get("calculista")),
+                                                            ("rut", empresa.get("rut"))) if v}, **(opciones.get("datos") or {})}}
     base = opciones_por_defecto()
     caps = base["capitulos"]
     for k, v in (opciones.get("capitulos") or {}).items():
@@ -387,14 +512,8 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
     con_fun = [e for e in ejes if e.get("fundacion")] if inc("fundacion") else []
     nombre_p = datos.get("proyecto") or proyecto
     D = _Doc()
-    D.encabezado(f"{nombre_p} · Memoria de cálculo", f"Rev. {datos.get('revision') or 'A'}")
-
-    # ---- portada
-    D.p(("MEMORIA DE CÁLCULO" + (" RESUMIDA" if datos.get("resumida", True) else ""),), tam=22, color=AZUL,
-        alinear=WD_ALIGN_PARAGRAPH.CENTER, antes=150, despues=12)
-    D.p((f"Proyecto {nombre_p}",), tam=16, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=6)
-    if datos.get("ubicacion"):
-        D.p(datos["ubicacion"], tam=12, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=30)
+    titulo = datos.get("titulo") or nombre_p
+    D.encabezado(f"{titulo} · Memoria de cálculo estructural", f"Versión {datos.get('version') or 1}", empresa.get("logo"))
     partes = []
     if ejes:
         partes.append("estructura de acero con muros de madera de marco plataforma")
@@ -402,13 +521,8 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
         partes.append("fundación corrida de hormigón armado")
     if techos:
         partes.append("costaneras de acero conformado en frío")
-    desc = datos.get("descripcion") or ("Alcance: " + ", ".join(partes) if partes else "")
-    if desc:
-        D.p(desc[0].upper() + desc[1:], tam=11, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=60)
-    for linea in (f"Fecha: {_fecha_texto(datos.get('fecha'))}", f"Revisión: {datos.get('revision') or 'A'}",
-                  datos.get("empresa"), datos.get("calculista") and f"Calculista: {datos['calculista']}"):
-        if linea:
-            D.p(linea, tam=11, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=2)
+    # ---- portada (formato de la oficina)
+    _portada(D, datos, titulo, empresa, opciones.get("revisiones") or REVISIONES_DEFECTO)
     D.salto()
     D.indice()
     D.salto()
@@ -743,8 +857,18 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
                 D.numerado(linea.strip())
 
     if inc("firma"):
-        D.p("", antes=40)
-        D.p("______________________________", alinear=WD_ALIGN_PARAGRAPH.CENTER, antes=40, despues=0)
-        D.p(datos.get("calculista") or "Ingeniero calculista", alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=0)
-        D.p(datos.get("rut") or "Nombre, RUT y firma", alinear=WD_ALIGN_PARAGRAPH.CENTER, color=GRIS)
+        D.p(f"{datos['ubicacion'].split(',')[0]}, {_fecha_texto(datos.get('fecha'))}" if datos.get("ubicacion") else _fecha_texto(datos.get("fecha")),
+            antes=30, alinear=WD_ALIGN_PARAGRAPH.RIGHT)
+        if empresa.get("firma"):
+            par = D.d.add_paragraph()
+            par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            par.paragraph_format.space_before = Pt(30)
+            par.paragraph_format.keep_together = True
+            par.add_run().add_picture(io.BytesIO(empresa["firma"]), width=Cm(7.5))
+            if datos.get("rut"):
+                D.p(datos["rut"], alinear=WD_ALIGN_PARAGRAPH.CENTER, color=GRIS)
+        else:
+            D.p("______________________________", alinear=WD_ALIGN_PARAGRAPH.CENTER, antes=60, despues=0)
+            D.p(datos.get("calculista") or "Ingeniero calculista", alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=0)
+            D.p(datos.get("rut") or "Nombre, RUT y firma", alinear=WD_ALIGN_PARAGRAPH.CENTER, color=GRIS)
     return D.bytes()

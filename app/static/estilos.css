@@ -313,3 +313,7 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .mc-det { display: grid; gap: 2px; margin: 4px 0 0 22px; font-size: 12.5px; }
 .mc-fuera { opacity: .55; }
 #tab-memoria .sap-form input, #tab-memoria .sap-form select { width: 280px; }
+
+.mc-empresa { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; align-items: start; }
+.mc-img img { max-width: 220px; max-height: 140px; display: block; margin: 4px 0 6px; border: 1px solid var(--borde); background: #fff; padding: 4px; }
+#mc-revisiones input { font-size: 12px; padding: 3px 4px; }

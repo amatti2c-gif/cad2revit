@@ -627,18 +627,37 @@
           <div class="mc-sub">Observaciones adicionales (una por línea)</div>
           <textarea id="mc-obs" rows="4" placeholder="Se agregan al final de las observaciones automáticas"></textarea>
         </div>
-        <div class="panel"><div class="panel-tit"><span>Portada y firma</span></div>
+        <div class="panel"><div class="panel-tit"><span>Portada</span></div>
           <div class="sap-form">
-            <label>Proyecto <input data-mc="proyecto" placeholder="nombre del proyecto en la app"></label>
+            <label>Título del proyecto (recuadro de la portada) <input data-mc="titulo" placeholder="VIVIENDA NUEVA Y LOCAL COMERCIAL"></label>
+            <label>Proyecto (nombre corto) <input data-mc="proyecto" placeholder="nombre del proyecto en la app"></label>
             <label>Ubicación <input data-mc="ubicacion" placeholder="Castro, Región de Los Lagos"></label>
-            <label>Descripción <input data-mc="descripcion" placeholder="según lo incluido"></label>
-            <label>Revisión <input data-mc="revision" value="A"></label>
+            <label>Versión <input data-mc="version" value="1"></label>
             <label>Fecha <input data-mc="fecha" type="date"></label>
-            <label>Empresa <input data-mc="empresa"></label>
-            <label>Ingeniero calculista <input data-mc="calculista"></label>
-            <label>RUT / registro <input data-mc="rut"></label>
-            <label>Título «resumida» <select data-mc="resumida"><option value="true" selected>sí</option><option value="false">no</option></select></label>
-          </div></div>
+            <label>Subtítulo «Resumida» <select data-mc="resumida"><option value="true" selected>sí</option><option value="false">no</option></select></label>
+          </div>
+          <div class="mc-sub">Tabla de revisiones (pie de la portada; la primera fila es la más reciente)</div>
+          <div class="tabla-wrap"><table class="tabla sap-tabla" id="mc-revisiones"></table></div>
+          <button class="sec" id="btn-mc-rev-agregar">+ Agregar revisión</button>
+        </div>
+      </div>
+      <div class="panel"><div class="panel-tit"><span>Empresa (logo y firma; comunes a todos los proyectos)</span>
+          <span class="acciones"><button class="sec" id="btn-emp-guardar">Guardar empresa</button></span></div>
+        <div class="mc-empresa">
+          <div class="mc-img"><div class="mc-sub">Logo (portada y encabezado)</div>
+            <img id="emp-logo" alt="Logo de la empresa" class="oculto"><span id="emp-logo-no" class="tenue">sin logo</span>
+            <div class="fila-sap"><label class="link">Subir logo<input id="inp-emp-logo" type="file" accept="image/png,image/jpeg" hidden></label>
+              <button class="sec" data-emp-quitar="logo">Quitar</button></div></div>
+          <div class="mc-img"><div class="mc-sub">Firma y timbre (al final de la memoria)</div>
+            <img id="emp-firma" alt="Firma del calculista" class="oculto"><span id="emp-firma-no" class="tenue">sin firma: se deja la línea para firmar</span>
+            <div class="fila-sap"><label class="link">Subir firma<input id="inp-emp-firma" type="file" accept="image/png,image/jpeg" hidden></label>
+              <button class="sec" data-emp-quitar="firma">Quitar</button></div></div>
+          <div class="sap-form">
+            <label>Empresa <input data-emp="nombre" placeholder="AMATT i2C SpA"></label>
+            <label>Ingeniero calculista <input data-emp="calculista"></label>
+            <label>RUT / registro <input data-emp="rut"></label>
+          </div>
+        </div>
       </div>
       <div class="panel"><div class="panel-tit"><span>Capítulos y detalles</span>
           <span class="acciones"><button class="sec" id="btn-mc-todo">Marcar todo</button></span></div>

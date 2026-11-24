@@ -2155,6 +2155,77 @@ def resultado_costaneras(pid: str, nombre: str):
     return json.loads(r.read_text(encoding="utf-8"))
 
 
+# ------------------------------------------------------------------ empresa: logo y firma (comunes a todos los proyectos)
+def _empresa_dir() -> Path:
+    d = _datos() / "empresa"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _empresa(con_imagenes: bool = False) -> dict:
+    d = _empresa_dir()
+    f = d / "empresa.json"
+    e = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    for k in ("logo", "firma"):
+        img = next((x for x in d.glob(f"{k}.*") if x.suffix.lower() in (".png", ".jpg", ".jpeg")), None)
+        e[k] = (img.read_bytes() if con_imagenes else True) if img else (None if con_imagenes else False)
+    return e
+
+
+class DatosEmpresa(BaseModel):
+    nombre: str = ""
+    calculista: str = ""
+    rut: str = ""
+
+
+@app.get("/api/empresa")
+def empresa_datos():
+    return _empresa()
+
+
+@app.put("/api/empresa")
+def empresa_guardar(datos: DatosEmpresa):
+    (_empresa_dir() / "empresa.json").write_text(json.dumps(datos.model_dump(), ensure_ascii=False), encoding="utf-8")
+    return _empresa()
+
+
+@app.post("/api/empresa/{tipo}")
+async def empresa_imagen(tipo: str, archivo: UploadFile = File(...)):
+    """Logo de la empresa o firma escaneada (PNG o JPG), para la portada, el encabezado y la firma de las memorias."""
+    if tipo not in ("logo", "firma"):
+        raise HTTPException(404, "Solo «logo» o «firma»")
+    datos = await archivo.read()
+    ext = ".png" if datos[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg" if datos[:3] == b"\xff\xd8\xff" else None
+    if not ext:
+        raise HTTPException(400, "La imagen debe ser PNG o JPG")
+    if len(datos) > 5_000_000:
+        raise HTTPException(400, "La imagen es muy grande (máx. 5 MB)")
+    d = _empresa_dir()
+    for x in d.glob(f"{tipo}.*"):
+        x.unlink()
+    (d / f"{tipo}{ext}").write_bytes(datos)
+    return _empresa()
+
+
+@app.get("/api/empresa/{tipo}")
+def empresa_ver_imagen(tipo: str):
+    if tipo not in ("logo", "firma"):
+        raise HTTPException(404, "Solo «logo» o «firma»")
+    img = next((x for x in _empresa_dir().glob(f"{tipo}.*")), None)
+    if not img:
+        raise HTTPException(404, f"No hay {tipo}")
+    return Response(img.read_bytes(), media_type="image/png" if img.suffix == ".png" else "image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.delete("/api/empresa/{tipo}", status_code=204)
+def empresa_borrar_imagen(tipo: str):
+    if tipo not in ("logo", "firma"):
+        raise HTTPException(404, "Solo «logo» o «firma»")
+    for x in _empresa_dir().glob(f"{tipo}.*"):
+        x.unlink()
+
+
 # ------------------------------------------------------------------ memoria de cálculo (pestaña 9)
 class PedidoMemoria(BaseModel):
     ejes: list[str] = []
@@ -2223,7 +2294,7 @@ def memoria_word(pid: str, pedido: PedidoMemoria):
         raise HTTPException(400, "Elige al menos un eje o un techo con resultados")
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     try:
-        contenido = generar_memoria(meta.get("nombre", pid), ejes, techos, pedido.opciones or {})
+        contenido = generar_memoria(meta.get("nombre", pid), ejes, techos, pedido.opciones or {}, _empresa(True))
     except (ValueError, TypeError, KeyError) as e:
         raise HTTPException(400, f"No se pudo armar la memoria: {e}")
     nombre_arch = re.sub(r"[^\w.\-]", "_", f"MC_{meta.get('nombre', pid)}.docx")

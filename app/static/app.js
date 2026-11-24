@@ -3293,9 +3293,13 @@ async function cargarMemoria() {
   $("#mc-obs").value = (g.opciones || {}).observaciones_extra || "";
   $$("[data-mc]").forEach(el => {
     const v = mc.opciones.datos[el.dataset.mc];
-    el.value = v != null ? String(v) : (el.dataset.mc === "revision" ? "A" : el.dataset.mc === "resumida" ? "true" : el.dataset.mc === "fecha" ? new Date().toISOString().slice(0, 10) : "");
+    el.value = v != null ? String(v) : (el.dataset.mc === "version" ? "1" : el.dataset.mc === "resumida" ? "true" : el.dataset.mc === "fecha" ? new Date().toISOString().slice(0, 10) : "");
   });
   if (!$('[data-mc="proyecto"]').value) $('[data-mc="proyecto"]').placeholder = c.proyecto;
+  if (!$('[data-mc="version"]').value) $('[data-mc="version"]').value = "1";
+  mc.revisiones = JSON.parse(JSON.stringify((g.opciones || {}).revisiones || REV_DEFECTO));
+  mcRevisiones();
+  await cargarEmpresa();
   mcFuentes();
   mcCapitulos();
 }
@@ -3340,8 +3344,49 @@ function mcPedido() {
   const datos = {};
   $$("[data-mc]").forEach(el => { const v = el.value.trim(); if (v !== "") datos[el.dataset.mc] = v === "true" ? true : v === "false" ? false : v; });
   return { ejes: [...mc.ejes], techos: [...mc.techos],
-    opciones: { capitulos: mc.opciones.capitulos, datos, alcance: $("#mc-alcance").value.trim(), observaciones_extra: $("#mc-obs").value } };
+    opciones: { capitulos: mc.opciones.capitulos, datos, alcance: $("#mc-alcance").value.trim(), observaciones_extra: $("#mc-obs").value,
+      revisiones: (mc.revisiones || []).filter(r => Object.values(r).some(v => String(v || "").trim())) } };
 }
+
+
+// ---- empresa (logo y firma) y tabla de revisiones de la portada
+const REV_DEFECTO = [{ rev: "0", comentario: "Aprobado Cliente" }, { rev: "B", ejecutor: "Andrés V.", comentario: "A Cliente" },
+  { rev: "A", comentario: "Coordinación Interna" }];
+async function cargarEmpresa() {
+  const e = await api("GET", "/api/empresa");
+  $$("[data-emp]").forEach(el => { el.value = e[el.dataset.emp] || ""; });
+  for (const k of ["logo", "firma"]) {
+    const img = $(`#emp-${k}`);
+    if (e[k]) { img.src = `/api/empresa/${k}?t=${Date.now()}`; img.classList.remove("oculto"); $(`#emp-${k}-no`).classList.add("oculto"); }
+    else { img.classList.add("oculto"); $(`#emp-${k}-no`).classList.remove("oculto"); }
+  }
+}
+for (const k of ["logo", "firma"]) {
+  $(`#inp-emp-${k}`).addEventListener("change", ev => intentar(async () => {
+    const f = ev.target.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("archivo", f);
+    await api("POST", `/api/empresa/${k}`, fd); ev.target.value = "";
+    await cargarEmpresa(); toast(k === "logo" ? "Logo guardado" : "Firma guardada");
+  }));
+}
+$$("[data-emp-quitar]").forEach(b => b.addEventListener("click", () => intentar(async () => {
+  await api("DELETE", `/api/empresa/${b.dataset.empQuitar}`); await cargarEmpresa();
+})));
+$("#btn-emp-guardar").addEventListener("click", () => intentar(async () => {
+  const d = {}; $$("[data-emp]").forEach(el => { d[el.dataset.emp] = el.value.trim(); });
+  await api("PUT", "/api/empresa", d); toast("Datos de la empresa guardados");
+}));
+
+function mcRevisiones() {
+  const campos = [["rev", "Rev.", 50], ["ejecutor", "Ejecutor", 110], ["fecha_ejecutor", "Fecha", 95], ["revisor", "Revisor", 110],
+    ["fecha_revisor", "Fecha", 95], ["aprobador", "Aprobador", 110], ["fecha_aprobador", "Fecha", 95], ["comentario", "Comentario", 150]];
+  $("#mc-revisiones").replaceChildren(
+    h("thead", {}, h("tr", {}, ...campos.map(c => h("th", {}, c[1])), h("th", {}, ""))),
+    h("tbody", {}, mc.revisiones.map((r, i) => h("tr", {}, ...campos.map(([k, , w]) => h("td", {},
+      h("input", { value: r[k] || "", style: `width:${w}px`, oninput: ev => { r[k] = ev.target.value; } }))),
+      h("td", {}, h("button", { class: "sec", title: "Quitar esta revisión", onclick: () => { mc.revisiones.splice(i, 1); mcRevisiones(); } }, "✕"))))));
+}
+$("#btn-mc-rev-agregar").addEventListener("click", () => { mc.revisiones.unshift({ rev: "", comentario: "" }); mcRevisiones(); });
 
 $$("[data-mc-preset]").forEach(b => b.addEventListener("click", () => {
   const pr = mc.cfg.presets[b.dataset.mcPreset] || {};
