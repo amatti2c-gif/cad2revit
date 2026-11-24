@@ -71,17 +71,23 @@ def _viga_sobre_resortes(xs: np.ndarray, EI: float, k_lin: float, P: np.ndarray,
     """Viga de Euler-Bernoulli con resortes verticales en los nudos que solo trabajan en compresión.
     P: fuerza vertical en cada nudo (+ hacia arriba), M: momento (+ antihorario). k_lin: tonf/m² (ks·B).
     Devuelve v (+ arriba), q (presión, + compresión, tonf/m), activos y esfuerzos internos por nudo."""
+    import scipy.sparse as sp
+    import scipy.sparse.linalg as spl
     n = len(xs)
     trib = np.zeros(n)
     trib[:-1] += np.diff(xs) / 2
     trib[1:] += np.diff(xs) / 2
-    K = np.zeros((2 * n, 2 * n))
+    # matriz de rigidez en banda, armada una vez en formato disperso (2 grados de libertad por nudo)
+    filas, cols, vals = [], [], []
     for e in range(n - 1):
         L = xs[e + 1] - xs[e]
         k = EI / L ** 3 * np.array([[12, 6 * L, -12, 6 * L], [6 * L, 4 * L ** 2, -6 * L, 2 * L ** 2],
                                     [-12, -6 * L, 12, -6 * L], [6 * L, 2 * L ** 2, -6 * L, 4 * L ** 2]])
         g = [2 * e, 2 * e + 1, 2 * e + 2, 2 * e + 3]
-        K[np.ix_(g, g)] += k
+        for a_ in range(4):
+            for b_ in range(4):
+                filas.append(g[a_]); cols.append(g[b_]); vals.append(k[a_, b_])
+    K = sp.csc_matrix((vals, (filas, cols)), shape=(2 * n, 2 * n))
     F = np.zeros(2 * n)
     F[0::2] = P
     F[1::2] = M
@@ -89,12 +95,15 @@ def _viga_sobre_resortes(xs: np.ndarray, EI: float, k_lin: float, P: np.ndarray,
     v = np.zeros(n)
     estable = True
     for _ in range(max_iter):
-        Kt = K.copy()
-        idx = np.arange(n)[activos] * 2
-        Kt[idx, idx] += k_lin * trib[activos]
+        resortes = np.zeros(2 * n)
+        resortes[np.arange(n)[activos] * 2] = k_lin * trib[activos]
+        Kt = (K + sp.diags(resortes)).tocsc()
         try:
-            d = np.linalg.solve(Kt, F)
-        except np.linalg.LinAlgError:
+            with np.errstate(all="raise"):
+                d = spl.spsolve(Kt, F)
+            if not np.all(np.isfinite(d)):
+                raise np.linalg.LinAlgError
+        except (np.linalg.LinAlgError, FloatingPointError, RuntimeError):
             estable = False
             break
         v = d[0::2]

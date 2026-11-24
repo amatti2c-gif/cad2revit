@@ -15,6 +15,10 @@ Variables de entorno:
 """
 from __future__ import annotations
 
+import os as _os
+for _v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+    _os.environ.setdefault(_v, "1")          # antes de cargar numpy: un hilo de álgebra lineal (ver Dockerfile)
+
 import base64
 import binascii
 import difflib

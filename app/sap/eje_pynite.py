@@ -111,6 +111,17 @@ def _txy_global(q, combo) -> float:
     return float(_s_global(q, combo)[0, 1])
 
 
+def _unpartition_rapido(model, V1, V2, V1_indices, V2_indices):
+    """Igual que Pynite.Analysis._unpartition (vector global desde los grados de libertad libres y restringidos), con
+    índices de numpy en vez de list.index (que es cuadrático en el número de grados de libertad)."""
+    V = np.zeros((len(model.nodes) * 6, 1))
+    if len(V2_indices):
+        V[np.asarray(V2_indices, dtype=int), 0] = np.asarray(V2, float).reshape(-1)[:len(V2_indices)]
+    if len(V1_indices):
+        V[np.asarray(V1_indices, dtype=int), 0] = np.asarray(V1, float).reshape(-1)[:len(V1_indices)]
+    return V
+
+
 def _reacciones(m, combos):
     """Reacciones en los apoyos (RxnFX… de cada nudo) para las combinaciones dadas: R = K·D + FER − P."""
     if not combos:
@@ -129,6 +140,7 @@ def _reacciones(m, combos):
             apoyo = (nd.support_DX, nd.support_DY, nd.support_DZ, nd.support_RX, nd.support_RY, nd.support_RZ)
             for k, att in enumerate(nombres):
                 getattr(nd, att)[c] = float(R[i + k]) if apoyo[k] else 0.0
+    return K
 
 
 def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
@@ -265,16 +277,19 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     paso(5, f"Análisis estático: {len(estaticos)} casos de carga", 75)
     # PyNite calcula las reacciones sumando las fuerzas de cada elemento en cada combinación (lento con muchos shells);
     # aquí se calculan igual, R = K·D + FER − P en los grados de libertad con apoyo, con K armada una sola vez
+    # _unpartition de PyNite se reemplaza por la versión vectorizada (mismo resultado) para todo el proceso
     _calc_original = Analysis._calc_reactions
     Analysis._calc_reactions = lambda *a_, **k_: None
+    Analysis._unpartition = _unpartition_rapido
     try:
         m.analyze_linear(check_statics=False)
     finally:
         Analysis._calc_reactions = _calc_original
-    _reacciones(m, estaticos)
+    K_global = _reacciones(m, estaticos)
     paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
-    K11, _, K21, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
+    K11, _, K21, _ = Analysis._partition(m, K_global if K_global is not None else m.Ke("DEAD", False, True, sparse=True).tocsr(),
+                                         D1_idx, D2_idx)
     if masa != "consistente":
         Mg = _masa_concentrada(m, peso_nudo)
     else:
@@ -408,8 +423,16 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
     signo_z[signo_z == 0] = 1
 
     # ---- fuerzas en las barras: casos estáticos y envolvente E (CQC), en n_puntos por barra ----
+    sin_cargas = set(modos_combo) | {"_RESZ"}                         # combinaciones de modos: sin cargas en barras
+    t_unit = np.linspace(0.0, 1.0, n_puntos)
+
     def fuerzas(f, combo):
         mb = m.members[f]
+        if combo in sin_cargas:
+            # barra sin carga repartida: axial y corte constantes y momento lineal, desde las fuerzas en los extremos
+            # (una sola llamada a PyNite; misma convención que axial/shear/moment: N = Fxi, V = Fyi, M = Mzi … −Mzj)
+            fl = np.asarray(mb.f(combo)).ravel()
+            return (np.full(n_puntos, fl[0]), np.full(n_puntos, fl[1]), fl[5] + (-fl[11] - fl[5]) * t_unit)
         L = mb.L()
         xs = np.linspace(0, L, n_puntos)
         return (np.array([mb.axial(x, combo) for x in xs]), np.array([mb.shear("Fy", x, combo) for x in xs]),

@@ -33,5 +33,8 @@ RUN pip install --no-cache-dir ./parser -r app/requirements.txt
 COPY . .
 
 ENV CAD2REVIT_DATOS=/datos
+# álgebra lineal con un hilo: el contenedor tiene una fracción de los procesadores de la máquina y OpenBLAS, por
+# defecto, abre un hilo por cada procesador físico; los hilos compiten y cada resolución se vuelve muy lenta
+ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
 EXPOSE 8000
 CMD ["sh", "-c", "python -m uvicorn app.servidor:app --host 0.0.0.0 --port ${PORT:-8000}"]
