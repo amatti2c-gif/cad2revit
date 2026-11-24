@@ -340,3 +340,7 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .sap-menu button { text-align: left; background: none; border: 0; padding: 5px 8px; border-radius: 4px; cursor: pointer; font: inherit; }
 .sap-menu button:hover { background: rgba(45,108,223,.1); }
 .sap-menu button.activo { font-weight: 600; color: #1f4e9c; }
+
+.mc-final { margin-top: 8px; font-size: 13px; }
+#mc-final-lista { margin: 6px 0 0 22px; font-size: 12.5px; }
+#mc-final-lista ul { margin: 4px 0 0; padding-left: 18px; }

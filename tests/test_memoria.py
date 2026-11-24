@@ -52,3 +52,17 @@ def test_figuras_en_su_capitulo():
     assert i_fig > i_cos
     assert any("Figuras complementarias" in t for t in textos) and "Figura 2: Corte" in textos
     assert len(d.inline_shapes) == 2
+
+
+def test_version_final_sin_observaciones_pendientes():
+    res = analizar_costaneras(_techo(), ParametrosCostaneras(ids=[100], apoyos_editados={"100": {"agregar": [2.5]}}))
+    techo = [{"nombre": "t", "resultado": res}]
+    texto = lambda o: " ".join(p.text for p in Document(io.BytesIO(generar_memoria("P", [], techo, o))).paragraphs)
+    o = opciones_por_defecto()
+    o["observaciones_extra"] = "Nota propia"
+    borrador = texto(o)
+    assert "Antes de emitir la memoria definitiva" in borrador and "cambiados a mano" in borrador
+    o["final"] = True
+    final = texto(o)
+    assert "Antes de emitir" not in final and "cambiados a mano" not in final and "No se verific" not in final
+    assert "Nota propia" in final and "Notas:" in final

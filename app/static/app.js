@@ -3485,6 +3485,7 @@ async function cargarMemoria() {
   mc.ejes = new Set(g.ejes?.length ? g.ejes : c.ejes.filter(e => e.analizado).map(e => e.nombre));
   mc.techos = new Set(g.techos?.length ? g.techos : c.techos.filter(t => t.verificado).map(t => t.nombre));
   $("#mc-alcance").value = (g.opciones || {}).alcance || "";
+  $("#mc-final").checked = !!(g.opciones || {}).final;
   $("#mc-obs").value = (g.opciones || {}).observaciones_extra || "";
   $$("[data-mc]").forEach(el => {
     const v = mc.opciones.datos[el.dataset.mc];
@@ -3501,6 +3502,7 @@ async function cargarMemoria() {
   mcFuentes();
   mcCapitulos();
   await mcCargarImagenes();
+  intentar(mcFinalLista);
 }
 
 function mcFuentes() {
@@ -3538,6 +3540,7 @@ function mcCapitulos() {
   }));
   $("#mc-estado").textContent = `${n} capítulo(s) · ${mc.ejes.size} eje(s) · ${mc.techos.size} techo(s)`;
   mcEstadoImagenes();
+  if ($("#mc-final")?.checked) intentar(mcFinalLista);
 }
 
 function mcPedido() {
@@ -3545,6 +3548,7 @@ function mcPedido() {
   $$("[data-mc]").forEach(el => { const v = el.value.trim(); if (v !== "") datos[el.dataset.mc] = v === "true" ? true : v === "false" ? false : v; });
   return { ejes: [...mc.ejes], techos: [...mc.techos],
     opciones: { capitulos: mc.opciones.capitulos, datos, alcance: $("#mc-alcance").value.trim(), observaciones_extra: $("#mc-obs").value,
+      final: $("#mc-final").checked,
       revisiones: (mc.revisiones || []).filter(r => Object.values(r).some(v => String(v || "").trim())),
       imagenes: mcImagenesVisibles().filter(d => mc.imagenes[d.id]?.incluir).map(d => ({ id: d.id, incluir: true,
         leyenda: mc.imagenes[d.id].leyenda ?? d.leyenda, capitulo: mc.imagenes[d.id].capitulo || d.capitulo })) } };
@@ -3607,6 +3611,24 @@ $("#inp-mc-img").addEventListener("change", ev => intentar(async () => {
 }));
 $("#btn-mc-img-todas").addEventListener("click", () => { for (const d of mcImagenesVisibles()) (mc.imagenes[d.id] ||= { leyenda: d.leyenda, capitulo: d.capitulo }).incluir = true; mcImagenes(); });
 $("#btn-mc-img-ninguna").addEventListener("click", () => { for (const o of Object.values(mc.imagenes || {})) o.incluir = false; mcImagenes(); });
+
+
+// ---- versión final: lista de lo que se omite (y aviso de verificaciones que no cumplen)
+async function mcFinalLista() {
+  const caja = $("#mc-final-lista");
+  if (!$("#mc-final").checked) { caja.classList.add("oculto"); return; }
+  caja.classList.remove("oculto");
+  caja.replaceChildren(h("span", { class: "tenue" }, "Revisando las observaciones…"));
+  const p = mcPedido();
+  const obs = await api("POST", P("/memoria/observaciones"), p);
+  if (!obs.length) { caja.replaceChildren(h("span", { class: "cumple" }, "No hay observaciones pendientes: la memoria queda lista para emitir.")); return; }
+  const graves = obs.filter(o => o.no_cumple);
+  caja.replaceChildren(
+    graves.length ? h("div", { class: "nocumple" }, `Atención: ${graves.length} de estas observaciones son verificaciones que no cumplen. La versión final no las menciona, pero el resultado no cambia: resuélvelas antes de emitir.`) : null,
+    h("div", { class: "tenue" }, `Se omitirán ${obs.length} observación(es):`),
+    h("ul", {}, obs.map(o => h("li", { class: o.no_cumple ? "nocumple" : "tenue" }, h("strong", {}, o.titulo + ". "), o.texto))));
+}
+$("#mc-final").addEventListener("change", () => intentar(mcFinalLista));
 
 // ---- empresa (logo y firma) y tabla de revisiones de la portada
 const REV_DEFECTO = [{ rev: "0", comentario: "Aprobado Cliente" }, { rev: "B", ejecutor: "Andrés V.", comentario: "A Cliente" },

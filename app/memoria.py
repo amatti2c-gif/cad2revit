@@ -691,6 +691,8 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
             r = techos[0]["resultado"]
             D.p("Cargas de las costaneras:")
             for t in r.get("resumen") or []:
+                if opciones.get("final") and t.startswith("No se verific"):
+                    continue
                 D.vineta(t)
 
     # ---- combinaciones
@@ -886,15 +888,18 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
             resumen.append(f"presión de contacto {f(max(e['fundacion']['resumen_suelo'].get('FU_presion_max') or 0 for e in con_fun) * 100, 0)} % de la admisible")
         if techos:
             resumen.append(f"FU máximo de costaneras {f(max((c['FU'] for t in techos for c in t['resultado'].get('costaneras') or [] if c.get('FU') is not None), default=None))}")
-        obs = observaciones(ejes, techos, caps) if inc("conclusiones", "automaticas") else []
+        final = bool(opciones.get("final"))
+        # versión final: sin las observaciones de temas pendientes o no cubiertos (solo el resumen y las notas propias)
+        obs = observaciones(ejes, techos, caps) if inc("conclusiones", "automaticas") and not final else []
+        extra = [x.strip() for x in (opciones.get("observaciones_extra") or "").splitlines() if x.strip()]
         if resumen:
             D.p("Con los datos ingresados: " + "; ".join(resumen) + "."
-                + (" Antes de emitir la memoria definitiva deben resolverse las siguientes observaciones:" if obs or opciones.get("observaciones_extra") else ""))
+                + (" Antes de emitir la memoria definitiva deben resolverse las siguientes observaciones:" if (obs or extra) and not final
+                   else (" Notas:" if extra else "")))
         for titulo, texto in obs:
             D.numerado((titulo + ". ",), texto)
-        for linea in (opciones.get("observaciones_extra") or "").splitlines():
-            if linea.strip():
-                D.numerado(linea.strip())
+        for linea in extra:
+            D.numerado(linea)
 
     # figuras que aún no se pusieron (capítulo final o sin conclusiones)
     D.vaciar(getattr(D, "clave", None))

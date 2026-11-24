@@ -2425,6 +2425,39 @@ def memoria_borrar_imagen(pid: str, nombre: str):
         mp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
 
 
+def _fuentes_memoria(d: Path, pedido: "PedidoMemoria"):
+    leer = lambda f: json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+    ejes = []
+    for nombre in pedido.ejes:
+        f = _eje_sap(d, nombre)
+        res = leer(f.with_name(nombre + ".resultado.json"))
+        if res:
+            ejes.append({"nombre": nombre, "eje": leer(f), "ajustes": _ajustes_eje(f), "resultado": res,
+                         "fundacion": leer(f.with_name(nombre + ".fundacion.json"))})
+    techos = []
+    for nombre in pedido.techos:
+        f = _costaneras(d, nombre)
+        res = leer(f.with_name(nombre + ".resultado.json"))
+        if res:
+            techos.append({"nombre": nombre, "resultado": res})
+    return ejes, techos
+
+
+@app.post("/api/proyectos/{pid}/memoria/observaciones")
+def memoria_observaciones(pid: str, pedido: PedidoMemoria):
+    """Observaciones automáticas (temas pendientes o no cubiertos) de la selección, para mostrarlas antes de emitir la
+    versión final; «no_cumple» marca las verificaciones que no pasan."""
+    from app.memoria import observaciones, opciones_por_defecto
+    ejes, techos = _fuentes_memoria(_proyecto(pid), pedido)
+    caps = opciones_por_defecto()["capitulos"]
+    for k, v in ((pedido.opciones or {}).get("capitulos") or {}).items():
+        if k in caps:
+            caps[k].update(v if isinstance(v, dict) else {"incluir": bool(v)})
+    graves = ("No cumplen", "que no cumplen", "Deslizamiento", "Área en compresión", "Presión de contacto",
+              "Estabilidad", "Hormigón de la fundación")
+    return [{"titulo": t, "texto": x, "no_cumple": any(g in t for g in graves)} for t, x in observaciones(ejes, techos, caps)]
+
+
 @app.post("/api/proyectos/{pid}/memoria/word")
 def memoria_word(pid: str, pedido: PedidoMemoria):
     """Memoria de cálculo en Word con los ejes, fundaciones y costaneras elegidos y los capítulos activados."""
