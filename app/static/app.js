@@ -2069,7 +2069,7 @@ async function abrirEjeSap(nombre) {
   sap.auto = null;
   if (res && !res.desactualizado) sapMostrarNube(res);
   // recién llegado desde Revit sin análisis, o resultado de una versión anterior del cálculo: se analiza de nuevo
-  else if (desdeRevit || res) await sapNube();
+  else if ((desdeRevit || res) && $("#tab-sap").classList.contains("activa")) await sapNube();
 }
 
 async function sapActualizar() {
@@ -2692,8 +2692,17 @@ async function conAvance(p, rutaAvance, boton, tarea) {
 async function funAnalizar() {
   if (!sap.nombre) throw new Error("Elige un eje (pestaña 6)");
   await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
-  $("#fun-estado").textContent = "Analizando la fundación…";
   const nombre = sap.nombre;
+  // el eje sin análisis vigente: se analiza primero (con la barra de esta pestaña) y después la fundación
+  let vigente = false;
+  try { vigente = !(await api("GET", P(`/sap/${encodeURIComponent(nombre)}/resultado`))).desactualizado; } catch { /* sin análisis */ }
+  if (!vigente) {
+    $("#fun-estado").textContent = "Analizando el eje (sus reacciones son las cargas de la fundación)…";
+    const res = await conAvance("fun", P(`/sap/${encodeURIComponent(nombre)}/avance`), $("#btn-fundacion"),
+      () => api("POST", P(`/sap/${encodeURIComponent(nombre)}/analizar`), sapAjustes()));
+    if (typeof sapMostrarNube === "function") try { sapMostrarNube(res); } catch { /* la pestaña 6 se actualiza al abrirla */ }
+  }
+  $("#fun-estado").textContent = "Analizando la fundación…";
   const d = await conAvance("fun", P(`/sap/${encodeURIComponent(nombre)}/fundacion/avance`), $("#btn-fundacion"),
     () => api("POST", P(`/sap/${encodeURIComponent(nombre)}/fundacion`), { parametros: sapParametros().fundacion || {} }));
   funMostrar(d);

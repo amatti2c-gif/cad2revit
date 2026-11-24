@@ -111,6 +111,26 @@ def _txy_global(q, combo) -> float:
     return float(_s_global(q, combo)[0, 1])
 
 
+def _reacciones(m, combos):
+    """Reacciones en los apoyos (RxnFX… de cada nudo) para las combinaciones dadas: R = K·D + FER − P."""
+    if not combos:
+        return
+    K = m.Ke(combos[0], False, False, sparse=True).tocsr()
+    n = len(m.nodes) * 6
+    nombres = ("RxnFX", "RxnFY", "RxnFZ", "RxnMX", "RxnMY", "RxnMZ")
+    for c in combos:
+        D = np.zeros(n)
+        for nd in m.nodes.values():
+            i = nd.ID * 6
+            D[i:i + 6] = (nd.DX[c], nd.DY[c], nd.DZ[c], nd.RX[c], nd.RY[c], nd.RZ[c])
+        R = K @ D + np.asarray(m.FER(c)).ravel() - np.asarray(m.P(c)).ravel()
+        for nd in m.nodes.values():
+            i = nd.ID * 6
+            apoyo = (nd.support_DX, nd.support_DY, nd.support_DZ, nd.support_RX, nd.support_RY, nd.support_RZ)
+            for k, att in enumerate(nombres):
+                getattr(nd, att)[c] = float(R[i + k]) if apoyo[k] else 0.0
+
+
 def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None = None, n_puntos: int = 9,
              avance=None, limites: dict | None = None, masa: str = "concentrada", ry: float = 1.5) -> dict:
     """mod: eje_revit.ModeloEje; cargas: eje_cargas.CargasEje; pc: ParametrosCargas.
@@ -243,7 +263,15 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
 
     # ---- modal (masa = DEAD) y espectro NCh433:2026 con CQC ----
     paso(5, f"Análisis estático: {len(estaticos)} casos de carga", 75)
-    m.analyze_linear(check_statics=False)
+    # PyNite calcula las reacciones sumando las fuerzas de cada elemento en cada combinación (lento con muchos shells);
+    # aquí se calculan igual, R = K·D + FER − P en los grados de libertad con apoyo, con K armada una sola vez
+    _calc_original = Analysis._calc_reactions
+    Analysis._calc_reactions = lambda *a_, **k_: None
+    try:
+        m.analyze_linear(check_statics=False)
+    finally:
+        Analysis._calc_reactions = _calc_original
+    _reacciones(m, estaticos)
     paso(75, "Análisis modal (masa del peso propio)", 80)
     D1_idx, D2_idx, D2 = Analysis._partition_D(m)
     K11, _, K21, _ = Analysis._partition(m, m.Ke("DEAD", False, True, sparse=True).tocsr(), D1_idx, D2_idx)
