@@ -3298,16 +3298,20 @@ async function cargarMemoria() {
   if (!$('[data-mc="proyecto"]').value) $('[data-mc="proyecto"]').placeholder = c.proyecto;
   if (!$('[data-mc="version"]').value) $('[data-mc="version"]').value = "1";
   mc.revisiones = JSON.parse(JSON.stringify((g.opciones || {}).revisiones || REV_DEFECTO));
+  mc.imagenes = {};
+  for (const im of (g.opciones || {}).imagenes || []) mc.imagenes[im.id] = { incluir: im.incluir !== false, leyenda: im.leyenda, capitulo: im.capitulo };
+  mcOpcionesCap($("#mc-img-cap"), "antecedentes");
   mcRevisiones();
   await cargarEmpresa();
   mcFuentes();
   mcCapitulos();
+  await mcCargarImagenes();
 }
 
 function mcFuentes() {
   const c = mc.cfg, fecha = x => x ? x.slice(0, 16).replace("T", " ") : "";
   const item = (set, nombre, ok, texto) => h("label", { class: "mc-item" + (ok ? "" : " tenue") },
-    h("input", { type: "checkbox", checked: set.has(nombre) && ok, disabled: !ok, onchange: ev => { ev.target.checked ? set.add(nombre) : set.delete(nombre); mcCapitulos(); } }),
+    h("input", { type: "checkbox", checked: set.has(nombre) && ok, disabled: !ok, onchange: ev => { ev.target.checked ? set.add(nombre) : set.delete(nombre); mcCapitulos(); mcImagenes(); } }),
     ` ${nombre} `, h("span", { class: "tenue" }, texto));
   $("#mc-ejes").replaceChildren(...(c.ejes.length ? c.ejes.map(e => item(mc.ejes, e.nombre, e.analizado,
     e.analizado ? `· analizado ${fecha(e.fecha)}${e.vigente ? "" : " (versión anterior: vuelve a analizar)"}${e.fundacion ? " · con fundación" : " · sin fundación"}` : "· sin análisis (pestaña 6)"))
@@ -3338,6 +3342,7 @@ function mcCapitulos() {
     return fila;
   }));
   $("#mc-estado").textContent = `${n} capítulo(s) · ${mc.ejes.size} eje(s) · ${mc.techos.size} techo(s)`;
+  mcEstadoImagenes();
 }
 
 function mcPedido() {
@@ -3345,9 +3350,68 @@ function mcPedido() {
   $$("[data-mc]").forEach(el => { const v = el.value.trim(); if (v !== "") datos[el.dataset.mc] = v === "true" ? true : v === "false" ? false : v; });
   return { ejes: [...mc.ejes], techos: [...mc.techos],
     opciones: { capitulos: mc.opciones.capitulos, datos, alcance: $("#mc-alcance").value.trim(), observaciones_extra: $("#mc-obs").value,
-      revisiones: (mc.revisiones || []).filter(r => Object.values(r).some(v => String(v || "").trim())) } };
+      revisiones: (mc.revisiones || []).filter(r => Object.values(r).some(v => String(v || "").trim())),
+      imagenes: mcImagenesVisibles().filter(d => mc.imagenes[d.id]?.incluir).map(d => ({ id: d.id, incluir: true,
+        leyenda: mc.imagenes[d.id].leyenda ?? d.leyenda, capitulo: mc.imagenes[d.id].capitulo || d.capitulo })) } };
 }
 
+
+
+// ---- imágenes de la memoria
+async function mcCargarImagenes() {
+  mc.disponibles = await api("GET", P("/memoria/imagenes"));
+  mcImagenes();
+}
+function mcOpcionesCap(sel, valor) {
+  sel.replaceChildren(...mc.cfg.capitulos.filter(c => c.clave !== "firma").map(c => h("option", { value: c.clave }, c.titulo)));
+  sel.value = valor || "antecedentes";
+}
+function mcImagenes() {
+  const caja = $("#mc-imagenes");
+  const lista = mcImagenesVisibles();
+  if (!lista.length) { caja.replaceChildren(h("span", { class: "tenue" }, "No hay imágenes de los ejes y techos elegidos: analiza un eje, verifica costaneras o sube una imagen.")); mcEstadoImagenes(); return; }
+  const origen = { app: "dibujada por la app", revit: "exportada de Revit", usuario: "subida" };
+  caja.replaceChildren(...lista.map(im => {
+    const o = mc.imagenes[im.id] || (mc.imagenes[im.id] = { incluir: false, leyenda: im.leyenda, capitulo: im.capitulo });
+    const sel = h("select", { onchange: ev => { o.capitulo = ev.target.value; } });
+    mcOpcionesCap(sel, o.capitulo);
+    const url = P(`/memoria/imagen?id=${encodeURIComponent(im.id)}`);
+    return h("div", { class: "mc-img-card" + (o.incluir ? " elegida" : "") },
+      h("label", { class: "mc-img-tit" }, h("input", { type: "checkbox", checked: o.incluir,
+        onchange: ev => { o.incluir = ev.target.checked; ev.target.closest(".mc-img-card").classList.toggle("elegida", o.incluir); mcEstadoImagenes(); } }),
+        ` ${im.titulo}`),
+      h("a", { href: url, target: "_blank", title: "Ver en tamaño completo" }, h("img", { src: url, loading: "lazy", alt: im.titulo })),
+      h("div", { class: "tenue" }, origen[im.origen] || ""),
+      h("input", { value: o.leyenda || "", placeholder: "Leyenda", oninput: ev => { o.leyenda = ev.target.value; } }),
+      h("div", { class: "fila-sap" }, h("span", { class: "tenue" }, "Capítulo"), sel,
+        im.origen === "usuario" ? h("button", { class: "sec", title: "Eliminar esta imagen", onclick: () => intentar(async () => {
+          if (!confirm("¿Eliminar esta imagen?")) return;
+          await api("DELETE", P(`/memoria/imagenes/${encodeURIComponent(im.fuente)}`)); delete mc.imagenes[im.id]; await mcCargarImagenes();
+        }) }, "✕") : null));
+  }));
+  mcEstadoImagenes();
+}
+// solo las imágenes de los ejes y techos elegidos (y las subidas)
+function mcImagenesVisibles() {
+  return (mc.disponibles || []).filter(d => d.origen === "usuario" || mc.ejes.has(d.fuente) || mc.techos.has(d.fuente));
+}
+function mcEstadoImagenes() {
+  const n = mcImagenesVisibles().filter(d => mc.imagenes?.[d.id]?.incluir).length;
+  const t = $("#mc-estado").textContent.replace(/ · \d+ imagen\(es\)$/, "");
+  $("#mc-estado").textContent = `${t} · ${n} imagen(es)`;
+}
+$("#inp-mc-img").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("archivo", f); fd.append("titulo", $("#mc-img-titulo").value.trim()); fd.append("capitulo", $("#mc-img-cap").value);
+  const r = await api("POST", P("/memoria/imagenes"), fd);
+  ev.target.value = ""; $("#mc-img-titulo").value = "";
+  mc.imagenes[r.id] = { incluir: true, leyenda: null, capitulo: null };
+  await mcCargarImagenes();
+  const d = mc.disponibles.find(x => x.id === r.id); if (d) Object.assign(mc.imagenes[r.id], { leyenda: d.leyenda, capitulo: d.capitulo });
+  mcImagenes(); toast("Imagen subida y elegida");
+}));
+$("#btn-mc-img-todas").addEventListener("click", () => { for (const d of mcImagenesVisibles()) (mc.imagenes[d.id] ||= { leyenda: d.leyenda, capitulo: d.capitulo }).incluir = true; mcImagenes(); });
+$("#btn-mc-img-ninguna").addEventListener("click", () => { for (const o of Object.values(mc.imagenes || {})) o.incluir = false; mcImagenes(); });
 
 // ---- empresa (logo y firma) y tabla de revisiones de la portada
 const REV_DEFECTO = [{ rev: "0", comentario: "Aprobado Cliente" }, { rev: "B", ejecutor: "Andrés V.", comentario: "A Cliente" },
@@ -3395,7 +3459,7 @@ $$("[data-mc-preset]").forEach(b => b.addEventListener("click", () => {
   if (pr.costaneras === false) mc.techos.clear();
   if (b.dataset.mcPreset === "costaneras") mc.ejes.clear();
   else if (!mc.ejes.size) mc.cfg.ejes.filter(e => e.analizado).forEach(e => mc.ejes.add(e.nombre));
-  mcFuentes(); mcCapitulos();
+  mcFuentes(); mcCapitulos(); mcImagenes();
   toast(`Configuración: ${b.textContent}`);
 }));
 $("#btn-mc-todo").addEventListener("click", () => {

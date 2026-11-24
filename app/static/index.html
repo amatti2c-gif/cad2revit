@@ -659,6 +659,17 @@
           </div>
         </div>
       </div>
+      <div class="panel"><div class="panel-tit"><span>Imágenes</span>
+          <span class="acciones"><button class="sec" id="btn-mc-img-todas">Elegir todas</button>
+            <button class="sec" id="btn-mc-img-ninguna">Ninguna</button></span></div>
+        <p class="tenue">Elige las figuras que van en la memoria; cada una se pone al final del capítulo indicado, numerada,
+          con su leyenda (editable). Las de la app se dibujan con los resultados guardados; el detalle de armaduras viene de
+          Revit («Eje a análisis»). También puedes subir imágenes propias (render, planos, fotos).</p>
+        <div class="fila-sap mc-subir"><label class="link">Subir imagen<input id="inp-mc-img" type="file" accept="image/png,image/jpeg" hidden></label>
+          <label>Leyenda <input id="mc-img-titulo" placeholder="Ej.: Vista 3D del modelo en Revit" style="width:260px"></label>
+          <label>Capítulo <select id="mc-img-cap"></select></label></div>
+        <div id="mc-imagenes" class="mc-imagenes"></div>
+      </div>
       <div class="panel"><div class="panel-tit"><span>Capítulos y detalles</span>
           <span class="acciones"><button class="sec" id="btn-mc-todo">Marcar todo</button></span></div>
         <div id="mc-capitulos" class="mc-capitulos"></div>

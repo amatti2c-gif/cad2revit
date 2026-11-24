@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -2268,6 +2268,133 @@ def memoria_guardar(pid: str, pedido: PedidoMemoria):
     return {"ok": True}
 
 
+# ---- imágenes de la memoria: figuras de la app (dibujadas con los resultados), detalle de Revit y subidas
+_IMG_TIPOS = {
+    "modelo": ("Modelo computacional", "modelo", "Modelo computacional del {n}: barras de acero y muros de marco plataforma como lámina"),
+    "modo1": ("Modo fundamental", "modelo", "Forma del modo fundamental del {n}"),
+    "diseno": ("Razones de diseño", "acero", "Razones de diseño del {n}: acero (AISC 360-16) y muros de madera"),
+    "corte_fun": ("Corte del sobrecimiento", "fundacion", "Corte del sobrecimiento del {n}: geometría y armaduras"),
+    "presiones": ("Presiones de contacto", "fundacion", "Presión de contacto bajo la fundación del {n} (combinación de servicio más desfavorable)"),
+    "detalle": ("Detalle de armaduras (Revit)", "fundacion", "Detalle de armaduras del sobrecimiento del {n} (Revit)"),
+    "planta_cos": ("Planta de costaneras", "costaneras", "Planta de costaneras ({n}): vigas de apoyo, costaneras verificadas y su FU"),
+    "momentos_cos": ("Momentos de la costanera más solicitada", "costaneras", "Envolvente de momentos mayorados de la costanera más solicitada ({n})"),
+}
+
+
+def _img_usuario_dir(d: Path) -> Path:
+    x = d / "memoria_imgs"
+    x.mkdir(exist_ok=True)
+    return x
+
+
+def _imagenes_disponibles(d: Path) -> list[dict]:
+    out = []
+    for f in sorted((d / "sap").glob("*.sap.json")):
+        n = f.name[: -len(".sap.json")]
+        etiqueta = n.replace("eje-", "eje ")
+        res = f.with_name(n + ".resultado.json").is_file()
+        fun = f.with_name(n + ".fundacion.json").is_file()
+        for tipo, ok in (("modelo", res), ("modo1", res), ("diseno", res), ("corte_fun", fun), ("presiones", fun),
+                         ("detalle", f.with_name(n + ".detalle.png").is_file())):
+            if ok:
+                t, cap, ley = _IMG_TIPOS[tipo]
+                out.append({"id": f"{tipo}|{n}", "titulo": f"{t} · {etiqueta}", "capitulo": cap, "leyenda": ley.format(n=etiqueta),
+                            "origen": "revit" if tipo == "detalle" else "app", "fuente": n})
+    for f in sorted((d / "costaneras").glob("*.costaneras.json")):
+        n = f.name[: -len(".costaneras.json")]
+        if f.with_name(n + ".resultado.json").is_file():
+            for tipo in ("planta_cos", "momentos_cos"):
+                t, cap, ley = _IMG_TIPOS[tipo]
+                out.append({"id": f"{tipo}|{n}", "titulo": f"{t} · {n}", "capitulo": cap, "leyenda": ley.format(n=n),
+                            "origen": "app", "fuente": n})
+    u = _img_usuario_dir(d)
+    meta = json.loads((u / "meta.json").read_text(encoding="utf-8")) if (u / "meta.json").is_file() else {}
+    for f in sorted(u.iterdir()):
+        if f.suffix.lower() in (".png", ".jpg", ".jpeg"):
+            m = meta.get(f.name, {})
+            out.append({"id": f"usuario|{f.name}", "titulo": m.get("titulo") or f.name, "capitulo": m.get("capitulo") or "antecedentes",
+                        "leyenda": m.get("titulo") or "", "origen": "usuario", "fuente": f.name})
+    return out
+
+
+def _imagen_png(d: Path, ident: str) -> bytes:
+    from app import figuras as F
+    tipo, _, n = ident.partition("|")
+    leer = lambda p: json.loads(p.read_text(encoding="utf-8"))
+    if tipo == "usuario":
+        f = _img_usuario_dir(d) / n
+        if not re.fullmatch(r"[\w.\-]+", n) or not f.is_file():
+            raise HTTPException(404, "No existe la imagen")
+        return f.read_bytes()
+    if tipo in ("planta_cos", "momentos_cos"):
+        f = _costaneras(d, n)
+        res = leer(f.with_name(n + ".resultado.json"))
+        return F.planta_costaneras(leer(f), res) if tipo == "planta_cos" else F.momentos_costanera(res)
+    if tipo not in _IMG_TIPOS:
+        raise HTTPException(404, "Tipo de imagen desconocido")
+    f = _eje_sap(d, n)
+    if tipo == "detalle":
+        return f.with_name(n + ".detalle.png").read_bytes()
+    if tipo in ("corte_fun", "presiones"):
+        fun = f.with_name(n + ".fundacion.json")
+        if not fun.is_file():
+            raise HTTPException(404, "El eje no tiene fundación analizada")
+        if tipo == "presiones":
+            return F.presiones_fundacion(leer(fun))
+        return F.corte_fundacion(((_ajustes_eje(f).get("parametros") or {}).get("fundacion")) or {})
+    res = leer(f.with_name(n + ".resultado.json"))
+    return {"modelo": F.modelo_eje, "modo1": F.modo_eje, "diseno": F.diseno_eje}[tipo](res)
+
+
+@app.get("/api/proyectos/{pid}/memoria/imagenes")
+def memoria_imagenes(pid: str):
+    return _imagenes_disponibles(_proyecto(pid))
+
+
+@app.get("/api/proyectos/{pid}/memoria/imagen")
+def memoria_imagen(pid: str, id: str):
+    png = _imagen_png(_proyecto(pid), id)
+    tipo = "image/jpeg" if png[:3] == b"\xff\xd8\xff" else "image/png"
+    return Response(png, media_type=tipo, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/proyectos/{pid}/memoria/imagenes", status_code=201)
+async def memoria_subir_imagen(pid: str, archivo: UploadFile = File(...), titulo: str = Form(""), capitulo: str = Form("antecedentes")):
+    """Imagen propia para la memoria (PNG o JPG): render, plano, foto, etc., con su leyenda y capítulo."""
+    d = _proyecto(pid)
+    datos = await archivo.read()
+    ext = ".png" if datos[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg" if datos[:3] == b"\xff\xd8\xff" else None
+    if not ext:
+        raise HTTPException(400, "La imagen debe ser PNG o JPG")
+    if len(datos) > 8_000_000:
+        raise HTTPException(400, "La imagen es muy grande (máx. 8 MB)")
+    u = _img_usuario_dir(d)
+    base = re.sub(r"[^\w\-]", "_", Path(archivo.filename or "imagen").stem)[:50] or "imagen"
+    nombre, k = base + ext, 1
+    while (u / nombre).exists():
+        k += 1
+        nombre = f"{base}-{k}{ext}"
+    (u / nombre).write_bytes(datos)
+    mp = u / "meta.json"
+    meta = json.loads(mp.read_text(encoding="utf-8")) if mp.is_file() else {}
+    meta[nombre] = {"titulo": titulo.strip() or Path(archivo.filename or nombre).stem, "capitulo": capitulo}
+    mp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    return {"id": f"usuario|{nombre}"}
+
+
+@app.delete("/api/proyectos/{pid}/memoria/imagenes/{nombre}", status_code=204)
+def memoria_borrar_imagen(pid: str, nombre: str):
+    u = _img_usuario_dir(_proyecto(pid))
+    if not re.fullmatch(r"[\w.\-]+", nombre) or not (u / nombre).is_file():
+        raise HTTPException(404, "No existe la imagen")
+    (u / nombre).unlink()
+    mp = u / "meta.json"
+    if mp.is_file():
+        meta = json.loads(mp.read_text(encoding="utf-8"))
+        meta.pop(nombre, None)
+        mp.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
 @app.post("/api/proyectos/{pid}/memoria/word")
 def memoria_word(pid: str, pedido: PedidoMemoria):
     """Memoria de cálculo en Word con los ejes, fundaciones y costaneras elegidos y los capítulos activados."""
@@ -2294,7 +2421,12 @@ def memoria_word(pid: str, pedido: PedidoMemoria):
         raise HTTPException(400, "Elige al menos un eje o un techo con resultados")
     meta = json.loads((d / "meta.json").read_text(encoding="utf-8"))
     try:
-        contenido = generar_memoria(meta.get("nombre", pid), ejes, techos, pedido.opciones or {}, _empresa(True))
+        figuras = []
+        for im in (pedido.opciones or {}).get("imagenes") or []:
+            if im.get("incluir", True) and im.get("id"):
+                figuras.append({"png": _imagen_png(d, im["id"]), "leyenda": im.get("leyenda") or "",
+                                "capitulo": im.get("capitulo") or "conclusiones"})
+        contenido = generar_memoria(meta.get("nombre", pid), ejes, techos, pedido.opciones or {}, _empresa(True), figuras)
     except (ValueError, TypeError, KeyError) as e:
         raise HTTPException(400, f"No se pudo armar la memoria: {e}")
     nombre_arch = re.sub(r"[^\w.\-]", "_", f"MC_{meta.get('nombre', pid)}.docx")

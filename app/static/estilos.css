@@ -317,3 +317,12 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .mc-empresa { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; align-items: start; }
 .mc-img img { max-width: 220px; max-height: 140px; display: block; margin: 4px 0 6px; border: 1px solid var(--borde); background: #fff; padding: 4px; }
 #mc-revisiones input { font-size: 12px; padding: 3px 4px; }
+
+.mc-imagenes { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 8px; }
+.mc-img-card { border: 1px solid var(--borde); border-radius: var(--radio); padding: 8px; display: grid; gap: 5px; font-size: 12.5px; background: #fff; }
+.mc-img-card.elegida { border-color: #2d6cdf; box-shadow: 0 0 0 2px rgba(45,108,223,.18); }
+.mc-img-card img { width: 100%; height: 150px; object-fit: contain; background: #fafafa; border: 1px solid #eee; }
+.mc-img-card input:not([type]) { width: 100%; box-sizing: border-box; font-size: 12px; }
+.mc-img-card select { font-size: 12px; max-width: 170px; }
+.mc-img-tit { font-weight: 600; }
+.mc-subir { margin-bottom: 4px; }

@@ -102,8 +102,43 @@ class _Doc:
         self.n1 = 0
         self.n2 = 0
 
+    # figuras pendientes por capítulo: se ponen al final de su capítulo, numeradas
+    def figura(self, png: bytes, leyenda: str):
+        self.nfig = getattr(self, "nfig", 0) + 1
+        par = self.d.add_paragraph()
+        par.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        par.paragraph_format.keep_with_next = True
+        par.paragraph_format.space_before = Pt(6)
+        from PIL import Image
+        try:
+            w, h = Image.open(io.BytesIO(png)).size
+        except Exception:
+            w, h = 4, 3
+        ancho = 16.0 if w / max(h, 1) >= 1.2 else 11.0
+        par.add_run().add_picture(io.BytesIO(png), width=Cm(ancho))
+        cap = self.p((f"Figura {self.nfig}: ",), leyenda or "", tam=9, color=GRIS, alinear=WD_ALIGN_PARAGRAPH.CENTER, despues=8)
+        return cap
+
+    def vaciar(self, clave):
+        for png, ley in (getattr(self, "pendientes", {}) or {}).pop(clave, []):
+            self.figura(png, ley)
+
     # títulos numerados automáticamente
-    def h1(self, t):
+    def h1(self, t, clave=None):
+        self.vaciar(getattr(self, "clave", None))
+        if clave == "conclusiones" and getattr(self, "pendientes", None):
+            # figuras de capítulos que no entraron: en su propio capítulo, antes de las conclusiones
+            resto = [f for v in self.pendientes.values() for f in v]
+            self.pendientes = {}
+            if resto:
+                self.clave = None
+                self.n1 += 1
+                self.n2 = 0
+                p = self.d.add_heading(f"{self.n1}. Figuras complementarias", level=1)
+                self._color(p, AZUL)
+                for png, ley in resto:
+                    self.figura(png, ley)
+        self.clave = clave
         self.n1 += 1
         self.n2 = 0
         p = self.d.add_heading(f"{self.n1}. {t}", level=1)
@@ -487,7 +522,8 @@ def observaciones(ejes: list[dict], techos: list[dict], caps: dict) -> list[tupl
 
 
 # ---------------------------------------------------------------------------------------------- memoria
-def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opciones: dict, empresa: dict | None = None) -> bytes:
+def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opciones: dict, empresa: dict | None = None,
+                    figuras: list[dict] | None = None) -> bytes:
     """ejes: [{nombre, eje, ajustes, resultado, fundacion}], techos: [{nombre, resultado}]; empresa: {nombre, logo
     (bytes), firma (bytes)} para la portada, el encabezado y la firma."""
     empresa = empresa or {}
@@ -512,6 +548,10 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
     con_fun = [e for e in ejes if e.get("fundacion")] if inc("fundacion") else []
     nombre_p = datos.get("proyecto") or proyecto
     D = _Doc()
+    # figuras elegidas: {capitulo, png, leyenda}; van al final de su capítulo
+    D.pendientes = {}
+    for fg in figuras or []:
+        D.pendientes.setdefault(fg.get("capitulo") or "conclusiones", []).append((fg["png"], fg.get("leyenda") or ""))
     titulo = datos.get("titulo") or nombre_p
     D.encabezado(f"{titulo} · Memoria de cálculo estructural", f"Versión {datos.get('version') or 1}", empresa.get("logo"))
     partes = []
@@ -532,7 +572,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- antecedentes
     if inc("antecedentes"):
-        D.h1("Antecedentes generales")
+        D.h1("Antecedentes generales", "antecedentes")
         D.p(f"La presente memoria resume el análisis y diseño estructural del proyecto {nombre_p}"
             + (f", ubicado en {datos['ubicacion']}" if datos.get("ubicacion") else "")
             + ". El modelo se exportó desde Revit y se analizó y diseñó con la aplicación cad2revit (análisis con PyNite).")
@@ -560,7 +600,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- normas
     if inc("normas"):
-        D.h1("Normas y referencias")
+        D.h1("Normas y referencias", "normas")
         if ejes or techos:
             D.vineta("NCh3171:2010 Disposiciones generales y combinaciones de cargas.")
             D.vineta("NCh1537:2009 Cargas permanentes y cargas de uso.")
@@ -577,7 +617,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- materiales
     if inc("materiales"):
-        D.h1("Materiales")
+        D.h1("Materiales", "materiales")
         filas = []
         if ejes:
             par = (ejes[0].get("ajustes") or {}).get("parametros") or {}
@@ -601,7 +641,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- cargas
     if inc("cargas") and (ejes or techos):
-        D.h1("Cargas")
+        D.h1("Cargas", "cargas")
         if ejes:
             e = ejes[0]
             par = (e.get("ajustes") or {}).get("parametros") or {}
@@ -655,7 +695,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- combinaciones
     if inc("combinaciones"):
-        D.h1("Combinaciones de carga")
+        D.h1("Combinaciones de carga", "combinaciones")
         D.p("Combinaciones de resistencia según NCh3171 §9.1.1:")
         for c in ("1,4D", "1,2D + 0,5Lr", "1,2D + 1,6Lr + 0,8W", "1,2D + 1,6W + 0,5Lr", "0,9D + 1,6W"):
             D.vineta(c)
@@ -667,7 +707,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- modelo
     if inc("modelo") and ejes:
-        D.h1("Modelo y análisis")
+        D.h1("Modelo y análisis", "modelo")
         par0 = (ejes[0].get("ajustes") or {}).get("parametros") or {}
         D.vineta(f"Modelo plano de cada eje: barras de acero y muros de madera como elementos de lámina (malla de {f(par0.get('malla', 0.5), 1)} m), "
                  "con la rigidez al corte del Manual de madera (Ec. 2.22); muros unidos de forma solidaria a los pilares.")
@@ -689,7 +729,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- acero
     if inc("acero") and ejes:
-        D.h1("Diseño de elementos de acero (AISC 360-16)")
+        D.h1("Diseño de elementos de acero (AISC 360-16)", "acero")
         for e in ejes:
             r = e["resultado"]
             if len(ejes) > 1:
@@ -716,7 +756,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- madera
     if inc("madera") and ejes and any(e["resultado"].get("madera") for e in ejes):
-        D.h1("Muros de madera de marco plataforma")
+        D.h1("Muros de madera de marco plataforma", "madera")
         for e in ejes:
             md = e["resultado"].get("madera") or []
             if not md:
@@ -735,7 +775,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- deformaciones
     if inc("deformaciones") and ejes:
-        D.h1("Deformaciones")
+        D.h1("Deformaciones", "deformaciones")
         for e in ejes:
             dfs = e["resultado"].get("deformaciones") or []
             if len(ejes) > 1:
@@ -755,7 +795,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- fundaciones
     if inc("fundacion") and con_fun:
-        D.h1("Fundaciones")
+        D.h1("Fundaciones", "fundacion")
         for e in con_fun:
             fu = e["fundacion"]
             fp = ((e.get("ajustes") or {}).get("parametros") or {}).get("fundacion") or {}
@@ -798,7 +838,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- costaneras
     if inc("costaneras") and techos:
-        D.h1("Costaneras de techo (AISI S100-16)")
+        D.h1("Costaneras de techo (AISI S100-16)", "costaneras")
         for t in techos:
             r = t["resultado"]
             pc = r.get("parametros") or {}
@@ -836,7 +876,7 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
 
     # ---- conclusiones
     if inc("conclusiones"):
-        D.h1("Conclusiones y observaciones")
+        D.h1("Conclusiones y observaciones", "conclusiones")
         resumen = []
         if ejes and inc("acero"):
             resumen.append(f"razón máxima de acero {f(max((a['razon'] for e in ejes for a in e['resultado'].get('acero') or []), default=None))}")
@@ -855,6 +895,15 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
         for linea in (opciones.get("observaciones_extra") or "").splitlines():
             if linea.strip():
                 D.numerado(linea.strip())
+
+    # figuras que aún no se pusieron (capítulo final o sin conclusiones)
+    D.vaciar(getattr(D, "clave", None))
+    resto = [f for v in D.pendientes.values() for f in v]
+    if resto:
+        D.h1("Figuras complementarias", None)
+        for png, ley in resto:
+            D.figura(png, ley)
+        D.pendientes = {}
 
     if inc("firma"):
         D.p(f"{datos['ubicacion'].split(',')[0]}, {_fecha_texto(datos.get('fecha'))}" if datos.get("ubicacion") else _fecha_texto(datos.get("fecha")),
