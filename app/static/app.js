@@ -2720,7 +2720,10 @@ function funMostrar(d) {
     `Fundación de x = ${f2(d.x0)} a ${f2(d.x1)} m (L = ${f2(d.L)} m), peso propio + suelo ${f2(d.peso_propio_tonf_m)} tonf/m. `,
     h("span", { class: okPct ? "cumple" : "nocumple" }, `Área en compresión mínima ${pc(s.pct_compresion_min)} (${s.combo_pct}; ≥ 80 %, 7.2.1)`), " · ",
     h("span", { class: okP ? "cumple" : "nocumple" }, `presión: FU máx. ${f2(s.FU_presion_max)} (${s.combo_presion})`), " · ",
-    `deslizamiento: FS mín. ${f2(s.FS_desliz_min)}` + (s.inestables.length ? ` · ${s.inestables.length} combinación(es) sin equilibrio (vuelco)` : ""));
+    h("span", { class: s.FS_desliz_min != null && s.FS_desliz_min < (s.fs_desliz_exigido ?? 1) ? "nocumple" : "cumple" },
+      `deslizamiento: FS mín. ${f2(s.FS_desliz_min)} (exigido ≥ ${f2(s.fs_desliz_exigido ?? 1)})`),
+    s.inestables.length ? ` · ${s.inestables.length} combinación(es) sin equilibrio (vuelco)` : "",
+    h("div", { class: "tenue" }, s.nota_deslizamiento || ""));
   const sel = $("#fun-combo"), antes = sel.value;
   sel.replaceChildren(...d.servicio.filter(c => c.estable).map((c, i) => h("option", { value: i }, c.combo)));
   const peor = d.servicio.filter(c => c.estable).findIndex(c => c.combo === s.combo_pct);
@@ -2731,7 +2734,7 @@ function funMostrar(d) {
       "N (tonf)", "H (tonf)", "FS deslizamiento"].map(t => h("th", {}, t)))),
     h("tbody", {}, d.servicio.map(c => c.estable ? h("tr", {}, h("td", {}, c.combo), h("td", {}, f2(c.q_max)), h("td", {}, f2(c.q_adm)), celda(c.FU_presion),
       h("td", { class: c.pct_compresion >= 0.8 ? "cumple" : "nocumple" }, pc(c.pct_compresion)), h("td", {}, f2(c.asentamiento_max_mm)),
-      h("td", {}, f2(c.N)), h("td", {}, f2(c.H)), h("td", { class: c.FS_deslizamiento != null && c.FS_deslizamiento < 1.5 ? "nocumple" : "" }, f2(c.FS_deslizamiento)))
+      h("td", {}, f2(c.N)), h("td", {}, f2(c.H)), h("td", { class: c.FS_deslizamiento != null && c.FS_deslizamiento < (s.fs_desliz_exigido ?? 1) ? "nocumple" : "" }, f2(c.FS_deslizamiento)))
       : h("tr", {}, h("td", {}, c.combo), h("td", { class: "nocumple", colspan: 8 }, "sin equilibrio: la fundación vuelca o se levanta entera")))));
   const filas = lista => lista.map(v => h("tr", {}, h("td", {}, v.verificacion),
     h("td", {}, v.Mu_tonfm != null ? `Mu ${f2(v.Mu_tonfm)} tonf·m` : v.Vu_tonf != null ? `Vu ${f2(v.Vu_tonf)} tonf` : v.Pu_tonf != null ? `Pu ${f2(v.Pu_tonf)} tonf` : `ρ = ${v.valor != null ? v.valor.toFixed(4) : "—"}`),

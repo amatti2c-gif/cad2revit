@@ -487,11 +487,12 @@ def observaciones(ejes: list[dict], techos: list[dict], caps: dict) -> list[tupl
         fun = e.get("fundacion")
         if fun and caps.get("fundacion", {}).get("incluir"):
             s = fun.get("resumen_suelo") or {}
-            if (s.get("FS_desliz_min") or 99) < 1.5:
+            fs_ex = s.get("fs_desliz_exigido") or 1.0
+            if (s.get("FS_desliz_min") or 99) < fs_ex:
                 obs.append(("Deslizamiento de la fundación",
-                            f"{nombre}: FS = {f(s['FS_desliz_min'])} < 1,5. Considera el empuje pasivo del suelo frente al pedestal y la "
-                            f"zapata, o la continuidad con las fundaciones transversales; si no basta, aumenta la sección o agrega una "
-                            f"llave de corte."))
+                            f"{nombre}: FS = {f(s['FS_desliz_min'])} < {f(fs_ex, 1)}. Considera el empuje pasivo del suelo frente al "
+                            f"pedestal y la zapata, o la continuidad con las fundaciones transversales; si no basta, aumenta la sección "
+                            f"o agrega una llave de corte."))
             if (s.get("pct_compresion_min") or 1) < 0.8:
                 obs.append(("Área en compresión", f"{nombre}: {f(s['pct_compresion_min'] * 100, 1)} % < 80 % (NCh433:2026 7.2.1)."))
             if (s.get("FU_presion_max") or 0) > 1:
@@ -823,9 +824,12 @@ def generar_memoria(proyecto: str, ejes: list[dict], techos: list[dict], opcione
                 D.tabla(["Verificación (servicio)", "Resultado", "Combinación", "Exigencia", "Cumple"], [
                     ["Presión de contacto", f"FU {f(s.get('FU_presion_max'))}", s.get("combo_presion", "—"), f"≤ q adm = {f(s.get('q_adm'), 1)} tonf/m²", ok((s.get("FU_presion_max") or 0) <= 1)],
                     ["Área en compresión", f"{f((s.get('pct_compresion_min') or 0) * 100, 1)} %", s.get("combo_pct", "—"), "≥ 80 % (7.2.1)", ok((s.get("pct_compresion_min") or 0) >= 0.8)],
-                    ["Deslizamiento", f"FS = {f(s.get('FS_desliz_min'))}", "—", "FS ≥ 1,5", ok((s.get("FS_desliz_min") or 99) >= 1.5)],
+                    ["Deslizamiento", f"FS = {f(s.get('FS_desliz_min'))}", "—", f"FS ≥ {f(s.get('fs_desliz_exigido') or 1.0, 1)}",
+                     ok((s.get("FS_desliz_min") or 99) >= (s.get("fs_desliz_exigido") or 1.0))],
                     ["Asentamiento máximo", f"{f(asent)} mm", "—", "—", "—"],
                 ], [22, 22, 18, 26, 12])
+                if s.get("nota_deslizamiento") or (s.get("fs_desliz_exigido") or 1.0) <= 1.0:
+                    D.nota(s.get("nota_deslizamiento") or "FS mínimo al deslizamiento 1,0: las fundaciones son zapatas corridas conectadas entre sí en todo el edificio, de modo que el deslizamiento de un eje lo resisten también las fundaciones transversales; el cálculo por eje, sin esa continuidad ni el empuje pasivo del suelo, es conservador.")
             if inc("fundacion", "hormigon"):
                 filas = []
                 for v in (fu.get("viga") or []) + (fu.get("zapata") or []) + (fu.get("pedestal") or []):

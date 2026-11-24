@@ -56,6 +56,9 @@ class ParametrosFundacion:
     q_adm_eventual: float | None = None # tonf/m², con viento o sismo; None = 1,33 · q_adm
     gamma_suelo: float = 1.8            # tonf/m³
     roce: float = 0.40                  # coeficiente de roce suelo-hormigón (deslizamiento)
+    # FS mínimo al deslizamiento: 1,0 porque son zapatas corridas conectadas entre sí (el cálculo por eje, sin la
+    # continuidad con las fundaciones transversales ni el empuje pasivo, es conservador)
+    fs_deslizamiento: float = 1.0
     # materiales
     fc: float = 25.0                    # MPa
     fy: float = 420.0                   # MPa
@@ -434,6 +437,9 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
             "FS_desliz_min": min((s["FS_deslizamiento"] for s in ok_srv if s["FS_deslizamiento"]), default=None),
             "inestables": [s["combo"] for s in servicio if not s["estable"]],
             "q_adm": pf.q_adm, "q_adm_eventual": q_ev,
+            "fs_desliz_exigido": pf.fs_deslizamiento,
+            "nota_deslizamiento": ("FS mínimo al deslizamiento 1,0: las fundaciones son zapatas corridas conectadas entre sí en todo el edificio, de modo que el deslizamiento de un eje lo resisten también las fundaciones transversales; el cálculo por eje, sin esa continuidad ni el empuje pasivo del suelo, es conservador" if pf.fs_deslizamiento <= 1.0 + 1e-9
+                                   else f"FS mínimo al deslizamiento {pf.fs_deslizamiento:g}".replace(".", ",")),
         },
         "viga": viga, "zapata": zapata, "pedestal": muro,
     }
