@@ -326,3 +326,8 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .mc-img-card select { font-size: 12px; max-width: 170px; }
 .mc-img-tit { font-weight: 600; }
 .mc-subir { margin-bottom: 4px; }
+
+.sap-sel { display: grid; gap: 6px; margin-top: 8px; font-size: 13px; }
+.sap-sel .chip { font-size: 12px; padding: 2px 8px; margin: 2px 4px 2px 0; }
+.sap-sel .chip.fuera { color: #666; border-style: dashed; }
+.sap-sel .chip.sug { border-color: #d0702a; color: #8a4410; }

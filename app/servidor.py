@@ -1850,11 +1850,30 @@ def _modelo_eje(eje: dict, aj: AjustesEje):
         raise HTTPException(400, f"Parámetros no válidos: {e}")
 
 
+def _ids_costaneras(d: Path) -> set[str]:
+    """Ids de Revit de las costaneras (miembros de sistemas de vigas) de los techos del proyecto."""
+    ids = set()
+    for f in (d / "costaneras").glob("*.costaneras.json"):
+        try:
+            ids.update(str(c.get("id")) for c in json.loads(f.read_text(encoding="utf-8")).get("costaneras") or [])
+        except Exception:
+            continue
+    return ids
+
+
 @app.post("/api/proyectos/{pid}/sap/{nombre}/vista")
 def vista_eje_sap(pid: str, nombre: str, aj: AjustesEje):
-    f = _eje_sap(_proyecto(pid), nombre)
-    mod, pc, cargas = _modelo_eje(json.loads(f.read_text(encoding="utf-8")), aj)
+    d = _proyecto(pid)
+    f = _eje_sap(d, nombre)
+    eje = json.loads(f.read_text(encoding="utf-8"))
+    mod, pc, cargas = _modelo_eje(eje, aj)
+    cos = _ids_costaneras(d)
+    excl = {str(x) for x in (aj.opciones or {}).get("excluir") or []}
+    costaneras = [str(v.get("id")) for v in eje.get("vigas") or [] if str(v.get("id")) in cos or v.get("sistema_vigas")]
     return {
+        "sin_apoyo": mod.sin_apoyo,
+        "sugeridos": [{"id": i, "motivo": "costanera de techo (sistema de vigas)"} for i in costaneras if i not in excl]
+                     + [{"id": i, "motivo": "sin apoyo en el plano del eje"} for i in mod.sin_apoyo if i not in costaneras],
         "nombre": mod.nombre, "nudos": mod.nudos, "apoyos": mod.apoyos,
         "barras": [{"nombre": b, "ni": a, "nj": c, "seccion": sec, "rol": mod.roles.get(b), "origen": mod.origen.get(b)}
                    for b, a, c, sec in mod.barras],

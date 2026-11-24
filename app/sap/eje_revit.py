@@ -140,6 +140,7 @@ class ModeloEje:
     roles: dict = field(default_factory=dict)         # barra → "pilar" | "viga" | "techo" | "diagonal"
     origen: dict = field(default_factory=dict)        # barra / área → id del elemento de Revit
     ancho_tributario: float = 0.0
+    sin_apoyo: list = field(default_factory=list)     # ids de Revit que quedaron sin apoyo en el plano (no se modelan)
 
 
 ACERO = {"tipo": "Steel", "E": 2.0e8 / G_ACC, "nu": 0.3, "gamma": 7.85}            # 200 GPa
@@ -211,8 +212,24 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         return claves[k]
 
     # el hormigón (fundaciones, sobrecimientos, pedestales) no entra en el modelo: solo acero y muros de madera
-    pilares = [p for p in eje.get("pilares", []) if p.get("material") not in ("madera", "hormigon") and str(p.get("id")) not in excluir]
+    pilares = [dict(p) for p in eje.get("pilares", []) if p.get("material") not in ("madera", "hormigon") and str(p.get("id")) not in excluir]
     vigas = [dict(v) for v in eje.get("vigas", []) if v.get("material") not in ("madera", "hormigon") and str(v.get("id")) not in excluir]
+    # pilar que no llega a la viga por poco (justificación de la viga, desfase de nivel): se prolonga hasta la viga más
+    # cercana que pasa sobre él a menos de 0,30 m de su cabeza
+    for p in pilares:
+        xp = (p["x0"] + p["x1"]) / 2
+        mejor = None
+        for v in vigas:
+            xa, xb = sorted((v["x0"], v["x1"]))
+            if xb - xa < 1e-6 or not (xa - 0.05 <= xp <= xb + 0.05):
+                continue
+            t = min(max((xp - v["x0"]) / (v["x1"] - v["x0"]), 0.0), 1.0)
+            zv = v["z0"] + (v["z1"] - v["z0"]) * t
+            if abs(zv - p["z1"]) <= 0.30 and (mejor is None or abs(zv - p["z1"]) < abs(mejor - p["z1"])):
+                mejor = zv
+        if mejor is not None and abs(mejor - p["z1"]) > 1e-4:
+            mod.avisos.append(f"Pilar {p.get('id')}: su cabeza (z {p['z1']:.2f} m) se unió a la viga en z {mejor:.2f} m")
+            p["z1"] = mejor
     xs_pilar = sorted({round((p["x0"] + p["x1"]) / 2, 4) for p in pilares})
 
     def a_pilar(x):
@@ -492,6 +509,49 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         rol = "diagonal" if v.get("tipo") == "diagonal" else (
             "techo" if abs(v["z1"] - v["z0"]) > 0.05 or not encima(v) else "viga")
         barra(v["x0"], v["z0"], v["x1"], v["z1"], _seccion(v, mod.secciones, mod.avisos, op.get("secciones")), rol, str(v.get("id")))
+    # elementos sin apoyo en el plano del eje (p. ej. la viga de cumbrera o costaneras que se apoyan en otros ejes): no
+    # están conectados a ningún nudo con apoyo y dejarían la matriz singular → se sacan del modelo con un aviso
+    vecinos: dict = {}
+    for _, a_, b_, _ in mod.barras:
+        vecinos.setdefault(a_, set()).add(b_)
+        vecinos.setdefault(b_, set()).add(a_)
+    for _, ns, _ in mod.areas:
+        for n_ in ns:
+            vecinos.setdefault(n_, set()).update(ns)
+    alcanzados, pila = set(mod.apoyos), list(mod.apoyos)
+    while pila:
+        n_ = pila.pop()
+        for m_ in vecinos.get(n_, ()):
+            if m_ not in alcanzados:
+                alcanzados.add(m_)
+                pila.append(m_)
+    # pilar con base rotulada cuya cabeza no se une a nada (mecanismo): tampoco se modela
+    grado: dict = {}
+    for _, a_, b_, _ in mod.barras:
+        grado[a_] = grado.get(a_, 0) + 1
+        grado[b_] = grado.get(b_, 0) + 1
+    en_area = {n_ for _, ns, _ in mod.areas for n_ in ns}
+    for nb, a_, b_, _ in list(mod.barras):
+        if mod.roles.get(nb) != "pilar":
+            continue
+        base, cabeza = (a_, b_) if mod.nudos[a_][1] <= mod.nudos[b_][1] else (b_, a_)
+        if mod.apoyos.get(base) == "rotula" and grado.get(cabeza, 0) == 1 and cabeza not in en_area:
+            alcanzados.discard(cabeza)
+            alcanzados.discard(base)
+    sueltas = [b for b in mod.barras if b[1] not in alcanzados or b[2] not in alcanzados]
+    sueltas_a = [a for a in mod.areas if a[1][0] not in alcanzados]
+    mod.sin_apoyo = sorted({mod.origen.get(x[0]) for x in sueltas + sueltas_a if mod.origen.get(x[0])})
+    if mod.sin_apoyo:
+        mod.barras = [b for b in mod.barras if b[1] in alcanzados and b[2] in alcanzados]
+        mod.areas = [a for a in mod.areas if a[1][0] in alcanzados]
+        for x in sueltas + sueltas_a:
+            mod.roles.pop(x[0], None)
+            mod.origen.pop(x[0], None)
+        usados = {n_ for b in mod.barras for n_ in b[1:3]} | {n_ for a in mod.areas for n_ in a[1]}
+        mod.nudos = {k: v for k, v in mod.nudos.items() if k in usados}
+        mod.apoyos = {k: v for k, v in mod.apoyos.items() if k in usados}
+        mod.avisos.append("Sin apoyo en el plano del eje o pilares sueltos (no se modelan): "
+                          + ", ".join(mod.sin_apoyo))
     mod.ancho_tributario = float(eje.get("ancho_tributario") or 0.0)
     if not mod.barras and not mod.areas:
         mod.avisos.append("El eje no tiene elementos para modelar")

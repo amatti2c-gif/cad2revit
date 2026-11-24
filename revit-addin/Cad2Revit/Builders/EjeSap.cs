@@ -183,8 +183,14 @@ namespace Cad2Revit
                         x0 = R(X(pb)), z0 = R(Mt(pb.Z)), x1 = R(X(pt)), z1 = R(Mt(pt.Z)), dims = Dims(f),
                     });
                 }
+                // costaneras (miembros de sistemas de vigas): no son parte del sistema sismorresistente del eje; se
+                // verifican aparte con «Costaneras a análisis»
+                var enSistemas = new HashSet<ElementId>(new FilteredElementCollector(_doc).OfClass(typeof(BeamSystem))
+                    .Cast<BeamSystem>().SelectMany(bs => bs.GetBeamIds()));
+                int costaneras = 0;
                 foreach (var f in instancias.Where(f => f.StructuralType == StructuralType.Beam || f.StructuralType == StructuralType.Brace))
                 {
+                    if (enSistemas.Contains(f.Id)) { costaneras++; continue; }
                     if (!(f.Location is LocationCurve lc) || !(lc.Curve is Line lv)) continue;
                     XYZ a = lv.GetEndPoint(0), b = lv.GetEndPoint(1);
                     if (D(a) > tolerancia || D(b) > tolerancia || Math.Abs(X(a) - X(b)) < 0.05 && Math.Abs(a.Z - b.Z) < U.M(0.05)) continue;
@@ -264,6 +270,7 @@ namespace Cad2Revit
                 File.WriteAllText(ruta, JsonSerializer.Serialize(archivo, new JsonSerializerOptions { WriteIndented = true }));
                 _inf.Contar("Pilares en el eje", pilares.Count);
                 _inf.Contar("Vigas y diagonales en el eje", vigas.Count);
+                if (costaneras > 0) _inf.Contar("Costaneras de sistemas de vigas omitidas (se verifican con «Costaneras a análisis»)", costaneras);
                 _inf.Contar("Muros en el eje", muros.Count);
                 _inf.Advertencia($"Archivo: {ruta}");
                 if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) de hormigón no entran al modelo del eje (acero y madera); " +

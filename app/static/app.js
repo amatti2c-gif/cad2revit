@@ -2085,10 +2085,45 @@ async function sapActualizar() {
   $("#sap-avisos").replaceChildren(...v.avisos.map(x => h("li", {}, x)));
 }
 
+
+// ---- selección de elementos para la modelación (clic en el dibujo) y sugerencias para limpiar el eje
+function sapAlternar(id) {
+  id = String(id);
+  const o = sap.opciones;
+  if (o.excluir.includes(id)) o.excluir = o.excluir.filter(x => x !== id); else o.excluir.push(id);
+  sapTablaElementos();
+  intentar(sapActualizar);
+}
+function sapNombreElem(id) {
+  const e = sap.eje || {};
+  const p = (e.pilares || []).find(x => String(x.id) === id); if (p) return `pilar ${p.seccion}`;
+  const v = (e.vigas || []).find(x => String(x.id) === id); if (v) return `${v.tipo === "diagonal" ? "diagonal" : "viga"} ${v.seccion}`;
+  const w = (e.muros || []).find(x => String(x.id) === id); if (w) return `muro ${w.tipo || ""}`.trim();
+  return "elemento";
+}
+function sapBarraSel() {
+  const caja = $("#sap-sel"); if (!caja || !sap.eje) return;
+  const e = sap.eje, o = sap.opciones, v = sap.vista || {};
+  const total = (e.pilares || []).length + (e.vigas || []).length + (e.muros || []).length;
+  const exc = o.excluir.filter(id => [...(e.pilares || []), ...(e.vigas || []), ...(e.muros || [])].some(x => String(x.id) === id));
+  const sug = (v.sugeridos || []).filter(s_ => !o.excluir.includes(String(s_.id)));
+  const chip = (id, texto, accion, clase) => h("button", { class: "sec chip " + (clase || ""), title: "Clic para " + (accion === "incluir" ? "volver a incluirlo" : "quitarlo"),
+    onclick: () => sapAlternar(id) }, texto);
+  caja.replaceChildren(...[
+    h("div", {}, h("strong", {}, "Elementos para la modelación: "),
+      `${total - exc.length} de ${total} incluidos. Haz clic en un elemento del dibujo para incluirlo o quitarlo (los que no son parte del sistema sismorresistente).`),
+    exc.length ? h("div", {}, h("span", { class: "tenue" }, "Excluidos: "), ...exc.map(id => chip(id, `${sapNombreElem(id)} · ${id} ↺`, "incluir", "fuera"))) : null,
+    sug.length ? h("div", {}, h("span", { class: "nocumple" }, "Sugeridos para quitar: "),
+      ...sug.map(s_ => chip(String(s_.id), `${sapNombreElem(String(s_.id))} · ${s_.id} (${s_.motivo})`, "quitar", "sug")),
+      h("button", { class: "pri", onclick: () => { for (const s_ of sug) if (!o.excluir.includes(String(s_.id))) o.excluir.push(String(s_.id));
+        sapTablaElementos(); intentar(sapActualizar); toast(`${sug.length} elemento(s) quitado(s) de la modelación`); } }, "Quitar sugeridos")) : null,
+  ].filter(Boolean));
+}
+
 function sapDibujar() {
   const svg = $("#sap-lienzo"), v = sap.vista;
   const xs = Object.values(v.nudos).map(n => n[0]), zs = Object.values(v.nudos).map(n => n[1]);
-  if (!xs.length) { svg.replaceChildren(); return; }
+  if (!xs.length) { svg.replaceChildren(); sapBarraSel(); return; }
   const x0 = Math.min(...xs), x1 = Math.max(...xs), z0 = Math.min(...zs), z1 = Math.max(...zs);
   const m = 0.6, w = x1 - x0 + 2 * m, hh = z1 - z0 + 2 * m, k = Math.max(w, hh) / 400;
   svg.setAttribute("viewBox", `${x0 - m} ${-z1 - m} ${w} ${hh}`);
@@ -2098,7 +2133,9 @@ function sapDibujar() {
   for (const a of v.areas) {
     const p = s("polygon", { points: a.nudos.map(n => `${Pn(n)[0]},${-Pn(n)[1]}`).join(" "),
       fill: `hsl(${tonos[a.seccion] || 35},55%,72%)`, stroke: "#a08050", "stroke-width": k * 0.4 });
-    p.append(Object.assign(s("title"), { textContent: `${a.seccion} (muro ${a.origen})` }));
+    p.append(Object.assign(s("title"), { textContent: `${a.seccion} (muro ${a.origen}) · clic para quitarlo de la modelación` }));
+    p.style.cursor = "pointer";
+    p.addEventListener("click", () => sapAlternar(a.origen));
     hijos.push(p);
   }
   const color = { pilar: "#1f4e9c", techo: "#c06000", viga: "#555", diagonal: "#7a3fb0" };
@@ -2106,8 +2143,13 @@ function sapDibujar() {
     const [xa, za] = Pn(b.ni), [xb, zb] = Pn(b.nj), r = sap.razones[b.nombre];
     const c = r != null ? (r > 1 ? "#b00020" : r > 0.7 ? "#e0a000" : "#1b6e20") : (color[b.rol] || "#333");
     const l = s("line", { x1: xa, y1: -za, x2: xb, y2: -zb, stroke: c, "stroke-width": k * 3 });
-    l.append(Object.assign(s("title"), { textContent: `${b.seccion} · ${b.rol} · Revit ${b.origen}${r != null ? " · razón " + r.toFixed(2) : ""}` }));
+    l.append(Object.assign(s("title"), { textContent: `${b.seccion} · ${b.rol} · Revit ${b.origen}${r != null ? " · razón " + r.toFixed(2) : ""} · clic para quitarlo de la modelación` }));
     hijos.push(l);
+    // franja ancha para hacer clic
+    const z = s("line", { x1: xa, y1: -za, x2: xb, y2: -zb, stroke: "transparent", "stroke-width": k * 12, style: "cursor:pointer" });
+    z.append(Object.assign(s("title"), { textContent: `${b.seccion} · ${b.rol} · Revit ${b.origen} · clic para quitarlo de la modelación` }));
+    z.addEventListener("click", () => sapAlternar(b.origen));
+    hijos.push(z);
   }
   for (const [n, t] of Object.entries(v.apoyos)) {
     const [x, z] = Pn(n), d = k * 6;
@@ -2116,7 +2158,41 @@ function sapDibujar() {
       ? s("rect", { x: x - d, y: -z, width: 2 * d, height: d, fill: "#222" })
       : s("polygon", { points: `${x},${-z} ${x - d},${-z + 1.6 * d} ${x + d},${-z + 1.6 * d}`, fill: "none", stroke: "#222", "stroke-width": k }));
   }
+  // excluidos (gris) y sin apoyo en el plano (naranjo), desde los datos de Revit: clic para incluir o quitar
+  const e = sap.eje || {}, exc = new Set(sap.opciones.excluir.map(String)), suelto = new Set((v.sin_apoyo || []).map(String));
+  const fantasma = (id, el, titulo) => {
+    const fuera = exc.has(String(id));
+    el.setAttribute("stroke", fuera ? "#9a9a9a" : "#d0702a");
+    el.setAttribute("stroke-dasharray", `${k * 6} ${k * 4}`);
+    el.style.cursor = "pointer";
+    el.append(Object.assign(s("title"), { textContent: `${titulo} · Revit ${id} · ` + (fuera ? "excluido: clic para incluirlo" : "sin apoyo en el plano del eje: no se modela; clic para quitarlo") }));
+    el.addEventListener("click", () => sapAlternar(id));
+    hijos.push(el);
+  };
+  for (const p of e.pilares || []) {
+    if (!exc.has(String(p.id)) && !suelto.has(String(p.id))) continue;
+    const x = (p.x0 + p.x1) / 2;
+    fantasma(p.id, s("line", { x1: x, y1: -p.z0, x2: x, y2: -p.z1, "stroke-width": k * 3, fill: "none" }), `pilar ${p.seccion}`);
+  }
+  for (const b of e.vigas || []) {
+    if (!exc.has(String(b.id)) && !suelto.has(String(b.id))) continue;
+    fantasma(b.id, s("line", { x1: b.x0, y1: -b.z0, x2: b.x1, y2: -b.z1, "stroke-width": k * 3, fill: "none" }), `viga ${b.seccion}`);
+  }
+  for (const w of e.muros || []) {
+    if (!exc.has(String(w.id)) && !suelto.has(String(w.id))) continue;
+    const top = [...(w.perfil || [])].sort((a, b) => b[0] - a[0]);
+    const pts = [[w.x0, w.z0], [w.x1, w.z0], ...top].map(([x, z]) => `${x},${-z}`).join(" ");
+    fantasma(w.id, s("polygon", { points: pts, fill: "rgba(150,150,150,.08)", "stroke-width": k * 1.5 }), `muro ${w.tipo || ""}`);
+  }
+  // el encuadre incluye lo excluido (para poder volver a incluirlo)
+  const todos = [...(e.pilares || []).flatMap(p => [[p.x0, p.z0], [p.x1, p.z1]]), ...(e.vigas || []).flatMap(b => [[b.x0, b.z0], [b.x1, b.z1]])];
+  if (todos.length) {
+    const ax = Math.min(x0, ...todos.map(q => q[0])), bx = Math.max(x1, ...todos.map(q => q[0]));
+    const az = Math.min(z0, ...todos.map(q => q[1])), bz = Math.max(z1, ...todos.map(q => q[1]));
+    svg.setAttribute("viewBox", `${ax - m} ${-bz - m} ${bx - ax + 2 * m} ${bz - az + 2 * m}`);
+  }
   svg.replaceChildren(...hijos);
+  sapBarraSel();
 }
 
 function sapTablaElementos() {
