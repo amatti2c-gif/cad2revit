@@ -2303,16 +2303,31 @@ function sapTablaElementos() {
     sel.value = valor ?? "";
     return sel;
   };
+  // largo no arriostrado fuera del plano por elemento
+  const lFuera = id => {
+    o.l_fuera = o.l_fuera || {};
+    const v = o.l_fuera[id];
+    const num = v != null && v !== "plano" && v !== "completo" ? v : "";
+    const sel = h("select", { title: "Largo no arriostrado fuera del plano (pandeo y volcamiento)", onchange: ev => {
+      if (ev.target.value === "") delete o.l_fuera[id]; else if (ev.target.value === "m") o.l_fuera[id] = Number(inp.value) || 3; else o.l_fuera[id] = ev.target.value;
+      sapTablaElementos(); intentar(sapActualizar); } },
+      h("option", { value: "" }, "fuera del plano: largo completo"), h("option", { value: "plano" }, "fuera del plano: entre elementos que llegan"),
+      h("option", { value: "m" }, "fuera del plano: largo dado (m)"));
+    sel.value = v == null ? "" : v === "plano" ? "plano" : "m";
+    const inp = h("input", { type: "number", step: "any", min: "0.1", value: num, style: `width:64px;${sel.value === "m" ? "" : "display:none"}`,
+      onchange: ev => { if (ev.target.value) { o.l_fuera[id] = Number(ev.target.value); intentar(sapActualizar); } } });
+    return h("span", { class: "sap-lfuera" }, " ", sel, " ", inp);
+  };
   const filas = [];
   for (const p of e.pilares || []) {
     filas.push(h("tr", {}, h("td", {}, incluir(p.id)), h("td", {}, "Pilar"), h("td", {}, p.id), h("td", {}, p.seccion),
       h("td", {}, `x ${((p.x0 + p.x1) / 2).toFixed(2)} · z ${p.z0.toFixed(2)}–${p.z1.toFixed(2)}`),
       h("td", {}, selector([["", "base por defecto"], ["empotrado", "empotrada"], ["rotula", "fija (rotulada)"], ["deslizante", "deslizante"]], o.apoyos[p.id],
-        v => { if (v) o.apoyos[p.id] = v; else delete o.apoyos[p.id]; }))));
+        v => { if (v) o.apoyos[p.id] = v; else delete o.apoyos[p.id]; }), lFuera(String(p.id)))));
   }
   for (const b of e.vigas || []) {
     filas.push(h("tr", {}, h("td", {}, incluir(b.id)), h("td", {}, b.tipo === "diagonal" ? "Diagonal" : "Viga"), h("td", {}, b.id),
-      h("td", {}, b.seccion), h("td", {}, `(${b.x0.toFixed(2)}, ${b.z0.toFixed(2)}) → (${b.x1.toFixed(2)}, ${b.z1.toFixed(2)})`), h("td", {})));
+      h("td", {}, b.seccion), h("td", {}, `(${b.x0.toFixed(2)}, ${b.z0.toFixed(2)}) → (${b.x1.toFixed(2)}, ${b.z1.toFixed(2)})`), h("td", {}, lFuera(String(b.id)))));
   }
   for (const w of e.muros || []) {
     const mw = o.muros[w.id] || {};

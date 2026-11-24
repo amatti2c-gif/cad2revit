@@ -82,12 +82,12 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
         lp_w = 2.42 * raiz
         if max(lam_f, lam_w) > 1.40 * raiz:
             Q *= max(0.5, 1.40 * raiz / max(lam_f, lam_w))
-            notas.append(f"pared esbelta en compresión (b/t = {max(lam_f, lam_w):.1f})")
+            notas.append(f"pared esbelta en compresión (b/t = {max(lam_f, lam_w):.1f}; Tabla B4.1a, reduce φPn)")
     # ---- tracción (D2) y compresión (E3) ----
     phiTn = 0.9 * Fy * g["A"]
     klr = max(K * L_plano / g["rx"], K * L_fuera / g["ry"])
     if klr > 200:
-        notas.append(f"esbeltez KL/r = {klr:.0f} > 200")
+        notas.append(f"esbeltez KL/r = {klr:.0f} > 200 (AISC 360-16 E2, nota: recomendación para elementos en compresión)")
     phiPn = 0.9 * _fcr(Fy, E, klr, Q) * g["A"]
     # ---- flexión, eje fuerte ----
     Mp = Fy * g["Zx"]

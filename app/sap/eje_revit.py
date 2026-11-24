@@ -133,6 +133,8 @@ class ModeloEje:
                                                        # vertical) | "x" (solo horizontal)
     apoyos_defecto: dict = field(default_factory=dict) # los apoyos antes de los cambios a mano (para la interfaz)
     liberaciones: dict = field(default_factory=dict)   # barra → (rótula en i, rótula en j): unión rotulada de la viga
+    l_fuera: dict = field(default_factory=dict)        # id de Revit → largo no arriostrado fuera del plano: m, "plano"
+                                                       # (entre los elementos que llegan) o "completo"
     barras: list = field(default_factory=list)         # (nombre, ni, nj, seccion)
     areas: list = field(default_factory=list)          # (nombre, [n1..n4], seccion_area)
     materiales: dict = field(default_factory=dict)     # nombre → {tipo, E, nu, gamma}
@@ -549,6 +551,7 @@ def mallar(eje: dict, pm: ParametrosMuroMadera | None = None, *, malla: float = 
         barra(v["x0"], v["z0"], v["x1"], v["z1"], _seccion(v, mod.secciones, mod.avisos, op.get("secciones")), rol, str(v.get("id")))
     # apoyos cambiados a mano en la interfaz, por la posición del nudo «x,z» (m): tipo o «libre» (sin apoyo)
     mod.apoyos_defecto = dict(mod.apoyos)
+    mod.l_fuera = {str(k): v for k, v in (op.get("l_fuera") or {}).items() if v not in (None, "")}
     for clave, tipo in (op.get("apoyos_nudo") or {}).items():
         try:
             xq, zq = (float(c) for c in str(clave).split(","))

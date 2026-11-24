@@ -431,8 +431,20 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
         p, g = perfiles[sec]
         L = sum(m.members[f].L() for f in fs)
         L_plano, n_arr = largo_en_plano(orig, fs)
-        L_fuera = lb_fuera or L
+        # fuera del plano: por defecto el largo completo; por elemento, un largo dado o «plano» (arriostrado donde llegan
+        # otros elementos, p. ej. los marcos transversales)
+        lf = (getattr(mod, "l_fuera", None) or {}).get(str(orig))
+        if lf == "plano":
+            L_fuera = L_plano
+        elif lf not in (None, "", "completo"):
+            try:
+                L_fuera = min(float(lf), L)
+            except (TypeError, ValueError):
+                L_fuera = lb_fuera or L
+        else:
+            L_fuera = lb_fuera or L
         cap = capacidades(p, L_plano, L_fuera, L_fuera, Fy=fy)
+        rol_e = mod.roles.get(fs[0], "viga")
         peor = None
         for cn, fac in combos_lrfd.items():
             for f in fs:
@@ -452,10 +464,16 @@ def analizar(mod, cargas, pc, *, fy: float = FY_A270ES, lb_fuera: float | None =
                         if peor is None or val > peor["razon"]:
                             peor = {"razon": val, "interaccion": rz["interaccion"], "corte": rz["corte"], "combo": cn,
                                     "Pu": float(Pu[k]), "Mu": float(Mk[k]), "Vu": float(Vk[k]), "ecuacion": rz["ecuacion"]}
+        # las notas de compresión (KL/r > 200, pared esbelta) aplican a los elementos diseñados a compresión: pilares
+        # y diagonales, o vigas con carga axial importante (Pu/φPn ≥ 0,2, H1-1a); en vigas a flexión no se aplican
+        notas = list(cap["notas"])
+        pu_rel = (peor or {}).get("Pu", 0.0) / cap["phiPn"] if cap["phiPn"] > 0 else 0.0
+        if rol_e not in ("pilar", "diagonal") and pu_rel < 0.2:
+            notas = [n for n in notas if not (n.startswith("esbeltez") or "en compresión" in n)]
         acero.append({"origen": orig, "seccion": sec, "barras": fs, "L": L, "L_plano": L_plano, "L_fuera": L_fuera,
-                      "arriostramientos_plano": n_arr, **(peor or {"razon": 0.0}),
+                      "arriostramientos_plano": n_arr, **(peor or {"razon": 0.0}), "rol": rol_e,
                       "phiPn": cap["phiPn"], "phiMn": cap["phiMn"], "phiVn": cap["phiVn"], "KL_r": cap["KL/r"],
-                      "notas": cap["notas"]})
+                      "notas": notas, "l_fuera_modo": lf or "completo"})
     acero.sort(key=lambda r: -r["razon"])
     columna_fuerte = _columna_fuerte(mod, perfiles, res_barra, combos_lrfd, estaticos, fy, ry)
 
