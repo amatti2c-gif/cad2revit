@@ -395,9 +395,61 @@ def crear_proyecto(datos: NuevoProyecto):
     return meta
 
 
+def _papelera() -> Path:
+    d = _datos() / "papelera"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 @app.delete("/api/proyectos/{pid}", status_code=204)
 def borrar_proyecto(pid: str):
-    shutil.rmtree(_proyecto(pid))
+    """Envía el proyecto a la papelera (se puede restaurar o borrar definitivamente desde ahí)."""
+    d = _proyecto(pid)
+    marca = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    shutil.move(str(d), str(_papelera() / f"{d.name}__{marca}"))
+
+
+@app.get("/api/papelera")
+def listar_papelera():
+    out = []
+    for d in sorted(_papelera().iterdir(), reverse=True):
+        if not (d / "meta.json").is_file():
+            continue
+        try:
+            m = json.loads((d / "meta.json").read_text(encoding="utf-8"))
+        except Exception:
+            m = {}
+        pid, _, marca = d.name.rpartition("__")
+        try:
+            fecha = datetime.strptime(marca, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc).isoformat(timespec="seconds")
+        except ValueError:
+            fecha = None
+        out.append({"item": d.name, "id": pid or d.name, "nombre": m.get("nombre") or pid, "eliminado": fecha})
+    return out
+
+
+def _item_papelera(item: str) -> Path:
+    d = _papelera() / item
+    if not re.fullmatch(r"[\w.\-]+", item) or item.startswith(".") or not (d / "meta.json").is_file():
+        raise HTTPException(404, "No está en la papelera")
+    return d
+
+
+@app.post("/api/papelera/{item}/restaurar")
+def restaurar_proyecto(item: str):
+    d = _item_papelera(item)
+    pid = item.rpartition("__")[0] or item
+    destino, k = _datos() / "proyectos" / pid, 1
+    while destino.exists():
+        k += 1
+        destino = _datos() / "proyectos" / f"{pid}-{k}"
+    shutil.move(str(d), str(destino))
+    return {"id": destino.name}
+
+
+@app.delete("/api/papelera/{item}", status_code=204)
+def borrar_definitivo(item: str):
+    shutil.rmtree(_item_papelera(item))
 
 
 # ---------------------------------------------------------------- lineamientos

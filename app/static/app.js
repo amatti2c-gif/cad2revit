@@ -118,6 +118,51 @@ $("#dlg-nuevo").addEventListener("close", () => {
   });
 });
 
+// ------------------------------------------------------------------ eliminar proyectos (papelera)
+async function cargarPapelera() {
+  const lista = await api("GET", "/api/papelera");
+  const caja = $("#papelera");
+  if (!lista.length) { caja.replaceChildren("vacía"); return; }
+  caja.replaceChildren(h("table", { class: "tabla" }, h("tbody", {}, lista.map(p => h("tr", {},
+    h("td", {}, p.nombre), h("td", { class: "tenue" }, p.eliminado ? p.eliminado.slice(0, 16).replace("T", " ") : ""),
+    h("td", {}, h("button", { type: "button", class: "sec", onclick: () => intentar(async () => {
+      const r = await api("POST", `/api/papelera/${encodeURIComponent(p.item)}/restaurar`);
+      toast(`Proyecto "${p.nombre}" restaurado`); $("#dlg-eliminar").close("restaurado"); await cargarProyectos(r.id);
+    }) }, "Restaurar")),
+    h("td", {}, h("button", { type: "button", class: "sec peligro", onclick: () => intentar(async () => {
+      if (!confirm(`¿Borrar definitivamente "${p.nombre}"? Esto no se puede deshacer.`)) return;
+      await api("DELETE", `/api/papelera/${encodeURIComponent(p.item)}`); await cargarPapelera();
+    }) }, "Borrar definitivamente")))))));
+}
+$("#btn-eliminar-proyecto").addEventListener("click", () => intentar(async () => {
+  const op = $("#sel-proyecto").selectedOptions[0];
+  const nombre = estado.proyecto ? (op?.textContent || "").replace(/\s+\(\d+ corridas?\)$/, "") : "";
+  $("#elim-nombre").textContent = nombre || "(ningún proyecto)";
+  $("#elim-confirmar").value = ""; $("#btn-elim-ok").disabled = true;
+  $("#elim-confirmar").disabled = !estado.proyecto;
+  $("#dlg-eliminar").dataset.nombre = nombre;
+  $("#dlg-eliminar").dataset.pid = estado.proyecto || "";
+  $("#dlg-eliminar").returnValue = "";
+  await cargarPapelera();
+  $("#dlg-eliminar").showModal();
+}));
+$("#elim-confirmar").addEventListener("input", ev => {
+  $("#btn-elim-ok").disabled = ev.target.value.trim() !== $("#dlg-eliminar").dataset.nombre.trim();
+});
+$("#dlg-eliminar").addEventListener("close", () => {
+  const dlg = $("#dlg-eliminar"), nombre = dlg.dataset.nombre, pid = dlg.dataset.pid;
+  const ok = dlg.returnValue === "ok" && pid && $("#elim-confirmar").value.trim() === (nombre || "").trim();
+  dlg.returnValue = "";
+  if (!ok) return;
+  intentar(async () => {
+    await api("DELETE", `/api/proyectos/${encodeURIComponent(pid)}`);
+    try { localStorage.removeItem("c2r-proyecto"); } catch {}
+    estado.proyecto = null;
+    toast(`Proyecto "${nombre}" enviado a la papelera`);
+    await cargarProyectos();
+  });
+});
+
 // ------------------------------------------------------------------ planos
 // ------------------------------------------------------------------ niveles y uso de planos
 const dist = { niveles: [], usos: {} };

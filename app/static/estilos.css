@@ -344,3 +344,9 @@ td.pendiente { color: #8a5a00; background: #fff6e0; }
 .mc-final { margin-top: 8px; font-size: 13px; }
 #mc-final-lista { margin: 6px 0 0 22px; font-size: 12.5px; }
 #mc-final-lista ul { margin: 4px 0 0; padding-left: 18px; }
+
+button.peligro { background: #b00020; border-color: #b00020; color: #fff; }
+button.sec.peligro { background: transparent; color: #b00020; border-color: #e3a1ab; }
+button.peligro:disabled { opacity: .45; }
+#dlg-eliminar { max-width: 560px; }
+#dlg-eliminar h4 { margin: 16px 0 6px; }

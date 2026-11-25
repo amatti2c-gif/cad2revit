@@ -18,6 +18,7 @@
     <div class="proyecto">
       <select id="sel-proyecto" aria-label="Proyecto"></select>
       <button id="btn-nuevo" class="sec">+ Nuevo proyecto</button>
+      <button id="btn-eliminar-proyecto" class="sec" title="Eliminar el proyecto (va a la papelera)">Eliminar</button>
     </div>
     <div class="ejecutar">
       <input id="notas-corrida" type="text" placeholder="¿Qué cambiaste en esta iteración? (opcional)">
@@ -711,6 +712,19 @@
       <label class="fila"><input id="nuevo-ejemplo" type="checkbox" checked> Incluir planos de ejemplo (casa de 2 pisos)</label>
       <p class="tenue">El proyecto usa las reglas comunes de la app. Solo los niveles y planos son propios del proyecto.</p>
       <div class="acciones"><button value="cancel" class="sec">Cancelar</button><button id="btn-crear" value="ok" class="pri">Crear</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="dlg-eliminar">
+    <form method="dialog">
+      <h3>Eliminar proyecto</h3>
+      <p>Se enviará a la papelera el proyecto <strong id="elim-nombre"></strong>, con sus planos, corridas, ejes, fundaciones,
+        costaneras, memorias e imágenes. Desde la papelera se puede restaurar.</p>
+      <label>Para confirmar, escribe su nombre <input id="elim-confirmar" autocomplete="off"></label>
+      <div class="acciones"><button value="cancel" class="sec">Cancelar</button>
+        <button id="btn-elim-ok" value="ok" class="pri peligro" disabled>Eliminar</button></div>
+      <h4>Papelera</h4>
+      <div id="papelera" class="tenue">vacía</div>
     </form>
   </dialog>
 
