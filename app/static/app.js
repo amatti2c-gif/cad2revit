@@ -3034,6 +3034,7 @@ async function m3dActualizar() {
   $("#m3d-avisos").replaceChildren(...v.avisos.map(a => h("li", {}, a)));
   m3dTabla();
   m3dSecciones();
+  m3dBotonTechos();
   m3dOpcionesVer();
   m3dDibujar();
 }
@@ -3093,7 +3094,7 @@ function m3dDibujar() {
     d.escala = Number($("#m3d-escala").value) / 40;
   }
   d.fantasmas = m3dFantasmas(ox, oy);
-  d.superficies = v.superficies || [];
+  d.superficies = $("#m3d-ver-techos").checked ? (v.superficies || []) : [];
   d.clave = m3d.nombre;
   // rótulas de vigas (siempre visibles en el modelo) y puntos editables según el modo
   const lib = v.liberaciones || {};
@@ -3289,6 +3290,30 @@ $$('input[name="sap-dim"]').forEach(el => el.addEventListener("change", () => in
 })));
 $("#sel-m3d").addEventListener("change", ev => ev.target.value && intentar(() => abrirModelo3d(ev.target.value)));
 $("#m3d-ver").addEventListener("change", m3dDibujar);
+$("#m3d-ver-techos").addEventListener("change", m3dDibujar);
+// ids de los techos de Revit del modelo (cubiertas y superficies clasificadas como techo)
+function m3dIdsTechos() {
+  const M = m3d.modelo || {}, rol = m3d.opciones.rol_muro || {};
+  const supV = Object.fromEntries((m3d.vista?.superficies || []).map(s_ => [s_.id, s_.tipo]));
+  return [...(M.techos || []), ...(M.superficies || [])].map(t => String(t.id))
+    .filter(id => (rol[id] || supV[id] || ((M.techos || []).some(t => String(t.id) === id) ? "techo" : "")) === "techo"
+      || /roof|cubierta/i.test(((M.superficies || []).find(t => String(t.id) === id) || {}).categoria || ""));
+}
+function m3dBotonTechos() {
+  const ids = m3dIdsTechos(), ex = new Set(m3d.opciones.excluir.map(String));
+  const b = $("#btn-m3d-techos");
+  b.classList.toggle("oculto", !ids.length);
+  b.textContent = ids.length && ids.every(i => ex.has(i)) ? "Incluir techos en el modelo" : "Quitar techos del modelo";
+}
+$("#btn-m3d-techos").addEventListener("click", () => intentar(async () => {
+  const ids = m3dIdsTechos(), ex = new Set(m3d.opciones.excluir.map(String));
+  const quitar = !ids.every(i => ex.has(i));
+  m3d.opciones.excluir = quitar ? [...new Set([...ex, ...ids])] : [...ex].filter(i => !ids.includes(i));
+  m3d.vigente = false;
+  await m3dActualizar();
+  toast(quitar ? `Techos quitados del modelo (${ids.length}): sin su peso, Lr ni viento; rige la opción «Cubierta» del panel de cargas`
+    : `Techos incluidos de nuevo (${ids.length})`);
+}));
 $$('input[name="m3d-modo"]').forEach(el => el.addEventListener("change", () => {
   m3d.modo = el.value;
   if (m3d.modo !== "elementos" && $("#m3d-ver").value !== "modelo") $("#m3d-ver").value = "modelo";
