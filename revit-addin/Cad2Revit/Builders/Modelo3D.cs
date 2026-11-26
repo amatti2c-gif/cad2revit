@@ -74,8 +74,8 @@ namespace Cad2Revit
             try { Puntos(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine, IncludeNonVisibleObjects = false })); }
             catch { return (a, b); }
             if (tmin == double.MaxValue || tmax - tmin < 0.1 * L) return (a, b);   // sin sólido útil: la línea tal cual
-            double t0 = Math.Max(0, tmin), t1 = Math.Min(L, tmax);
-            return (a + u * t0, a + u * t1);
+            // la viga dibujada manda: se recorta (extensiones negativas, uniones) o se alarga (Start/End Extension)
+            return (a + u * tmin, a + u * tmax);
         }
 
         public Informe ExportarModelo3D(ICollection<ElementId> seleccion, string ruta, string nombre)
@@ -148,8 +148,8 @@ namespace Cad2Revit
                     if (dims.TryGetValue("d", out var dd) && zj == (int)ZJustification.Top) bajar = dd / 2;
                     else if (dims.TryGetValue("d", out dd) && zj == (int)ZJustification.Bottom) bajar = -dd / 2;
                     XYZ a = lv.GetEndPoint(0), b = lv.GetEndPoint(1);
-                    // la línea de ubicación puede ser más larga que la viga dibujada (extensiones negativas, recortes
-                    // por uniones): se recorta a lo que ocupa su sólido a lo largo de la línea
+                    // la línea de ubicación puede ser más larga (extensiones negativas, uniones) o más corta (Start/End
+                    // Extension) que la viga dibujada: se lleva a lo que ocupa su sólido a lo largo de la línea
                     var (ra, rb) = RecortarAGeometria(fv, a, b);
                     double recorte = Mt(ra.DistanceTo(a) + rb.DistanceTo(b));
                     if (recorte > 0.02)
@@ -212,7 +212,7 @@ namespace Cad2Revit
             if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D: " +
                 string.Join("; ", motivos.Select(kv => $"{kv.Value} {kv.Key}")));
             if (recortadas.Count > 0)
-                _inf.Advertencia($"{recortadas.Count} viga(s) con la línea de ubicación más larga que la viga dibujada; se usó su largo real: " +
+                _inf.Advertencia($"{recortadas.Count} viga(s) con la línea de ubicación distinta de la viga dibujada (extensiones o recortes); se usó su largo real: " +
                     string.Join(", ", recortadas.Take(8)) + (recortadas.Count > 8 ? "…" : ""));
             if (pilares.Count + vigas.Count + muros.Count == 0) _inf.Error("La selección no tiene pilares, vigas ni muros");
             _inf.Advertencia($"Archivo: {ruta}");

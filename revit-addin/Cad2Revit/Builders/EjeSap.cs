@@ -207,6 +207,7 @@ namespace Cad2Revit
                     if (enSistemas.Contains(f.Id)) { costaneras++; continue; }
                     if (!(f.Location is LocationCurve lc) || !(lc.Curve is Line lv)) continue;
                     XYZ a = lv.GetEndPoint(0), b = lv.GetEndPoint(1);
+                    (a, b) = RecortarAGeometria(f, a, b);       // largo dibujado (Start/End Extension, recortes)
                     if (D(a) > tolerancia || D(b) > tolerancia || Math.Abs(X(a) - X(b)) < 0.05 && Math.Abs(a.Z - b.Z) < U.M(0.05)) continue;
                     // eje de la sección: la línea de Revit suele ir en la cara superior (justificación «Top»)
                     var dims = Dims(f);
