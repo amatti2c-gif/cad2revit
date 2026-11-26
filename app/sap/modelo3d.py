@@ -1007,6 +1007,65 @@ def cargas_para_visor(mod: Modelo3D, cargas: Cargas3D) -> dict:
     return out
 
 
+def lineas_fundacion(apoyos: list[dict], tol: float = 0.30) -> list[dict]:
+    """Agrupa los apoyos del modelo 3D en líneas de fundación corrida: apoyos alineados en X (misma y ± tol) o en Y
+    (misma x ± tol), primero las líneas con más apoyos; los que quedan solos forman una fundación propia (aislada).
+    Devuelve [{nombre, dir: (ex, ey), coord, apoyos: [{…, "t": posición sobre la línea}]}]."""
+    pend = {a["nudo"]: a for a in apoyos}
+    cand = []
+    for eje, k, otro in (("X", 1, 0), ("Y", 0, 1)):
+        grupos = []
+        for a in sorted(apoyos, key=lambda a: a["xyz"][k]):
+            if grupos and abs(a["xyz"][k] - grupos[-1][-1]["xyz"][k]) <= tol:
+                grupos[-1].append(a)
+            else:
+                grupos.append([a])
+        for g in grupos:
+            if len(g) >= 2:
+                cand.append((eje, g))
+    cand.sort(key=lambda c: -len(c[1]))
+    lineas = []
+    for eje, g in cand:
+        libres = [a for a in g if a["nudo"] in pend]
+        if len(libres) < 2:
+            continue
+        for a in libres:
+            pend.pop(a["nudo"], None)
+        k = 1 if eje == "X" else 0
+        coord = float(np.mean([a["xyz"][k] for a in libres]))
+        e = (1.0, 0.0) if eje == "X" else (0.0, 1.0)
+        lineas.append({"dir": e, "eje": eje, "coord": coord,
+                       "apoyos": sorted([{**a, "t": float(a["xyz"][0 if eje == "X" else 1])} for a in libres], key=lambda a: a["t"])})
+    for a in pend.values():
+        lineas.append({"dir": (1.0, 0.0), "eje": "X", "coord": float(a["xyz"][1]), "aislada": True,
+                       "apoyos": [{**a, "t": float(a["xyz"][0])}]})
+    for i, l_ in enumerate(lineas):
+        otro = "y" if l_["eje"] == "X" else "x"
+        l_["nombre"] = (f"F{i + 1}: " + ("fundación aislada" if l_.get("aislada") else f"línea en {l_['eje']}") +
+                        f", {otro} = {l_['coord']:.2f} m, {len(l_['apoyos'])} apoyo(s)")
+    return lineas
+
+
+def apoyos_de_linea(linea: dict) -> list[dict]:
+    """Apoyos de una línea en el formato del análisis de fundación corrida del eje: casos [H en la línea, Rz, M en el
+    plano vertical de la línea]; el sismo en la dirección de la línea va como EX y el vertical como EZ (el sismo
+    perpendicular no carga la viga de fundación en su plano)."""
+    ex, ey = linea["dir"]
+    n = (ey, -ex)                                          # e × ẑ: eje del momento en el plano de la línea
+    otro = "EY" if linea["eje"] == "X" else "EX"
+    out = []
+    for a in linea["apoyos"]:
+        cs = {}
+        for c, r in a["casos"].items():
+            if c == otro:
+                continue
+            nombre = "EX" if c in ("EX", "EY") else c
+            cs[nombre] = [r[0] * ex + r[1] * ey, r[2], r[3] * n[0] + r[4] * n[1]]
+        out.append({"nudo": a["nudo"], "x": a["t"], "tipo": a["tipo"], "pilar": a.get("pilar"), "muro": a.get("muro"),
+                    "casos": cs})
+    return out
+
+
 class ModeloInestable(ValueError):
     """El modelo tiene un mecanismo; el texto dice qué se mueve, hacia dónde y qué falta."""
 
@@ -1504,6 +1563,35 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
     for k in "XY":
         casos.append({"caso": f"E{k}", "tipo": "QUAKE", "corte_basal": dirs[k]["q0"] * dirs[k]["factor"],
                       "corte_espectral": dirs[k]["q0"], "factor": dirs[k]["factor"], "T": dirs[k]["T"]})
+    # reacciones de cada apoyo (cargas de la fundación): estados puros [Rx, Ry, Rz, Mx, My, Mz]; sismo EX y EY por CQC
+    # con la torsión accidental del apoyo y el signo del modo fundamental de esa dirección; EZ con la masa faltante
+    gl2 = np.asarray(D2_idx).ravel().astype(int)
+    pos2 = {int(g_): k for k, g_ in enumerate(gl2)}
+    RK = np.asarray(K21 @ vecs[:, aporta])
+    Rres = np.asarray(K21 @ d_res).ravel()
+    i_dom = {k: aporta.index(dirs[k]["i_fund"]) if dirs[k]["i_fund"] in aporta else 0 for k in "XY"}
+    i_dz = int(np.argmax(np.abs(cz))) if len(cz) else 0
+    apoyos_out = []
+    for n_, t_ in mod.apoyos.items():
+        nd = m.nodes[n_]
+        idx = [pos2.get(nd.ID * 6 + k) for k in range(6)]
+        fila = np.array([RK[j, :] if j is not None else np.zeros(RK.shape[1]) for j in idx])      # 6 × modos
+        cs = {c: [float(nd.RxnFX[c]), float(nd.RxnFY[c]), float(nd.RxnFZ[c]),
+                  float(nd.RxnMX[c]), float(nd.RxnMY[c]), float(nd.RxnMZ[c])] for c in estaticos}
+        for k, coefk in (("X", cx), ("Y", cy)):
+            modos_ = [coefk[i] * fila[:, i] for i in range(len(aporta))]
+            v = _cqc(modos_, om_a) * f_tor(mod.nudos[n_][:2], k) if modos_ else np.zeros(6)
+            sg = np.sign(modos_[i_dom[k]]) if modos_ else np.ones(6)
+            cs[f"E{k}"] = [float(x) for x in v * np.where(sg == 0, 1, sg)]
+        modos_z = [cz[i] * fila[:, i] for i in range(len(aporta))]
+        rres = np.array([Rres[j] if j is not None else 0.0 for j in idx])
+        vz = np.sqrt((_cqc(modos_z, om_a) if modos_z else np.zeros(6)) ** 2 + rres ** 2)
+        dom = modos_z[i_dz] if modos_z and np.abs(modos_z[i_dz]).sum() > np.abs(rres).sum() else rres
+        cs["EZ"] = [float(x) for x in vz * np.where(np.sign(dom) == 0, 1, np.sign(dom))]
+        pil = next((mod.origen.get(f) for f, a, b, _ in mod.barras if mod.roles.get(f) == "pilar" and n_ in (a, b)), None)
+        mur = next((mod.origen.get(a_) for a_, ns, _ in mod.areas if n_ in ns), None)
+        apoyos_out.append({"nudo": n_, "xyz": [float(v) for v in mod.nudos[n_]], "tipo": t_, "pilar": pil, "muro": mur,
+                           "casos": cs})
 
     # ---- visor 3D ----
     paso(97, "Preparando el visor 3D", 100)
@@ -1533,4 +1621,5 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
         "acero": acero, "madera": madera, "deformaciones": deform, "casos": casos, "combos_lrfd": cargas.combos,
         "patrones": cargas.patrones, "resumen_cargas": cargas.resumen, "avisos": mod.avisos, "sin_apoyo": mod.sin_apoyo,
         "visor": visor, "conteo": {"nudos": len(mod.nudos), "barras": len(mod.barras), "shells": len(mod.areas)},
+        "apoyos": apoyos_out, "origen_xy": list(mod.origen_xy),
     }

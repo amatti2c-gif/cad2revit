@@ -170,3 +170,21 @@ def test_estructura_sin_cubierta():
     assert w and all(abs(b[2][2]) < 1e-4 for b in w)
     con = cargas3d(mallar3d(_portico()), ParametrosCargas())
     assert [b for b in con.barras if b[1] == "LR"]
+
+
+def test_fundaciones_del_modelo_3d():
+    """Los apoyos se agrupan en líneas (dos filas de pilares → dos fundaciones corridas en X); en cada línea las
+    reacciones verticales suman lo del modelo y la fundación se analiza con el mismo cálculo del eje."""
+    import json
+    from sap.fundacion import ParametrosFundacion, analizar_fundacion
+    from sap.modelo3d import apoyos_de_linea, lineas_fundacion
+    mod = mallar3d(_portico())
+    c = cargas3d(mod, ParametrosCargas())
+    r = json.loads(json.dumps(analizar3d(mod, c, ParametrosCargas()), default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))
+    ls = lineas_fundacion(r["apoyos"])
+    assert [len(l_["apoyos"]) for l_ in ls] == [3, 3] and all(l_["eje"] == "X" for l_ in ls)
+    rz = sum(a["casos"]["DEAD"][1] for l_ in ls for a in apoyos_de_linea(l_))
+    assert abs(rz - next(x for x in r["casos"] if x["caso"] == "DEAD")["Rz"]) < 1e-6
+    assert all("EX" in a["casos"] and "EZ" in a["casos"] and "EY" not in a["casos"] for a in apoyos_de_linea(ls[0]))
+    f = analizar_fundacion(apoyos_de_linea(ls[0]), r["combos_lrfd"], r["patrones"], ParametrosFundacion())
+    assert f["servicio"] and f["viga"] and f["resumen_suelo"]["FU_presion_max"] > 0

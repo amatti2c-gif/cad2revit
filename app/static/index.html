@@ -495,7 +495,16 @@
           presión de contacto, el % del área en compresión (≥ 80 %, NCh433:2026 7.2.1) y el deslizamiento con las
           combinaciones de servicio, y se diseñan la zapata como viga de fundación y el pedestal como muro (ACI 318-19)
           con las combinaciones mayoradas.</p>
-        <div class="fila-sap"><label>Eje <select id="sel-eje-fun"></select></label><span id="fun-estado" class="tenue"></span></div>
+        <div class="fila-sap"><strong>Cargas de:</strong>
+          <label><input type="radio" name="fun-origen" value="2d" checked> un eje 2D</label>
+          <label><input type="radio" name="fun-origen" value="3d"> el modelo 3D (todas sus líneas de fundación)</label></div>
+        <div class="fila-sap"><label id="fun-lbl-eje">Eje <select id="sel-eje-fun"></select></label>
+          <label id="fun-lbl-m3d" class="oculto">Modelo 3D <select id="sel-m3d-fun"></select></label>
+          <span id="fun-estado" class="tenue"></span></div>
+        <p id="fun-nota-3d" class="tenue oculto">Los apoyos del modelo 3D se agrupan en líneas de fundación corrida (apoyos alineados
+          en X o en Y; los que quedan solos, fundación aislada) y cada línea se analiza como la fundación de un eje, con las
+          reacciones del análisis 3D por estado de carga: verticales, fuerza horizontal y momento en el plano de la línea, sismo
+          en su dirección (EX o EY) y vertical (EZ). Si el modelo 3D no tiene un análisis vigente, se analiza primero.</p>
         <div id="fun-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="fun-avance-relleno" class="relleno-avance"></div></div>
           <span id="fun-avance-txt"></span></div>
       </div>
@@ -543,6 +552,13 @@
               <label>Zapata: estribo φ (mm) <input data-sap="fundacion.armaduras.fun_estribo_diametro_mm" type="number" step="any" value="8"></label>
               <label>Zapata: estribo @ (cm) <input data-sap="fundacion.armaduras.fun_estribo_separacion_cm" type="number" step="any" value="20"></label>
           </div></div>
+      </div>
+      <div class="panel oculto" id="fun-lineas-panel">
+        <div class="panel-tit"><span>Líneas de fundación del modelo 3D</span></div>
+        <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-lineas"></table></div>
+        <svg id="fun-planta" viewBox="0 0 100 40" role="img" aria-label="Planta de las líneas de fundación"></svg>
+        <div class="fila-sap"><label>Ver el detalle de <select id="sel-linea-fun"></select></label></div>
+        <p id="fun-nota-lineas" class="tenue"></p>
       </div>
       <div class="panel oculto" id="fun-res">
         <div class="panel-tit"><span>Resultados</span></div>

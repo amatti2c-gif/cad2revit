@@ -2685,8 +2685,105 @@ $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 // ------------------------------------------------------------------ Fundaciones (pestaña 7)
 const fun = { res: null };
 
+const fun3 = { activo: false, nombre: null, d: null };
+function funOrigen(tres) {
+  fun3.activo = tres;
+  $$('input[name="fun-origen"]').forEach(el => { el.checked = el.value === (tres ? "3d" : "2d"); });
+  $("#fun-lbl-eje").classList.toggle("oculto", tres);
+  $("#fun-lbl-m3d").classList.toggle("oculto", !tres);
+  $("#fun-nota-3d").classList.toggle("oculto", !tres);
+  $("#fun-lineas-panel").classList.add("oculto");
+  $("#fun-res").classList.add("oculto");
+  try { localStorage.setItem("c2r-fun-origen", tres ? "3d" : "2d"); } catch {}
+}
+async function cargarFundacion3d() {
+  const lista = await api("GET", P("/modelos3d"));
+  const sel = $("#sel-m3d-fun");
+  sel.replaceChildren(...(lista.length ? lista.map(e => h("option", { value: e.nombre },
+    `${e.nombre.replace(/^3d-/, "")} · ${e.pilares} pilares, ${e.vigas} vigas${e.analizado ? " · analizado" : " · sin analizar"}`))
+    : [h("option", { value: "" }, "— sin modelos 3D: súbelos en la pestaña 6 (modo 3D) —")]));
+  const n = fun3.nombre || m3d.nombre;
+  if (lista.some(e => e.nombre === n)) sel.value = n;
+  fun3.nombre = sel.value || null;
+  $("#fun-estado").textContent = "";
+  if (!fun3.nombre) return;
+  try {
+    const aj = (await api("GET", P(`/modelos3d/${encodeURIComponent(fun3.nombre)}`))).ajustes || {};
+    if (aj.parametros?.fundacion) sapPonerParametros({ fundacion: aj.parametros.fundacion });
+  } catch { /* sin ajustes */ }
+  funEsquema();
+  try { funMostrar3d(await api("GET", P(`/modelos3d/${encodeURIComponent(fun3.nombre)}/fundacion`))); } catch { /* aún sin análisis */ }
+}
+async function funAnalizar3d() {
+  if (!fun3.nombre) throw new Error("Elige un modelo 3D (pestaña 6, modo 3D)");
+  const nombre = fun3.nombre, R3 = resto => P(`/modelos3d/${encodeURIComponent(nombre)}${resto}`);
+  const d0 = await api("GET", R3(""));
+  const aj = d0.ajustes || {};
+  const par = { ...(aj.parametros || {}), fundacion: sapParametros().fundacion || {} };
+  await api("PUT", R3("/ajustes"), { parametros: par, opciones: aj.opciones || {} });
+  let vigente = false;
+  try { vigente = (await api("GET", R3("/resultado"))).apoyos != null; } catch { /* sin análisis */ }
+  if (!vigente) {
+    $("#fun-estado").textContent = "Analizando el modelo 3D (sus reacciones son las cargas de las fundaciones)…";
+    await conAvance("fun", R3("/avance"), $("#btn-fundacion"), () => api("POST", R3("/analizar"), { parametros: par, opciones: aj.opciones || {} }));
+  }
+  $("#fun-estado").textContent = "Analizando las fundaciones…";
+  const d = await conAvance("fun", R3("/fundacion/avance"), $("#btn-fundacion"),
+    () => api("POST", R3("/fundacion"), { parametros: par.fundacion }));
+  funMostrar3d(d);
+  $("#fun-estado").textContent = "Listo";
+}
+function funMostrar3d(d) {
+  fun3.d = d;
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2), pc = x => x == null ? "—" : (100 * x).toFixed(0) + " %";
+  const celda = (r, lim = 1, menor = false) => h("td", { class: r == null ? "" : ((menor ? r < lim : r > lim) ? "nocumple" : "cumple") }, f2(r));
+  const maxR = (lista) => Math.max(0, ...lista.map(v => v.razon ?? 0));
+  $("#fun-lineas-panel").classList.remove("oculto");
+  $("#fun-lineas").replaceChildren(
+    h("thead", {}, h("tr", {}, ...["Fundación", "L (m)", "FU presión", "Área en compresión mín.", "FS deslizamiento mín.", "Viga (máx. razón)",
+      "Zapata (máx. razón)", "Pedestal (máx. razón)"].map(t => h("th", {}, t)))),
+    h("tbody", {}, ...d.lineas.map((l, i) => { const r = l.resultado, s = r.resumen_suelo;
+      return h("tr", { class: "fila-clic", onclick: () => { $("#sel-linea-fun").value = i; funMostrar(r); } },
+        h("td", {}, l.nombre), h("td", {}, f2(r.L)), celda(s.FU_presion_max),
+        h("td", { class: s.pct_compresion_min >= 0.8 ? "cumple" : "nocumple" }, pc(s.pct_compresion_min)),
+        celda(s.FS_desliz_min, s.fs_desliz_exigido ?? 1, true), celda(maxR(r.viga)), celda(maxR(r.zapata)), celda(maxR(r.pedestal))); })));
+  const sel = $("#sel-linea-fun"), antes = sel.value;
+  sel.replaceChildren(...d.lineas.map((l, i) => h("option", { value: i }, l.nombre)));
+  sel.value = antes && antes < d.lineas.length ? antes : "0";
+  $("#fun-nota-lineas").textContent = (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
+  funPlanta3d();
+  if (d.lineas.length) funMostrar(d.lineas[Number(sel.value) || 0].resultado);
+}
+function funPlanta3d() {
+  const d = fun3.d; if (!d) return;
+  const svg = $("#fun-planta"), elegida = Number($("#sel-linea-fun").value) || 0;
+  const pts = d.lineas.flatMap(l => l.resultado.apoyos.map(a => l.eje === "X" ? [a.x, l.coord] : [l.coord, a.x]));
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1, y0 = Math.min(...ys) - 1.5, y1 = Math.max(...ys) + 3;
+  const W = x1 - x0, H = y1 - y0, k = Math.max(W, H) / 100;
+  svg.setAttribute("viewBox", `${x0} ${-y1} ${W} ${H}`);
+  const hijos = [];
+  d.lineas.forEach((l, i) => {
+    const r = l.resultado, sel_ = i === elegida, b = Math.max(r.seccion.b_zapata, 3 * k);
+    const [a0, a1] = [r.x0, r.x1];
+    const rect = l.eje === "X" ? { x: a0, y: -(l.coord + b / 2), width: a1 - a0, height: b } : { x: l.coord - b / 2, y: -a1, width: b, height: a1 - a0 };
+    hijos.push(s("rect", { ...rect, fill: sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)", stroke: sel_ ? "#2d6cdf" : "#888",
+      "stroke-width": k * 0.3, style: "cursor:pointer" }));
+    const t = s("text", { x: l.eje === "X" ? a0 : l.coord + b, y: l.eje === "X" ? -(l.coord + b / 2 + k) : -a1, "font-size": 2.4 * k, fill: "#333" });
+    t.textContent = l.nombre.split(":")[0];
+    hijos.push(t);
+    for (const a of r.apoyos) {
+      const [px, py] = l.eje === "X" ? [a.x, l.coord] : [l.coord, a.x];
+      hijos.push(s("circle", { cx: px, cy: -py, r: 0.9 * k, fill: a.pilar ? "#1f4e9c" : "#b98a4a" }));
+    }
+  });
+  svg.replaceChildren(...hijos);
+  svg.querySelectorAll("rect").forEach((el, i) => el.addEventListener("click", () => { $("#sel-linea-fun").value = i; funPlanta3d(); funMostrar(d.lineas[i].resultado); }));
+}
+
 async function cargarFundacion() {
   if (!estado.proyecto) return;
+  if (fun3.activo) { await cargarFundacion3d(); return; }
   if (!sap.nombre) await cargarSap();
   const sel = $("#sel-eje-fun");
   sel.replaceChildren(...[...$("#sel-eje-sap").options].map(o => h("option", { value: o.value }, o.textContent)));
@@ -2922,7 +3019,11 @@ function funEsquema() {
   svg.replaceChildren(...hijos);
 }
 
-$("#btn-fundacion").addEventListener("click", () => intentar(funAnalizar));
+$("#btn-fundacion").addEventListener("click", () => intentar(() => fun3.activo ? funAnalizar3d() : funAnalizar()));
+$$('input[name="fun-origen"]').forEach(el => el.addEventListener("change", () => intentar(async () => { funOrigen(el.value === "3d"); await cargarFundacion(); })));
+$("#sel-m3d-fun").addEventListener("change", ev => intentar(async () => { fun3.nombre = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); await cargarFundacion3d(); }));
+$("#sel-linea-fun").addEventListener("change", () => { if (fun3.d) { funPlanta3d(); funMostrar(fun3.d.lineas[Number($("#sel-linea-fun").value) || 0].resultado); } });
+try { if (localStorage.getItem("c2r-fun-origen") === "3d") funOrigen(true); } catch {}
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("input", funEsquema));
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("change", funEsquema));
 $("#fun-combo").addEventListener("change", funDibujar);

@@ -2151,7 +2151,7 @@ def leer_modelo3d(pid: str, nombre: str):
 def borrar_modelo3d(pid: str, nombre: str):
     f = _modelo3d_f(_proyecto(pid), nombre)
     f.unlink()
-    for ext in (".ajustes.json", ".resultado.json"):
+    for ext in (".ajustes.json", ".resultado.json", ".fundacion.json"):
         if _hermano3d(f, ext).is_file():
             _hermano3d(f, ext).unlink()
 
@@ -2240,6 +2240,66 @@ def analizar_modelo3d(pid: str, nombre: str, aj: AjustesEje):
                        (sorted(o) if isinstance(o, set) else (float(o) if isinstance(o, np.floating) else str(o))))
     _hermano3d(f, ".resultado.json").write_text(texto, encoding="utf-8")
     return Response(texto, media_type="application/json")
+
+
+@app.post("/api/proyectos/{pid}/modelos3d/{nombre}/fundacion")
+def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
+    """Fundaciones corridas del modelo 3D: los apoyos se agrupan en líneas (alineados en X o en Y) y cada línea se
+    analiza como la fundación de un eje (viga sobre resortes de compresión) con las reacciones del análisis 3D."""
+    from app.sap.fundacion import ArmadurasFundacion, ParametrosFundacion, analizar_fundacion
+    from app.sap.modelo3d import apoyos_de_linea, lineas_fundacion
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    rf = _hermano3d(f, ".resultado.json")
+    if not rf.is_file():
+        raise HTTPException(400, "Primero analiza el modelo 3D (pestaña 6): sus reacciones son las cargas de la fundación")
+    res = json.loads(rf.read_text(encoding="utf-8"))
+    if not res.get("apoyos"):
+        raise HTTPException(400, "El análisis del modelo 3D es de una versión anterior: vuelve a analizarlo en la pestaña 6")
+    par = dict(pedido.parametros or {})
+    arm = par.pop("armaduras", None) or {}
+    try:
+        pf = ParametrosFundacion(**{k: v for k, v in par.items() if k in ParametrosFundacion.__dataclass_fields__ and v not in (None, "")},
+                                 armaduras=ArmadurasFundacion(**{k: v for k, v in arm.items()
+                                                                 if k in ArmadurasFundacion.__dataclass_fields__ and v not in (None, "")}))
+    except (TypeError, ValueError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+    lineas = lineas_fundacion(res["apoyos"])
+    clave = f"{pid}/{nombre}/fundacion3d"
+    out = []
+    try:
+        for i, l_ in enumerate(lineas):
+            base = 100 * i / len(lineas)
+            r = analizar_fundacion(apoyos_de_linea(l_), res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf,
+                                   avance=lambda pct, etapa, hasta=None, i=i, base=base: _AVANCE_ANALISIS.__setitem__(
+                                       clave, {"pct": base + pct / len(lineas), "etapa": f"{lineas[i]['nombre']}: {etapa}",
+                                               "hasta": base + (hasta if hasta is not None else pct) / len(lineas)}))
+            out.append({"nombre": l_["nombre"], "eje": l_["eje"], "coord": l_["coord"], "aislada": bool(l_.get("aislada")),
+                        "resultado": r})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        _AVANCE_ANALISIS.pop(clave, None)
+    d = {"lineas": out, "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"), "analisis_3d": res.get("fecha"),
+         "nota": "Cada línea se analiza en su plano vertical: cargas verticales, fuerza horizontal en la dirección de la línea y "
+                 "momento en ese plano, con el sismo en esa dirección (EX o EY) y el vertical (EZ). Las fuerzas perpendiculares a "
+                 "la línea (viento o sismo transversal) no se incluyen en la viga de fundación: las toman las fundaciones "
+                 "transversales o el empuje del suelo."}
+    texto = json.dumps(d, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+    _hermano3d(f, ".fundacion.json").write_text(texto, encoding="utf-8")
+    return Response(texto, media_type="application/json")
+
+
+@app.get("/api/proyectos/{pid}/modelos3d/{nombre}/fundacion")
+def fundacion_modelo3d_guardada(pid: str, nombre: str):
+    r = _hermano3d(_modelo3d_f(_proyecto(pid), nombre), ".fundacion.json")
+    if not r.is_file():
+        raise HTTPException(404, "Las fundaciones de este modelo 3D aún no se han analizado")
+    return json.loads(r.read_text(encoding="utf-8"))
+
+
+@app.get("/api/proyectos/{pid}/modelos3d/{nombre}/fundacion/avance")
+def avance_fundacion_3d(pid: str, nombre: str):
+    return _AVANCE_ANALISIS.get(f"{pid}/{nombre}/fundacion3d") or {"pct": None, "etapa": ""}
 
 
 @app.get("/api/proyectos/{pid}/modelos3d/{nombre}/avance")
