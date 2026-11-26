@@ -156,3 +156,17 @@ def test_viento_en_barras_sin_cerramiento():
     viga = [f for f, r in mod.roles.items() if r != "pilar"]
     assert not [x for x in c.barras if x[0] in viga and x[1] == "W1"]          # paralela al viento X
     assert [x for x in c.barras if x[0] in viga and x[1] == "W3"]               # normal al viento Y
+
+
+def test_estructura_sin_cubierta():
+    """Sin cubierta: sin peso de techo, sin Lr y sin succión de techo; queda el viento sobre las barras."""
+    pc = ParametrosCargas(sin_cubierta=True)
+    mod = mallar3d(_portico())
+    c = cargas3d(mod, pc)
+    assert not [b for b in c.barras if b[1] in ("DEAD", "LR")]
+    w = [b for b in c.barras if b[1] == "W1"]
+    # sin succión de techo: solo viento lateral en barras (los pilares unidos con 25 mm de excentricidad quedan apenas
+    # inclinados y dan una componente vertical despreciable)
+    assert w and all(abs(b[2][2]) < 1e-4 for b in w)
+    con = cargas3d(mallar3d(_portico()), ParametrosCargas())
+    assert [b for b in con.barras if b[1] == "LR"]

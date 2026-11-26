@@ -789,7 +789,11 @@ def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
     sup_techo = any(s_["tipo"] == "techo" for s_ in mod.superficies)
     techo, criterio = _vigas_que_cargan(mod, [f for f, r in mod.roles.items() if r == "techo"])
     if sup_techo:
-        techo = []                                     # el techo de Revit reparte su peso, Lr y viento directamente
+        techo = []
+    elif p.sin_cubierta:
+        techo = []                                     # estructura abierta sin cubierta: ni peso de techo, ni Lr, ni succión
+        c.resumen.append("Estructura sin cubierta: no se aplican el peso del techo, la sobrecarga Lr ni la succión del viento en el "
+                         "techo; el viento actúa solo sobre las barras")                                     # el techo de Revit reparte su peso, Lr y viento directamente
     defecto = float(p.ancho_colaborante or 1.0)
     trib = _ancho_tributario(mod, techo, defecto) if not p.ancho_colaborante else {f: defecto for f in techo}
     c.trib = trib
@@ -797,7 +801,7 @@ def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
     z_base = min(zs)
     xy = np.array([q[:2] for q in mod.nudos.values()]) if mod.nudos else np.zeros((1, 2))
     Bx, By = float(np.ptp(xy[:, 0])) or 1.0, float(np.ptp(xy[:, 1])) or 1.0
-    if not sup_techo:
+    if techo:
         c.resumen.append("Ancho tributario de las vigas de techo: " + ("dado en la app, " + f"{defecto:.2f} m" if p.ancho_colaborante else
                          "la mitad de la distancia a las vigas de techo paralelas vecinas (en planta)") +
                          f"; el techo se apoya en las vigas {criterio}" +

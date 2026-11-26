@@ -94,6 +94,8 @@ class ParametrosCargas:
                                              # ancho tributario del eje que exportó Revit
     peso_techo: float = 0.03            # tonf/m² de techo (cubierta, costaneras, aislación)
     peso_cerramiento: float = 0.015     # tonf/m² de cerramiento (modelo 3D: muros sin rigidez que reciben viento)
+    sin_cubierta: bool = False          # modelo 3D sin techo de Revit: True = la estructura no tiene cubierta (sin peso de
+                                        # techo, sin Lr y sin succión de techo; solo viento sobre las barras)
     lo_techo: float = 1.0 / G_ACC      # tonf/m², NCh1537 Tabla 4: techo con acceso solo para mantención: 1 kPa = 102 kgf/m²
     reducir_lr: bool = True             # NCh1537 §8.2: reducción por área tributaria (R1) y pendiente (R2)
     # viento
