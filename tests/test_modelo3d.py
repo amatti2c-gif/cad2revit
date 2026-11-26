@@ -225,3 +225,37 @@ def test_fundaciones_con_geometria_de_revit():
     # una fila sin fundación en Revit: sus apoyos van a una línea automática, con aviso
     ls2, av2 = lineas_desde_revit(r["apoyos"], _fundaciones_revit([0.0]), r["origen_xy"])
     assert len(ls2) == 2 and any("no caen" in a for a in av2) and ls2[1]["nombre"].endswith("(automática)")
+
+
+def test_emparrillado_3d_de_fundaciones():
+    """Sin cruces, el emparrillado da la misma flexión, corte y carga en el suelo que el análisis por eje; con zapatas
+    transversales queda unido (cruces) y en equilibrio."""
+    import dataclasses
+    import json
+    from sap.fundacion import ParametrosFundacion, analizar_fundacion
+    from sap.fundacion3d import analizar_emparrillado
+    from sap.modelo3d import apoyos_de_linea, lineas_desde_revit
+    mod = mallar3d(_portico())
+    r = json.loads(json.dumps(analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas()),
+                              default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))
+    ls, _ = lineas_desde_revit(r["apoyos"], _fundaciones_revit([0.0, -3.334]), r["origen_xy"])
+    e = analizar_emparrillado(ls, r["combos_lrfd"], r["patrones"], ParametrosFundacion())
+    for l_, x in zip(ls, e["lineas"]):
+        f2 = analizar_fundacion(apoyos_de_linea(l_), r["combos_lrfd"], r["patrones"],
+                                dataclasses.replace(ParametrosFundacion(), **l_["geometria"]), x0=l_["x0"], x1=l_["x1"])
+        for a, b in zip(x["viga"][:3], f2["viga"][:3]):
+            va = a.get("Mu_tonfm") if a.get("Mu_tonfm") is not None else a["Vu_tonf"]
+            vb = b.get("Mu_tonfm") if b.get("Mu_tonfm") is not None else b["Vu_tonf"]
+            assert abs(va - vb) < 1e-6 * max(1, abs(vb)), (a["verificacion"], va, vb)
+        nd3 = next(s for s in x["servicio"] if s["combo"] == "D")["N"]
+        nd2 = next(s for s in f2["servicio"] if s["combo"] == "D")["N"]
+        assert abs(nd3 - nd2) < 1e-6
+    f = _fundaciones_revit([0.0, -3.334])
+    for k, xx in enumerate((0.0, 6.0)):
+        f["elementos"].append({"id": f"T{k}", "clase": "zapata_corrida", "tipo": "Z", "a": [xx, 0.3], "b": [xx, -3.634],
+                               "largo": 3.93, "ancho": 0.6, "z_inf": -0.8, "z_sup": -0.55})
+    ls, _ = lineas_desde_revit(r["apoyos"], f, r["origen_xy"])
+    e = analizar_emparrillado(ls, r["combos_lrfd"], r["patrones"], ParametrosFundacion())
+    assert e["conjunto"]["cruces"] == 4
+    n_lineas = sum(next(s for s in x["servicio"] if s["combo"] == "D")["N"] for x in e["lineas"])
+    assert abs(n_lineas - next(g for g in e["conjunto"]["servicio"] if g["combo"] == "D")["N"]) < 1e-6

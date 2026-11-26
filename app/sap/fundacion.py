@@ -301,6 +301,62 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
                          "q": [float(v) / B for v in r["q"]], "asentamiento_max_mm": float(-np.min(r["v"]) * 1000)})
 
     # ---- hormigón: combinaciones de resistencia ----
+    peor = {"Mpos": (0.0, ""), "Mneg": (0.0, ""), "V": (0.0, ""), "qu": (0.0, ""), "H": (0.0, ""), "P_apoyo": {}}
+    lista_lrfd = _expandir(combos_lrfd, vientos)
+    for k_l, (nombre, fac, _) in enumerate(lista_lrfd):
+        paso(55 + 40 * k_l / len(lista_lrfd), f"Hormigón: combinación mayorada {k_l + 1} de {len(lista_lrfd)}")
+        P, M, H = cargas(fac)
+        r = _viga_sobre_resortes(xs, EI, k_lin, P, M)
+        if not r["estable"]:
+            continue
+        mmax, mmin = float(np.max(r["M"])), float(np.min(r["M"]))
+        vmax = float(np.max(np.abs(r["V"])))
+        qu = float(np.max(r["q"]) / B)
+        if mmax > peor["Mpos"][0]:
+            peor["Mpos"] = (mmax, nombre)
+        if -mmin > peor["Mneg"][0]:
+            peor["Mneg"] = (-mmin, nombre)
+        if vmax > peor["V"][0]:
+            peor["V"] = (vmax, nombre)
+        if qu > peor["qu"][0]:
+            peor["qu"] = (qu, nombre)
+        if abs(H) > peor["H"][0]:
+            peor["H"] = (abs(H), nombre)
+        for a in apoyos:                                                 # compresión que baja por cada apoyo
+            rz = sum(f * a["casos"][c][1] for c, f in fac.items() if c in a["casos"])
+            if rz > peor["P_apoyo"].get(a["nudo"], (0.0, ""))[0]:
+                peor["P_apoyo"][a["nudo"]] = (rz, nombre)
+
+    paso(96, "Diseño del pedestal y de la zapata")
+    viga, zapata, muro = disenar_seccion(pf, L, peor, apoyos)
+    ok_srv = [s for s in servicio if s["estable"]]
+    return {
+        "x": [float(v) for v in xs], "L": L, "x0": x0, "x1": x1, "EI": EI, "peso_propio_tonf_m": peso,
+        "seccion": {"b_pedestal": bp, "h_pedestal": hp, "b_zapata": B, "h_zapata": hz, "I_m4": I, "yc_m": yc},
+        "apoyos": [{"x": a["x"], "nudo": a["nudo"], "pilar": a.get("pilar"), "muro": a.get("muro")} for a in apoyos],
+        "servicio": servicio,
+        "resumen_suelo": {
+            "pct_compresion_min": min((s["pct_compresion"] for s in ok_srv), default=0.0),
+            "combo_pct": min(ok_srv, key=lambda s: s["pct_compresion"])["combo"] if ok_srv else "",
+            "FU_presion_max": max((s["FU_presion"] for s in ok_srv), default=0.0),
+            "combo_presion": max(ok_srv, key=lambda s: s["FU_presion"])["combo"] if ok_srv else "",
+            "FS_desliz_min": min((s["FS_deslizamiento"] for s in ok_srv if s["FS_deslizamiento"]), default=None),
+            "inestables": [s["combo"] for s in servicio if not s["estable"]],
+            "q_adm": pf.q_adm, "q_adm_eventual": q_ev,
+            "fs_desliz_exigido": pf.fs_deslizamiento,
+            "nota_deslizamiento": ("FS mínimo al deslizamiento 1,0: las fundaciones son zapatas corridas conectadas entre sí en todo el edificio, de modo que el deslizamiento de un eje lo resisten también las fundaciones transversales; el cálculo por eje, sin esa continuidad ni el empuje pasivo del suelo, es conservador" if pf.fs_deslizamiento <= 1.0 + 1e-9
+                                   else f"FS mínimo al deslizamiento {pf.fs_deslizamiento:g}".replace(".", ",")),
+        },
+        "viga": viga, "zapata": zapata, "pedestal": muro,
+    }
+
+
+def disenar_seccion(pf: ParametrosFundacion, L: float, peor: dict, apoyos: list[dict]) -> tuple[list, list, list]:
+    """Diseño de hormigón de una fundación corrida (ACI 318-19) con las demandas mayoradas «peor» (Mpos, Mneg, V, qu,
+    H y P_apoyo por nudo): zapata como viga de fundación y ala transversal, pedestal como muro. Lo usan el análisis
+    por eje y el emparrillado 3D."""
+    bp, hp, B, hz = pf.b_pedestal, pf.h_pedestal, pf.b_zapata, pf.h_zapata
+    Ht = hp + hz
     arm = pf.armaduras
     rec = pf.recubrimiento * 1000
     bp_mm, hp_mm, B_mm, hz_mm, Ht_mm = bp * 1000, hp * 1000, B * 1000, hz * 1000, Ht * 1000
@@ -329,33 +385,6 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
     fl_ala = flexion(1000, hz_mm, d_ala, As_ala, pf.fc, pf.fy, losa=True) if As_ala > 0 else {"phiMn_kNm": 0.0, "notas": []}
     cv_ala = corte(1000, d_ala, pf.fc, pf.fy)
 
-    peor = {"Mpos": (0.0, ""), "Mneg": (0.0, ""), "V": (0.0, ""), "qu": (0.0, ""), "H": (0.0, ""), "P_apoyo": {}}
-    lista_lrfd = _expandir(combos_lrfd, vientos)
-    for k_l, (nombre, fac, _) in enumerate(lista_lrfd):
-        paso(55 + 40 * k_l / len(lista_lrfd), f"Hormigón: combinación mayorada {k_l + 1} de {len(lista_lrfd)}")
-        P, M, H = cargas(fac)
-        r = _viga_sobre_resortes(xs, EI, k_lin, P, M)
-        if not r["estable"]:
-            continue
-        mmax, mmin = float(np.max(r["M"])), float(np.min(r["M"]))
-        vmax = float(np.max(np.abs(r["V"])))
-        qu = float(np.max(r["q"]) / B)
-        if mmax > peor["Mpos"][0]:
-            peor["Mpos"] = (mmax, nombre)
-        if -mmin > peor["Mneg"][0]:
-            peor["Mneg"] = (-mmin, nombre)
-        if vmax > peor["V"][0]:
-            peor["V"] = (vmax, nombre)
-        if qu > peor["qu"][0]:
-            peor["qu"] = (qu, nombre)
-        if abs(H) > peor["H"][0]:
-            peor["H"] = (abs(H), nombre)
-        for a in apoyos:                                                 # compresión que baja por cada apoyo
-            rz = sum(f * a["casos"][c][1] for c, f in fac.items() if c in a["casos"])
-            if rz > peor["P_apoyo"].get(a["nudo"], (0.0, ""))[0]:
-                peor["P_apoyo"][a["nudo"]] = (rz, nombre)
-
-    paso(96, "Diseño del pedestal y de la zapata")
     kN = TONF_KN
     # armadura mínima longitudinal: en la sección rectangular de la zapata sola (B × h_zapata), con sus barras, sin el
     # pedestal (9.6.1.2 con bw = B y el d de cada cara)
@@ -426,23 +455,4 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
         muro.append({"verificacion": f"Pedestal como muro: carga axial bajo el apoyo x = {a['x']:.2f} m" + (f" (pilar {a['pilar']})" if a.get("pilar") else ""),
                      "Pu_tonf": pu, "combo": cn, "phiPn_tonf": phiPn / kN, "razon": pu * kN / phiPn if phiPn > 0 else None})
 
-    ok_srv = [s for s in servicio if s["estable"]]
-    return {
-        "x": [float(v) for v in xs], "L": L, "x0": x0, "x1": x1, "EI": EI, "peso_propio_tonf_m": peso,
-        "seccion": {"b_pedestal": bp, "h_pedestal": hp, "b_zapata": B, "h_zapata": hz, "I_m4": I, "yc_m": yc},
-        "apoyos": [{"x": a["x"], "nudo": a["nudo"], "pilar": a.get("pilar"), "muro": a.get("muro")} for a in apoyos],
-        "servicio": servicio,
-        "resumen_suelo": {
-            "pct_compresion_min": min((s["pct_compresion"] for s in ok_srv), default=0.0),
-            "combo_pct": min(ok_srv, key=lambda s: s["pct_compresion"])["combo"] if ok_srv else "",
-            "FU_presion_max": max((s["FU_presion"] for s in ok_srv), default=0.0),
-            "combo_presion": max(ok_srv, key=lambda s: s["FU_presion"])["combo"] if ok_srv else "",
-            "FS_desliz_min": min((s["FS_deslizamiento"] for s in ok_srv if s["FS_deslizamiento"]), default=None),
-            "inestables": [s["combo"] for s in servicio if not s["estable"]],
-            "q_adm": pf.q_adm, "q_adm_eventual": q_ev,
-            "fs_desliz_exigido": pf.fs_deslizamiento,
-            "nota_deslizamiento": ("FS mínimo al deslizamiento 1,0: las fundaciones son zapatas corridas conectadas entre sí en todo el edificio, de modo que el deslizamiento de un eje lo resisten también las fundaciones transversales; el cálculo por eje, sin esa continuidad ni el empuje pasivo del suelo, es conservador" if pf.fs_deslizamiento <= 1.0 + 1e-9
-                                   else f"FS mínimo al deslizamiento {pf.fs_deslizamiento:g}".replace(".", ",")),
-        },
-        "viga": viga, "zapata": zapata, "pedestal": muro,
-    }
+    return viga, zapata, muro

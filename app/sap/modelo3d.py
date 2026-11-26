@@ -1132,18 +1132,17 @@ def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: flo
             libres.append(a)
     sin = [l_ for l_ in lineas if not l_["apoyos"]]
     if sin:
-        avisos.append(f"{len(sin)} fundación(es) de Revit sin apoyos del modelo 3D encima (no se analizan): "
-                      + ", ".join(l_["ids"][0] for l_ in sin[:10]))
+        avisos.append(f"{len(sin)} fundación(es) de Revit sin pilares ni muros encima: entran al emparrillado (unen a las "
+                      "demás y apoyan en el suelo) con su peso propio: " + ", ".join(l_["ids"][0] for l_ in sin[:10]))
     out = []
     for l_ in lineas:
-        if not l_["apoyos"]:
-            continue
         l_["apoyos"].sort(key=lambda a: a["t"])
         ex, ey = float(l_["u"][0]), float(l_["u"][1])
         out.append({"dir": (ex, ey), "eje": l_["eje"], "coord": 0.0, "aislada": l_["aislada"], "revit": True,
                     "x0": 0.0, "x1": l_["L"], "geometria": l_["geometria"], "ids": l_["ids"],
                     "A": [float(l_["A"][0]), float(l_["A"][1])], "apoyos": l_["apoyos"],
                     "nombre_base": f"{'zapata aislada' if l_['aislada'] else 'fundación corrida'} {l_['tipo']} (Revit {l_['ids'][0]})"})
+    out.sort(key=lambda l_: (-len(l_["apoyos"]), -l_["x1"]))
     if libres:
         avisos.append(f"{len(libres)} apoyo(s) del modelo 3D no caen sobre ninguna fundación de Revit: se agrupan en líneas automáticas")
         out += lineas_fundacion(libres)

@@ -2293,7 +2293,8 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
     analiza como la fundación de un eje (viga sobre resortes de compresión) con las reacciones del análisis 3D."""
     from app.sap.fundacion import ArmadurasFundacion, ParametrosFundacion, analizar_fundacion
     import dataclasses
-    from app.sap.modelo3d import apoyos_de_linea, lineas_desde_revit, lineas_fundacion
+    from app.sap.fundacion3d import analizar_emparrillado
+    from app.sap.modelo3d import lineas_desde_revit, lineas_fundacion
     f = _modelo3d_f(_proyecto(pid), nombre)
     rf = _hermano3d(f, ".resultado.json")
     if not rf.is_file():
@@ -2317,28 +2318,34 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
         lineas = lineas_fundacion(res["apoyos"])
     clave = f"{pid}/{nombre}/fundacion3d"
     out = []
+    conjunto = None
     try:
-        for i, l_ in enumerate(lineas):
-            base = 100 * i / len(lineas)
-            pf_l = dataclasses.replace(pf, **(l_.get("geometria") or {}))
-            r = analizar_fundacion(apoyos_de_linea(l_), res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf_l,
-                                   x0=l_.get("x0"), x1=l_.get("x1"),
-                                   avance=lambda pct, etapa, hasta=None, i=i, base=base: _AVANCE_ANALISIS.__setitem__(
-                                       clave, {"pct": base + pct / len(lineas), "etapa": f"{lineas[i]['nombre']}: {etapa}",
-                                               "hasta": base + (hasta if hasta is not None else pct) / len(lineas)}))
+        if not lineas:
+            raise ValueError("El modelo 3D no tiene apoyos")
+        # todas las fundaciones juntas, como emparrillado 3D sobre el suelo (unidas en sus cruces); a cada una van las
+        # 6 componentes de reacción de sus apoyos
+        emp = analizar_emparrillado(lineas, res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf,
+                                    avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
+                                        clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
+        conjunto = emp["conjunto"]
+        for l_, r in zip(lineas, emp["lineas"]):
+            u = list(l_.get("dir") or (1.0, 0.0))
+            A = l_.get("A") or ([0.0, l_["coord"]] if l_["eje"] == "X" else [l_["coord"], 0.0])
             out.append({"nombre": l_["nombre"], "eje": l_["eje"], "coord": l_["coord"], "aislada": bool(l_.get("aislada")),
-                        "revit": bool(l_.get("revit")), "ids": l_.get("ids") or [], "A": l_.get("A"),
-                        "dir": list(l_.get("dir") or (1.0, 0.0)), "geometria": l_.get("geometria"), "resultado": r})
+                        "revit": bool(l_.get("revit")), "ids": l_.get("ids") or [], "A": A, "dir": u,
+                        "geometria": l_.get("geometria") or {k: r["seccion"][k] for k in ("b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad")},
+                        "resultado": r})
     except ValueError as e:
         raise HTTPException(400, str(e))
     finally:
         _AVANCE_ANALISIS.pop(clave, None)
     d = {"lineas": out, "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"), "analisis_3d": res.get("fecha"),
-         "geometria": pedido.geometria, "avisos": avisos,
-         "nota": "Cada línea se analiza en su plano vertical: cargas verticales, fuerza horizontal en la dirección de la línea y "
-                 "momento en ese plano, con el sismo en esa dirección (EX o EY) y el vertical (EZ). Las fuerzas perpendiculares a "
-                 "la línea (viento o sismo transversal) no se incluyen en la viga de fundación: las toman las fundaciones "
-                 "transversales o el empuje del suelo."}
+         "geometria": pedido.geometria, "avisos": avisos, "conjunto": conjunto,
+         "nota": "Emparrillado 3D: todas las fundaciones juntas, unidas en sus cruces, sobre suelo que solo trabaja en "
+                 "compresión (resorte vertical ks·B y al giro transversal ks·B³/12 por metro); cargas: las 6 componentes de "
+                 "reacción de cada apoyo del modelo 3D (fuerzas horizontales aplicadas a la altura del pedestal + zapata). La "
+                 "presión máxima incluye el vuelco transversal en el ancho de la zapata; el deslizamiento se verifica para el "
+                 "conjunto (fuerza horizontal total contra el roce de todas las fundaciones)."}
     texto = json.dumps(d, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
     _hermano3d(f, ".fundacion.json").write_text(texto, encoding="utf-8")
     return Response(texto, media_type="application/json")

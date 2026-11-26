@@ -2686,6 +2686,20 @@ $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 const fun = { res: null };
 
 const fun3 = { activo: false, nombre: null, d: null, geo: null };
+// panel «Geometría»: con fundaciones de Revit muestra los datos de la fundación elegida y no se edita (los da Revit)
+const FUN_GEO = ["b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad"];
+function funGeoInputs(geo, desdeRevit) {
+  for (const k of FUN_GEO) {
+    const el = $(`[data-sap="fundacion.${k}"]`);
+    if (!el) continue;
+    if (geo && geo[k] != null) el.value = +(geo[k] / Number(el.dataset.f || 1)).toPrecision(6);
+    el.readOnly = !!desdeRevit;
+    el.classList.toggle("desde-revit", !!desdeRevit);
+    el.title = desdeRevit ? "Dato de la fundación de Revit (cámbialo en Revit y vuelve a exportar)" : "";
+  }
+  const v = $(`[data-sap="fundacion.voladizo"]`);
+  if (v) { v.readOnly = !!desdeRevit; v.classList.toggle("desde-revit", !!desdeRevit); }
+}
 function funOrigen(tres) {
   fun3.activo = tres;
   $$('input[name="fun-origen"]').forEach(el => { el.checked = el.value === (tres ? "3d" : "2d"); });
@@ -2693,6 +2707,7 @@ function funOrigen(tres) {
   $("#fun-lbl-m3d").classList.toggle("oculto", !tres);
   $("#fun-lbl-geo").classList.toggle("oculto", !tres);
   $("#fun-lbl-subir").classList.toggle("oculto", !tres);
+  if (!tres) funGeoInputs(null, false);
   $("#fun-nota-3d").classList.toggle("oculto", !tres);
   $("#fun-lineas-panel").classList.add("oculto");
   $("#fun-res").classList.add("oculto");
@@ -2715,6 +2730,7 @@ async function cargarFundacion3d() {
         .filter(([k]) => k).map(([k, t]) => `${k} ${t}`).join(", ") + ` · ${g.fecha.slice(0, 16).replace("T", " ")}`)));
   if (fun3.geo && geos.some(g => g.nombre === fun3.geo)) sg.value = fun3.geo;
   fun3.geo = sg.value || null;
+  funGeoInputs(null, !!fun3.geo);
   $("#fun-estado").textContent = "";
   if (!fun3.nombre) return;
   try {
@@ -2753,17 +2769,29 @@ function funMostrar3d(d) {
     h("thead", {}, h("tr", {}, ...["Fundación", "L (m)", "FU presión", "Área en compresión mín.", "FS deslizamiento mín.", "Viga (máx. razón)",
       "Zapata (máx. razón)", "Pedestal (máx. razón)"].map(t => h("th", {}, t)))),
     h("tbody", {}, ...d.lineas.map((l, i) => { const r = l.resultado, s = r.resumen_suelo;
-      return h("tr", { class: "fila-clic", onclick: () => { $("#sel-linea-fun").value = i; funMostrar(r); } },
+      return h("tr", { class: "fila-clic", onclick: () => funElegirLinea(i) },
         h("td", {}, l.nombre), h("td", {}, f2(r.L)), celda(s.FU_presion_max),
         h("td", { class: s.pct_compresion_min >= 0.8 ? "cumple" : "nocumple" }, pc(s.pct_compresion_min)),
         celda(s.FS_desliz_min, s.fs_desliz_exigido ?? 1, true), celda(maxR(r.viga)), celda(maxR(r.zapata)), celda(maxR(r.pedestal))); })));
   const sel = $("#sel-linea-fun"), antes = sel.value;
   sel.replaceChildren(...d.lineas.map((l, i) => h("option", { value: i }, l.nombre)));
   sel.value = antes && antes < d.lineas.length ? antes : "0";
-  $("#fun-nota-lineas").textContent = (d.geometria ? `Geometría de Revit: ${d.geometria.replace(/^fun-/, "")}. ` : "Geometría automática. ") +
+  const cj = d.conjunto;
+  $("#fun-nota-lineas").textContent = (cj ? `Emparrillado 3D: ${d.lineas.length} fundación(es), ${cj.nudos} nudos, ${cj.cruces} unión(es) entre fundaciones; ` +
+    `deslizamiento del conjunto: FS mín. ${cj.FS_desliz_min != null ? cj.FS_desliz_min.toFixed(2) : "—"}. ` : "") +
+    (d.geometria ? `Geometría de Revit: ${d.geometria.replace(/^fun-/, "")}. ` : "Geometría automática. ") +
     (d.avisos?.length ? d.avisos.join(". ") + ". " : "") + (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
   funPlanta3d();
-  if (d.lineas.length) funMostrar(d.lineas[Number(sel.value) || 0].resultado);
+  if (d.lineas.length) funElegirLinea(Number(sel.value) || 0);
+}
+function funElegirLinea(i) {
+  const d = fun3.d; if (!d || !d.lineas[i]) return;
+  $("#sel-linea-fun").value = i;
+  const l = d.lineas[i];
+  funGeoInputs(l.geometria || l.resultado.seccion, !!(d.geometria && l.revit));
+  funEsquema();
+  funPlanta3d();
+  funMostrar(l.resultado);
 }
 function funPlanta3d() {
   const d = fun3.d; if (!d) return;
@@ -2791,8 +2819,7 @@ function funPlanta3d() {
     }
   });
   svg.replaceChildren(...hijos);
-  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => { const i = Number(el.dataset.i);
-    $("#sel-linea-fun").value = i; funPlanta3d(); funMostrar(d.lineas[i].resultado); }));
+  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => funElegirLinea(Number(el.dataset.i))));
 }
 
 async function cargarFundacion() {
@@ -3036,7 +3063,8 @@ function funEsquema() {
 $("#btn-fundacion").addEventListener("click", () => intentar(() => fun3.activo ? funAnalizar3d() : funAnalizar()));
 $$('input[name="fun-origen"]').forEach(el => el.addEventListener("change", () => intentar(async () => { funOrigen(el.value === "3d"); await cargarFundacion(); })));
 $("#sel-m3d-fun").addEventListener("change", ev => intentar(async () => { fun3.nombre = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); await cargarFundacion3d(); }));
-$("#sel-geo-fun").addEventListener("change", ev => { fun3.geo = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); });
+$("#sel-geo-fun").addEventListener("change", ev => { fun3.geo = ev.target.value || null; funGeoInputs(null, !!fun3.geo);
+  $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); });
 $("#inp-fun-revit").addEventListener("change", ev => intentar(async () => {
   const f = ev.target.files[0];
   if (!f) return;
@@ -3046,7 +3074,7 @@ $("#inp-fun-revit").addEventListener("change", ev => intentar(async () => {
   fun3.geo = r.nombre;
   await cargarFundacion3d();
 }));
-$("#sel-linea-fun").addEventListener("change", () => { if (fun3.d) { funPlanta3d(); funMostrar(fun3.d.lineas[Number($("#sel-linea-fun").value) || 0].resultado); } });
+$("#sel-linea-fun").addEventListener("change", () => funElegirLinea(Number($("#sel-linea-fun").value) || 0));
 try { if (localStorage.getItem("c2r-fun-origen") === "3d") funOrigen(true); } catch {}
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("input", funEsquema));
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("change", funEsquema));
