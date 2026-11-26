@@ -236,9 +236,14 @@
             <button class="pri" id="btn-m3d-analizar">▶ Analizar y diseñar 3D</button></span></div>
         <div id="m3d-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="m3d-avance-relleno"></div></div>
           <span id="m3d-avance-txt"></span></div>
+        <div class="fila-sap sap-modo"><strong>Editar en el visor:</strong>
+          <label><input type="radio" name="m3d-modo" value="elementos" checked> elementos (incluir o quitar)</label>
+          <label><input type="radio" name="m3d-modo" value="apoyos"> apoyos (empotrado, fijo, deslizante, libre)</label>
+          <label><input type="radio" name="m3d-modo" value="uniones"> uniones de vigas (rígida o rotulada)</label>
+          <button type="button" class="sec" id="btn-m3d-restablecer" title="Vuelve a los apoyos y uniones por defecto">Restablecer apoyos y uniones</button></div>
         <div class="fila-sap"><label>Ver <select id="m3d-ver"></select></label>
           <label>Escala <input id="m3d-escala" type="range" min="0" max="100" value="40"></label>
-          <span id="m3d-info" class="tenue">Clic en un elemento para quitarlo del modelo o volver a incluirlo · arrastra para girar, rueda para acercar</span></div>
+          <span id="m3d-info" class="tenue"></span></div>
         <div id="m3d-visor" class="m3d-visor"></div>
         <div class="tenue sap-leyenda"><span style="color:#1f4e9c">━ pilar</span> <span style="color:#c06000">━ techo</span>
           <span style="color:#555">━ viga</span> <span style="color:#7a3fb0">━ diagonal</span> <span style="color:#b98a4a">▮ muro (láminas)</span>

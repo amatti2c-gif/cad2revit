@@ -96,3 +96,15 @@ def test_mecanismo_explicado():
     mod = mallar3d(_portico(False))
     with pytest.raises(ModeloInestable, match="dirección X"):
         analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())
+
+
+def test_apoyos_y_uniones_editados():
+    base = mallar3d(_portico())
+    n, p = next((n, p) for n, p in base.nudos.items() if base.apoyos.get(n) == "rotula")
+    clave = ",".join(f"{c:.4f}" for c in p)
+    mod = mallar3d(_portico(), opciones={"apoyos_nudo": {clave: "empotrado"}, "uniones": {"T1": {"i": "rotula"}}})
+    m = next(k for k, q in mod.nudos.items() if q == p)
+    assert mod.apoyos[m] == "empotrado"
+    assert any(v[0] or v[1] for f, v in mod.liberaciones.items() if mod.origen[f] == "T1")
+    libre = mallar3d(_portico(), opciones={"apoyos_nudo": {clave: "libre"}})
+    assert all(q != p for k, q in libre.nudos.items() if k in libre.apoyos)

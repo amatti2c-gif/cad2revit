@@ -2977,8 +2977,14 @@ $("#inp-eje-sap").addEventListener("change", ev => intentar(async () => {
 }));
 
 // ------------------------------------------------------------------ Modelo 3D (pestaña 6, modo 3D): elementos elegidos en Revit
-const m3d = { activo: false, nombre: null, modelo: null, vista: null, res: null, vigente: false,
-  opciones: { excluir: [], apoyos: {}, l_fuera: {} } };
+const m3d = { activo: false, nombre: null, modelo: null, vista: null, res: null, vigente: false, modo: "elementos",
+  opciones: { excluir: [], apoyos: {}, l_fuera: {}, apoyos_nudo: {}, uniones: {} } };
+const M3D_APOYO_COLOR = { empotrado: "#1b6e20", rotula: "#1f4e9c", deslizante: "#c06000", x: "#7a3fb0" };
+const M3D_INFO = {
+  elementos: "Clic en un elemento para quitarlo del modelo o volver a incluirlo · arrastra para girar, rueda para acercar",
+  apoyos: "Clic en un nudo (punto) para elegir su apoyo · color: verde empotrado, azul fijo, naranjo deslizante, morado solo horizontal, gris libre",
+  uniones: "Clic en el extremo de una viga (punto) para cambiar entre unión rígida (gris) y rotulada (rojo)",
+};
 const M3D_ROL = { pilar: "#1f4e9c", techo: "#c06000", viga: "#555555", diagonal: "#7a3fb0" };
 const m3dColorRazon = r => r == null ? "#888888" : r <= 0.7 ? "#1b6e20" : r <= 1 ? "#e0a000" : "#b00020";
 const M3 = (resto = "") => P(`/modelos3d/${encodeURIComponent(m3d.nombre)}${resto}`);
@@ -3010,7 +3016,7 @@ async function abrirModelo3d(nombre) {
   m3d.modelo = d.modelo;
   const aj = d.ajustes || {};
   if (aj.parametros) sapPonerParametros(aj.parametros);
-  m3d.opciones = { excluir: [], apoyos: {}, l_fuera: {}, ...(aj.opciones || {}) };
+  m3d.opciones = { excluir: [], apoyos: {}, l_fuera: {}, apoyos_nudo: {}, uniones: {}, ...(aj.opciones || {}) };
   $("#sap-contenido").classList.remove("oculto");
   $("#m3d-panel").classList.remove("oculto");
   m3d.res = null; m3d.vigente = false;
@@ -3088,9 +3094,63 @@ function m3dDibujar() {
   }
   d.fantasmas = m3dFantasmas(ox, oy);
   d.clave = m3d.nombre;
+  // rótulas de vigas (siempre visibles en el modelo) y puntos editables según el modo
+  const lib = v.liberaciones || {};
+  if (modo === "modelo" || !R) {
+    d.rotulas = v.barras.flatMap(b => { const L_ = lib[b.nombre] || [false, false], o = [];
+      if (L_[0]) o.push([v.nudos[b.ni], v.nudos[b.nj]]); if (L_[1]) o.push([v.nudos[b.nj], v.nudos[b.ni]]); return o; });
+    if (m3d.modo === "apoyos")
+      d.puntos = Object.entries(v.nudos).map(([n, p]) => ({ p, color: M3D_APOYO_COLOR[v.apoyos[n]] || "#b8b8b8", tipo: "nudo", nudo: n }));
+    else if (m3d.modo === "uniones")
+      d.puntos = m3dExtremosVigas().map(e => ({ p: v.nudos[e.nudo], color: e.rotulada ? "#ff3b3b" : "#666666", tipo: "extremo", ...e }));
+  }
+  $("#m3d-info").textContent = M3D_INFO[m3d.modo];
   $("#m3d-leyenda-razon").classList.toggle("oculto", modo !== "diseno");
-  import("./visor3d_analisis.js").then(mod => mod.mostrar($("#m3d-visor"), d, origen => intentar(() => m3dAlternar(origen))))
+  import("./visor3d_analisis.js").then(mod => mod.mostrar($("#m3d-visor"), d, (ud, ev) => {
+    if (ud.tipo === "nudo") m3dApoyo(ev, ud.nudo);
+    else if (ud.tipo === "extremo") m3dUnion(ud.id, ud.lado);
+    else if (m3d.modo === "elementos" && ud.origen) intentar(() => m3dAlternar(ud.origen));
+  }))
     .catch(e => toast("No se pudo cargar el visor 3D (¿sin internet para three.js?): " + e.message, true));
+}
+
+// extremos de cada viga de Revit en el modelo 3D: [{id, lado, nudo, rotulada}] (lado i = p0, j = p1 de Revit)
+function m3dExtremosVigas() {
+  const v = m3d.vista, [ox, oy] = v.origen_xy || [0, 0], out = [];
+  for (const b of m3d.modelo.vigas || []) {
+    const segs = v.barras.filter(s_ => String(s_.origen) === String(b.id));
+    if (!segs.length) continue;
+    const cuenta = {};
+    for (const s_ of segs) for (const n of [s_.ni, s_.nj]) cuenta[n] = (cuenta[n] || 0) + 1;
+    const ext = Object.keys(cuenta).filter(n => cuenta[n] === 1);
+    for (const [lado, p] of [["i", b.p0], ["j", b.p1]]) {
+      const q = [p[0] - ox, p[1] - oy, p[2]];
+      const dist = n => Math.hypot(v.nudos[n][0] - q[0], v.nudos[n][1] - q[1], v.nudos[n][2] - q[2]);
+      const n = [...ext].sort((a, c) => dist(a) - dist(c))[0];
+      if (!n) continue;
+      const seg = segs.find(s_ => s_.ni === n || s_.nj === n), l = v.liberaciones?.[seg.nombre] || [false, false];
+      out.push({ id: String(b.id), lado, nudo: n, rotulada: seg.ni === n ? l[0] : l[1] });
+    }
+  }
+  return out;
+}
+function m3dApoyo(ev, nudo) {
+  const v = m3d.vista, p = v.nudos[nudo], k = p.map(c => Number(c).toFixed(4)).join(",");
+  const actual = v.apoyos[nudo] || "libre", defecto = v.apoyos_defecto?.[nudo] || "libre";
+  const ops = TIPOS_APOYO.map(([a, t]) => [a, t + (a === defecto ? " · por defecto" : "")]);
+  sapMenu(ev, `Apoyo en x ${p[0].toFixed(2)}, y ${p[1].toFixed(2)}, z ${p[2].toFixed(2)} m`, ops, actual, tipo => {
+    const an = m3d.opciones.apoyos_nudo ||= {};
+    if (tipo === defecto) delete an[k]; else an[k] = tipo;
+    m3d.vigente = false; intentar(m3dActualizar);
+  });
+}
+function m3dUnion(id, lado) {
+  const u = m3d.opciones.uniones ||= {};
+  const o = u[id] ||= {};
+  if (o[lado] === "rotula") delete o[lado]; else o[lado] = "rotula";
+  toast(`Viga ${id}, extremo ${lado === "i" ? "inicial" : "final"}: unión ${o[lado] ? "rotulada" : "rígida"}`);
+  if (!Object.keys(o).length) delete u[id];
+  m3d.vigente = false; intentar(m3dActualizar);
 }
 
 async function m3dAlternar(id) {
@@ -3212,6 +3272,15 @@ $$('input[name="sap-dim"]').forEach(el => el.addEventListener("change", () => in
 })));
 $("#sel-m3d").addEventListener("change", ev => ev.target.value && intentar(() => abrirModelo3d(ev.target.value)));
 $("#m3d-ver").addEventListener("change", m3dDibujar);
+$$('input[name="m3d-modo"]').forEach(el => el.addEventListener("change", () => {
+  m3d.modo = el.value;
+  if (m3d.modo !== "elementos" && $("#m3d-ver").value !== "modelo") $("#m3d-ver").value = "modelo";
+  m3dDibujar();
+}));
+$("#btn-m3d-restablecer").addEventListener("click", () => intentar(async () => {
+  m3d.opciones.apoyos_nudo = {}; m3d.opciones.uniones = {}; m3d.opciones.apoyos = {};
+  m3d.vigente = false; await m3dActualizar(); toast("Apoyos y uniones por defecto");
+}));
 $("#m3d-escala").addEventListener("input", () => { if ($("#m3d-ver").value !== "modelo") m3dDibujar(); });
 $("#btn-m3d-analizar").addEventListener("click", () => intentar(m3dAnalizar));
 $("#btn-m3d-guardar").addEventListener("click", () => intentar(async () => {
@@ -4027,3 +4096,6 @@ intentar(async () => {
 });
 
 $$('input[name="sap-modo"]').forEach(el => el.addEventListener("change", () => { sap.modo = el.value; if (sap.vista) sapDibujar(); }));
+
+// acceso para pruebas automáticas del navegador (sin efecto en el uso normal)
+window.c2r = { m3d, m3dApoyo, m3dUnion, m3dExtremosVigas };

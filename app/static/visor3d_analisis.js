@@ -38,9 +38,14 @@ function iniciar(contenedor) {
     const r = renderer.domElement.getBoundingClientRect();
     const ray = new THREE.Raycaster();
     ray.params.Line.threshold = c.umbral || 0.1;
+    ray.params.Points.threshold = 2.5 * (c.umbral || 0.1);
     ray.setFromCamera(new THREE.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), camara);
-    const hit = ray.intersectObjects(c.objetos, false)[0];
-    if (hit?.object?.userData?.origen) c.onClick(hit.object.userData.origen, hit.object.userData);
+    const hits = ray.intersectObjects(c.objetos, false);
+    // los puntos editables (apoyos, extremos de vigas) tienen prioridad sobre las barras que pasan por ellos
+    const hit = hits.find(h_ => h_.object.isPoints) || hits[0];
+    if (!hit) return;
+    if (hit.object.isPoints) c.onClick(hit.object.userData.puntos[hit.index], ev);
+    else if (hit.object.userData?.origen) c.onClick(hit.object.userData, ev);
   });
   return c;
 }
@@ -117,6 +122,24 @@ export function mostrar(contenedor, d, onClick) {
     l.computeLineDistances();
     l.userData = { origen: f.origen, tipo: "fantasma" };
     g.add(l); ctx.objetos.push(l);
+  });
+  // puntos editables: nudos (apoyos) o extremos de vigas (uniones)
+  if ((d.puntos || []).length) {
+    const geo = new THREE.BufferGeometry().setFromPoints(d.puntos.map(q => V(q.p)));
+    geo.setAttribute("color", new THREE.Float32BufferAttribute(d.puntos.flatMap(q => new THREE.Color(q.color).toArray()), 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 9, sizeAttenuation: false, vertexColors: true, depthTest: false }));
+    pts.renderOrder = 10;
+    pts.userData = { puntos: d.puntos };
+    g.add(pts); ctx.objetos.push(pts);
+  }
+  // rótulas en extremos de barras: anillo blanco cerca del nudo
+  (d.rotulas || []).forEach(([pa, pb]) => {
+    const a = V(pa), b = V(pb), q = a.clone().lerp(b, Math.min(0.08, (tam / 60) / Math.max(a.distanceTo(b), 1e-6)));
+    const m = new THREE.Mesh(new THREE.SphereGeometry(tam / 160, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    m.position.copy(q);
+    const borde = new THREE.Mesh(new THREE.SphereGeometry(tam / 130, 12, 8), new THREE.MeshBasicMaterial({ color: 0x222222, side: THREE.BackSide }));
+    borde.position.copy(q);
+    g.add(borde, m);
   });
   // cámara: solo al cambiar de modelo (los cambios de vista conservan el encuadre)
   const centro = V([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]);
