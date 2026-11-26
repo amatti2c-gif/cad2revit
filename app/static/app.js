@@ -3016,7 +3016,7 @@ async function abrirModelo3d(nombre) {
   m3d.modelo = d.modelo;
   const aj = d.ajustes || {};
   if (aj.parametros) sapPonerParametros(aj.parametros);
-  m3d.opciones = { excluir: [], apoyos: {}, l_fuera: {}, apoyos_nudo: {}, uniones: {}, ...(aj.opciones || {}) };
+  m3d.opciones = { excluir: [], apoyos: {}, l_fuera: {}, apoyos_nudo: {}, uniones: {}, rol_muro: {}, ...(aj.opciones || {}) };
   $("#sap-contenido").classList.remove("oculto");
   $("#m3d-panel").classList.remove("oculto");
   m3d.res = null; m3d.vigente = false;
@@ -3093,6 +3093,7 @@ function m3dDibujar() {
     d.escala = Number($("#m3d-escala").value) / 40;
   }
   d.fantasmas = m3dFantasmas(ox, oy);
+  d.superficies = v.superficies || [];
   d.clave = m3d.nombre;
   // rótulas de vigas (siempre visibles en el modelo) y puntos editables según el modo
   const lib = v.liberaciones || {};
@@ -3184,10 +3185,26 @@ function m3dTabla() {
   (M.vigas || []).forEach(e => { const id = String(e.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id),
     h("td", {}, e.costanera ? "costanera" : e.tipo), h("td", {}, e.seccion), h("td", {}, largo(e.p0, e.p1)), h("td", {}, "—"),
     h("td", {}, sel(op.l_fuera[id] || "", lfOps, setOp("l_fuera", id))), h("td", { class: "tenue" }, estadoTxt(id)))); });
-  (M.muros || []).forEach(w => { const id = String(w.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id), h("td", {}, "muro"),
+  op.rol_muro ||= {};
+  const rolOps = [["estructural", "muro estructural (lámina con rigidez)"], ["cerramiento", "cerramiento (solo peso y viento)"]];
+  const supOps = [["techo", "techo (peso, Lr y viento)"], ["muro", "cerramiento (peso y viento)"]];
+  const rolSel = (id, defecto, ops) => sel(op.rol_muro[id] || defecto, ops, async val => {
+    if (val === defecto) delete op.rol_muro[id]; else op.rol_muro[id] = val;
+    m3d.vigente = false; await m3dActualizar();
+  });
+  (M.muros || []).forEach(w => { const id = String(w.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id),
+    h("td", {}, rolSel(id, w.material === "madera" ? "estructural" : "cerramiento", rolOps)),
     h("td", {}, `${w.tipo} (${w.material})`), h("td", {}, Number(w.largo).toFixed(2)), h("td", {}, "—"), h("td", {}, "—"),
     h("td", { class: "tenue" }, estadoTxt(id) || `${(w.vanos || []).length} vano(s)`))); });
-  $("#m3d-elementos").replaceChildren(h("thead", {}, h("tr", {}, ...["Incluir", "Id Revit", "Tipo", "Sección", "L (m)", "Base",
+  const supV = Object.fromEntries((v.superficies || []).map(s_ => [s_.id, s_]));
+  [...(M.techos || []), ...(M.superficies || [])].forEach(t => { const id = String(t.id), sv = supV[id];
+    const area = sv ? sv.tris.reduce((a, [p, q, r]) => { const u = [q[0] - p[0], q[1] - p[1], q[2] - p[2]], w = [r[0] - p[0], r[1] - p[1], r[2] - p[2]];
+      return a + Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2; }, 0) : null;
+    filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id),
+      h("td", {}, sv ? rolSel(id, sv.tipo, supOps) : (t.categoria || "superficie")),
+      h("td", {}, `${t.categoria || ""} ${t.tipo || ""}`.trim()), h("td", {}, area == null ? "—" : `${area.toFixed(1)} m²`),
+      h("td", {}, "—"), h("td", {}, "—"), h("td", { class: "tenue" }, excl.has(id) ? "excluido" : "sin rigidez: reparte cargas"))); });
+  $("#m3d-elementos").replaceChildren(h("thead", {}, h("tr", {}, ...["Incluir", "Id Revit", "Tipo / rol", "Sección", "L o área", "Base",
     "Pandeo fuera del plano", "Estado"].map(t => h("th", {}, t)))), h("tbody", {}, ...filas));
 }
 

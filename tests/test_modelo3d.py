@@ -108,3 +108,28 @@ def test_apoyos_y_uniones_editados():
     assert any(v[0] or v[1] for f, v in mod.liberaciones.items() if mod.origen[f] == "T1")
     libre = mallar3d(_portico(), opciones={"apoyos_nudo": {clave: "libre"}})
     assert all(q != p for k, q in libre.nudos.items() if k in libre.apoyos)
+
+
+def test_envolvente_viento_en_equilibrio():
+    """Techo y cerramiento de Revit (sin rigidez): reciben peso, Lr y viento y los llevan a la barra más cercana;
+    las reacciones equilibran exactamente lo aplicado."""
+    d = _portico()
+    d["superficies"] = [{"id": "R1", "categoria": "Cubiertas", "tipo": "Zinc", "triangulos": [
+        [[0, 0, 2.75], [6, 0, 2.75], [6, -3.334, 3.22]], [[0, 0, 2.75], [6, -3.334, 3.22], [0, -3.334, 3.22]]]},
+        {"id": "P1", "categoria": "Modelos genéricos", "tipo": "Panel", "triangulos": [
+            [[0, -3.334, 0.2], [6, -3.334, 0.2], [6, -3.334, 3.1]], [[0, -3.334, 0.2], [6, -3.334, 3.1], [0, -3.334, 3.1]]]}]
+    mod = mallar3d(d)
+    assert sorted(s["tipo"] for s in mod.superficies) == ["muro", "techo"]
+    c = cargas3d(mod, ParametrosCargas())
+    assert c.barras_pt and "W3a" in c.patrones and "W3b" in c.patrones
+    r = analizar3d(mod, c, ParametrosCargas())
+    for cs in r["casos"]:
+        ap = c.envolvente["por_barra"].get(cs["caso"])
+        if ap:
+            assert abs(cs["Ry"] + ap["Fy"]) < 1e-3 and abs(cs["Rz"] + ap["Fz"]) < 1e-3
+    # el techo de Revit reemplaza al ancho tributario: su peso es 30 kgf/m² × área y el del panel 15 kgf/m² × área
+    pc = ParametrosCargas()
+    peso = -sum(f[3][2] for f in c.barras_pt if f[1] == "DEAD")
+    esperado = pc.peso_techo * c.envolvente["area_techo"] + pc.peso_cerramiento * c.envolvente["area_cerramientos"]
+    assert abs(peso - esperado) < 1e-6 and abs(c.envolvente["area_cerramientos"] - 6 * 2.9) < 0.01
+    assert not [b for b in c.barras if b[1] == "DEAD"], "con techo de Revit no se usa el ancho tributario"

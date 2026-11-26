@@ -17,8 +17,9 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .diseno_acero import FY_A270ES, Perfil
-from .eje_cargas import (A0_ZONA, SUELOS_DS61, ParametrosCargas, cmax, cp_muro_sotavento, espectro_ds61,
-                         lr_techo, q_viento, reduccion_lr, sistema_sismico)
+from .eje_cargas import (A0_ZONA, SUELOS_DS61, ParametrosCargas, cmax, cp_muro_sotavento, cp_techo_barlovento,
+                         cp_techo_plano, cp_techo_sotavento, espectro_ds61, lr_techo, q_viento, reduccion_lr,
+                         sistema_sismico)
 from .eje_pynite import (FACTOR_VERTICAL, G_ACC, VN_OSB_9_5_8D, _cqc, _reacciones, _unpartition_rapido)
 from .eje_revit import ACERO, ParametrosMuroMadera, _seccion, mallar
 
@@ -51,6 +52,7 @@ class Modelo3D:
     sin_apoyo: list = field(default_factory=list)
     excluidos_auto: list = field(default_factory=list)
     dir_costaneras: list = field(default_factory=list)  # direcciones en planta (ux, uy) de las costaneras excluidas
+    superficies: list = field(default_factory=list)    # envolvente sin rigidez: {id, tipo techo|muro, tris, vanos?}
     origen_xy: tuple = (0.0, 0.0)
 
 
@@ -247,11 +249,50 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         return claves[k]
 
     # ---- muros: cada uno se malla en su plano con la rutina del 2D (con los pilares y vigas de su plano) ----
+    roles_muro = {str(k): v for k, v in (op.get("rol_muro") or {}).items()}
+    # techos y otros elementos de área de Revit: sin rigidez, reciben peso, Lr y viento (techo si su normal media es
+    # más vertical que horizontal; si no, cerramiento)
+    for t in (datos.get("techos") or []) + (datos.get("superficies") or []):
+        if str(t.get("id")) in excluir:
+            continue
+        tris = [[P(q) for q in tri] for tri in t.get("triangulos") or [] if len(tri) == 3]
+        if not tris:
+            continue
+        nz = sum(abs(float(np.cross(np.subtract(b, a), np.subtract(c, a))[2])) for a, b, c in tris)
+        nt = sum(float(np.linalg.norm(np.cross(np.subtract(b, a), np.subtract(c, a)))) for a, b, c in tris) or 1.0
+        tipo = roles_muro.get(str(t.get("id"))) or ("techo" if nz / nt > 0.5 else "muro")
+        if tipo == "excluir":
+            continue
+        mod.superficies.append({"id": str(t["id"]), "tipo": "techo" if tipo == "techo" else "muro",
+                                "nombre": f"{t.get('categoria', '')} {t.get('tipo', '')}".strip(), "tris": tris})
     for w in datos.get("muros") or []:
         if str(w.get("id")) in excluir or w.get("material") == "hormigon":
             continue
         ax_, ay_ = float(w["a"][0]) - ox, float(w["a"][1]) - oy
         bx_, by_ = float(w["b"][0]) - ox, float(w["b"][1]) - oy
+        rol = roles_muro.get(str(w.get("id"))) or ("estructural" if w.get("material") == "madera" else "cerramiento")
+        if rol == "cerramiento":
+            L_ = math.hypot(bx_ - ax_, by_ - ay_)
+            if L_ < 0.1:
+                continue
+            ux_, uy_ = (bx_ - ax_) / L_, (by_ - ay_) / L_
+            perfil = sorted((float(t_), float(z_)) for t_, z_ in (w.get("perfil") or [[0, w["z0"] + 2.4], [L_, w["z0"] + 2.4]]))
+            if perfil[0][0] > 0:
+                perfil.insert(0, (0.0, perfil[0][1]))
+            if perfil[-1][0] < L_:
+                perfil.append((L_, perfil[-1][1]))
+            Q = lambda t_, z_: (ax_ + ux_ * t_, ay_ + uy_ * t_, z_)                         # noqa: E731
+            z0_ = float(w["z0"])
+            tris = []
+            for (t0_, za), (t1_, zb) in zip(perfil, perfil[1:]):
+                if t1_ - t0_ < 1e-6:
+                    continue
+                tris.append([Q(t0_, z0_), Q(t1_, z0_), Q(t1_, zb)])
+                tris.append([Q(t0_, z0_), Q(t1_, zb), Q(t0_, za)])
+            mod.superficies.append({"id": str(w["id"]), "tipo": "muro", "nombre": w.get("tipo", ""), "tris": tris,
+                                    "marco": (ax_, ay_, ux_, uy_),
+                                    "vanos": [(v["t0"], v["t1"], v["z0"], v["z1"]) for v in w.get("vanos") or []]})
+            continue
         L = math.hypot(bx_ - ax_, by_ - ay_)
         if L < 0.2:
             continue
@@ -465,6 +506,8 @@ class Cargas3D:
     combos: dict = field(default_factory=dict)
     resumen: list = field(default_factory=list)
     trib: dict = field(default_factory=dict)           # barra de techo → ancho tributario (m)
+    barras_pt: list = field(default_factory=list)      # (barra, patrón, x desde el nudo i (m), (fx, fy, fz) tonf global)
+    envolvente: dict = field(default_factory=dict)     # resumen de techos y cerramientos (áreas, cargas por barra)
 
 
 def _vigas_que_cargan(mod: Modelo3D, techo: list) -> tuple[list, str]:
@@ -527,10 +570,166 @@ def _ancho_tributario(mod: Modelo3D, techo: list, defecto: float) -> dict:
     return out
 
 
+def _muestras(mod: Modelo3D, paso: float = 0.5):
+    """Puntos de las superficies de la envolvente con su área, normal hacia afuera, tipo e id: [(p, A, n, tipo, id)].
+    Los vanos de los cerramientos no reciben viento ni peso."""
+    out = []
+    if not mod.superficies:
+        return out
+    pts_all = np.array([q for s_ in mod.superficies for tri in s_["tris"] for q in tri] + list(mod.nudos.values()))
+    centro = pts_all.mean(axis=0)
+    for sup in mod.superficies:
+        for tri in sup["tris"]:
+            a, b, c_ = (np.array(q, float) for q in tri)
+            n = np.cross(b - a, c_ - a)
+            A2 = float(np.linalg.norm(n))
+            if A2 < 1e-9:
+                continue
+            n /= A2
+            area = A2 / 2
+            if sup["tipo"] == "techo":
+                if n[2] < 0:
+                    n = -n
+            elif (np.array([*((a + b + c_) / 3)[:2], 0]) - np.array([*centro[:2], 0])) @ n < 0:
+                n = -n
+            k = max(1, int(math.ceil(math.sqrt(area) / paso)))
+            for i in range(k):
+                for j in range(k - i):
+                    for (u_, v_) in ([((i + 1 / 3) / k, (j + 1 / 3) / k)] + ([((i + 2 / 3) / k, (j + 2 / 3) / k)] if i + j < k - 1 else [])):
+                        q = a + u_ * (b - a) + v_ * (c_ - a)
+                        if sup.get("vanos"):
+                            ax_, ay_, ux_, uy_ = sup["marco"]
+                            t_ = (q[0] - ax_) * ux_ + (q[1] - ay_) * uy_
+                            if any(t0 <= t_ <= t1 and z0 <= q[2] <= z1 for t0, t1, z0, z1 in sup["vanos"]):
+                                continue
+                        out.append((q, area / (k * k), n, sup["tipo"], sup["id"]))
+    return out
+
+
+def _repartir(mod: Modelo3D, muestras, fuerzas, patron: str, c: "Cargas3D", roles=None) -> dict:
+    """Lleva la fuerza de cada punto de la envolvente a la barra más cercana (techo: vigas; muros: cualquier barra),
+    agrupada en tramos de ≤ 0,75 m como cargas puntuales. Devuelve {barra: (fuerza total, distancia máx)}."""
+    cand = [b for b in mod.barras if roles is None or mod.roles.get(b[0]) in roles] or list(mod.barras)
+    if not cand or not muestras:
+        return {}
+    P0 = np.array([mod.nudos[b[1]] for b in cand])
+    D = np.array([mod.nudos[b[2]] for b in cand]) - P0
+    L = np.linalg.norm(D, axis=1)
+    Q = np.array([m_[0] for m_ in muestras])
+    W = Q[:, None, :] - P0[None, :, :]
+    t = np.clip(np.einsum("mbk,bk->mb", W, D) / np.maximum(L ** 2, 1e-12), 0, 1)
+    dist = np.linalg.norm(W - t[:, :, None] * D[None, :, :], axis=2)
+    k = np.argmin(dist, axis=1)
+    acum: dict = {}
+    for i, kb in enumerate(k):
+        f = np.asarray(fuerzas[i], float)
+        if not f.any():
+            continue
+        b = cand[kb]
+        nb = max(1, int(math.ceil(L[kb] / 0.75)))
+        tramo = min(int(t[i, kb] * nb), nb - 1)
+        e = acum.setdefault(b[0], {"L": float(L[kb]), "nb": nb, "f": np.zeros((nb, 3)), "d": 0.0})
+        e["f"][tramo] += f
+        e["d"] = max(e["d"], float(dist[i, kb]))
+    out = {}
+    for f_, e in acum.items():
+        for tramo in range(e["nb"]):
+            if np.abs(e["f"][tramo]).sum() > 1e-9:
+                c.barras_pt.append((f_, patron, (tramo + 0.5) * e["L"] / e["nb"], tuple(float(x) for x in e["f"][tramo])))
+        out[f_] = (e["f"].sum(axis=0), e["d"])
+    return out
+
+
+def _cargas_envolvente(mod, p, c, qh, h, casos, Bx, By, xmin, xmax, ymin, ymax):
+    """Techos y cerramientos de Revit (sin rigidez): peso (D), sobrecarga Lr y viento NCh432 sobre su superficie,
+    llevados a la barra más cercana. Con techo, cada dirección de viento tiene dos casos: a (Cp del techo de succión y
+    presión interior +GCpi) y b (Cp de presión a barlovento y −GCpi); cerrado = hay cerramientos o muros."""
+    mu = _muestras(mod)
+    if not mu:
+        return
+    hay_muros = any(s_["tipo"] == "muro" for s_ in mod.superficies) or bool(mod.areas)
+    hay_techo = any(s_["tipo"] == "techo" for s_ in mod.superficies)
+    gcpi = p.gcpi if hay_muros else 0.0
+    vigas_techo = ("techo", "viga")
+    i_t = [i for i, m_ in enumerate(mu) if m_[3] == "techo"]
+    i_m = [i for i, m_ in enumerate(mu) if m_[3] == "muro"]
+    area_t = sum(mu[i][1] for i in i_t)
+    area_m = sum(mu[i][1] for i in i_m)
+    env = {"area_techo": area_t, "area_cerramientos": area_m, "cerrado": hay_muros, "por_barra": {}}
+    # gravitacionales
+    if i_t:
+        sub = [mu[i] for i in i_t]
+        _repartir(mod, sub, [(0.0, 0.0, -p.peso_techo * m_[1]) for m_ in sub], "DEAD", c, vigas_techo)
+        pend = max((math.degrees(math.acos(min(1.0, abs(m_[2][2])))) for m_ in sub), default=0.0)
+        n_vt = sum(1 for f_ in mod.roles.values() if f_ in vigas_techo) or 1
+        lr = lr_techo(p, max(area_t / n_vt, 1.0), math.tan(math.radians(pend)) * 100)
+        # Lr por m² de proyección horizontal; la reducción por área usa el área que llega a cada viga (aprox. la media)
+        _repartir(mod, sub, [(0.0, 0.0, -lr * m_[1] * abs(m_[2][2])) for m_ in sub], "LR", c, vigas_techo)
+        c.resumen.append(f"Techo de Revit: {area_t:.1f} m²; D {p.peso_techo * 1000:.0f} kgf/m² y Lr {lr * 1000:.0f} kgf/m² "
+                         "(proyección horizontal) llevados a la viga más cercana de cada punto del techo")
+    if i_m:
+        sub = [mu[i] for i in i_m]
+        _repartir(mod, sub, [(0.0, 0.0, -p.peso_cerramiento * m_[1]) for m_ in sub], "DEAD", c)
+        c.resumen.append(f"Cerramientos de Revit: {area_m:.1f} m² (descontados los vanos); peso {p.peso_cerramiento * 1000:.0f} kgf/m² "
+                         "y viento llevados al pilar o viga más cercano")
+    # viento: se rehacen los casos W (con techo, a y b)
+    nombres = [n for n, _ in casos]
+    if hay_techo:
+        for n in nombres:
+            c.patrones.pop(n, None)
+            for sfx in "ab":
+                c.patrones[n + sfx] = "WIND"
+        c.nudos = [x for x in c.nudos if x[1] not in nombres] + [(x[0], x[1] + sfx, x[2]) for x in c.nudos if x[1] in nombres
+                                                                  for sfx in "ab"]
+        c.barras = [x for x in c.barras if x[1] not in nombres] + [(x[0], x[1] + sfx, x[2]) for x in c.barras if x[1] in nombres
+                                                                    for sfx in "ab"]
+    for nombre_w, dvec in casos:
+        d3 = np.array([dvec[0], dvec[1], 0.0])
+        L_ = Bx if abs(dvec[0]) > 0.5 else By
+        B_ = By if abs(dvec[0]) > 0.5 else Bx
+        cp_sot = cp_muro_sotavento(L_ / B_)
+        borde = xmin if dvec[0] > 0.5 else xmax if dvec[0] < -0.5 else ymin if dvec[1] > 0.5 else ymax
+        for sfx in ("ab" if hay_techo else [""]):
+            pat = nombre_w + sfx
+            fz = []
+            for q, A, n, tipo, _ in mu:
+                if tipo == "muro":
+                    cosn = float(n @ d3)
+                    cp = p.cp_barlovento_muro if cosn < -0.7 else (cp_sot if cosn > 0.7 else -0.7)
+                    pn = qh * p.g_rafaga * cp                    # la presión interior se anula entre muros opuestos
+                else:
+                    theta = math.degrees(math.acos(min(1.0, abs(float(n[2])))))
+                    h_l = h / max(L_, 1e-6)
+                    if theta < 10:
+                        dist = abs((q[0] if abs(dvec[0]) > 0.5 else q[1]) - borde)
+                        cp = cp_techo_plano(dist, h, h_l)
+                        cp = cp if sfx != "b" else max(cp, -0.18)
+                    elif float(n[:2] @ np.array(dvec)) < 0:      # cara a barlovento
+                        c1, c2 = cp_techo_barlovento(theta, h_l)
+                        cp = min(c1, c2) if sfx != "b" else max(c1, c2)
+                    else:
+                        cp = cp_techo_sotavento(theta, h_l)
+                    pn = qh * (p.g_rafaga * cp - (gcpi if sfx != "b" else -gcpi))
+                fz.append(tuple(-pn * A * n))                    # p > 0 empuja contra la superficie (opuesto a la normal)
+            res = _repartir(mod, [mu[i] for i in i_t], [fz[i] for i in i_t], pat, c, vigas_techo) if i_t else {}
+            res.update(_repartir(mod, [mu[i] for i in i_m], [fz[i] for i in i_m], pat, c) if i_m else {})
+            tot = np.sum([np.array(f_) for f_ in fz], axis=0) if fz else np.zeros(3)
+            env["por_barra"][pat] = {"Fx": float(tot[0]), "Fy": float(tot[1]), "Fz": float(tot[2])}
+    c.envolvente = env
+    c.resumen.append("Viento en la envolvente de Revit: muros (barlovento Cp 0,8, sotavento según L/B, laterales −0,7) y techo "
+                     "(NCh432 Tabla 15 según su pendiente: barlovento con sus dos Cp en los casos a y b, sotavento)"
+                     + (f"; edificio cerrado: GCpi ±{p.gcpi:.2f} en el techo (a: +, más succión; b: −)" if hay_muros else
+                        "; sin muros ni cerramientos: techo abierto, sin presión interior")
+                     + "; cada punto de la envolvente se lleva a la barra más cercana")
+
+
 def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
     c = Cargas3D()
     c.patrones = {"DEAD": "DEAD", "LR": "ROOF LIVE"}
+    sup_techo = any(s_["tipo"] == "techo" for s_ in mod.superficies)
     techo, criterio = _vigas_que_cargan(mod, [f for f, r in mod.roles.items() if r == "techo"])
+    if sup_techo:
+        techo = []                                     # el techo de Revit reparte su peso, Lr y viento directamente
     defecto = float(p.ancho_colaborante or 1.0)
     trib = _ancho_tributario(mod, techo, defecto) if not p.ancho_colaborante else {f: defecto for f in techo}
     c.trib = trib
@@ -538,11 +737,12 @@ def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
     z_base = min(zs)
     xy = np.array([q[:2] for q in mod.nudos.values()]) if mod.nudos else np.zeros((1, 2))
     Bx, By = float(np.ptp(xy[:, 0])) or 1.0, float(np.ptp(xy[:, 1])) or 1.0
-    c.resumen.append("Ancho tributario de las vigas de techo: " + ("dado en la app, " + f"{defecto:.2f} m" if p.ancho_colaborante else
-                     "la mitad de la distancia a las vigas de techo paralelas vecinas (en planta)") +
-                     f"; el techo se apoya en las vigas {criterio}" +
-                     (f"; rango {min(trib.values()):.2f}–{max(trib.values()):.2f} m" if trib else ""))
-    c.resumen.append(f"D techo: {p.peso_techo * 1000:.0f} kgf/m² × ancho tributario, sobre las vigas de techo")
+    if not sup_techo:
+        c.resumen.append("Ancho tributario de las vigas de techo: " + ("dado en la app, " + f"{defecto:.2f} m" if p.ancho_colaborante else
+                         "la mitad de la distancia a las vigas de techo paralelas vecinas (en planta)") +
+                         f"; el techo se apoya en las vigas {criterio}" +
+                         (f"; rango {min(trib.values()):.2f}–{max(trib.values()):.2f} m" if trib else ""))
+        c.resumen.append(f"D techo: {p.peso_techo * 1000:.0f} kgf/m² × ancho tributario, sobre las vigas de techo")
     pendiente = {}
     for f in techo:
         _, a, b, _ = next(x for x in mod.barras if x[0] == f)
@@ -617,9 +817,11 @@ def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
         for f in techo:
             pn = qh * (p.g_rafaga * -0.7 - p.gcpi)                    # succión (negativa: hacia arriba)
             c.barras.append((f, nombre_w, (0.0, 0.0, -pn * trib[f])))
+    if mod.superficies:
+        _cargas_envolvente(mod, p, c, qh, h, casos, Bx, By, xmin, xmax, ymin, ymax)
     c.resumen.append(f"Viento NCh432 (simplificado 3D): q_h = {qh * 1000:.1f} kgf/m² (V {p.v_viento} m/s, exposición {p.exposicion}, "
                      f"h {h:.2f} m); muros exteriores: barlovento Cp {p.cp_barlovento_muro:.1f}, sotavento según L/B, laterales −0,7; "
-                     "techo: succión Cp −0,7 con GCpi +0,18; W1 +X, W2 −X, W3 +Y, W4 −Y")
+                     + ("techo: succión Cp −0,7 con GCpi +0,18; " if techo else "") + "W1 +X, W2 −X, W3 +Y, W4 −Y")
     sis = sistema_sismico(p)
     s_, t0_, tp_, n_, pp_ = SUELOS_DS61[p.suelo]
     c.resumen.append(f"Sismo NCh433:2026: zona {p.zona} (A0 {A0_ZONA[p.zona]:.2f} g), suelo {p.suelo} (S {s_}, T0 {t0_} s), "
@@ -836,6 +1038,15 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
             L = float(np.linalg.norm(np.array(mod.nudos[b]) - np.array(mod.nudos[a])))
             for n in (a, b):
                 peso_nudo[n] = peso_nudo.get(n, 0.0) + abs(fz) * L / 2
+    for f, pat, x, (fx, fy_, fz) in cargas.barras_pt:
+        _, a, b, _ = next(y for y in mod.barras if y[0] == f)
+        for d_, v in (("FX", fx), ("FY", fy_), ("FZ", fz)):
+            if abs(v) > 1e-12:
+                m.add_member_pt_load(f, d_, v, x, case=pat)
+        if pat == "DEAD":
+            L = float(np.linalg.norm(np.array(mod.nudos[b]) - np.array(mod.nudos[a])))
+            peso_nudo[a] = peso_nudo.get(a, 0.0) + abs(fz) * (1 - x / L)
+            peso_nudo[b] = peso_nudo.get(b, 0.0) + abs(fz) * x / L
     for n, pat, (fx, fy_, fz) in cargas.nudos:
         for d_, v in (("FX", fx), ("FY", fy_), ("FZ", fz)):
             if abs(v) > 1e-12:

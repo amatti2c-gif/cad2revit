@@ -78,6 +78,52 @@ namespace Cad2Revit
             return (a + u * tmin, a + u * tmax);
         }
 
+        /// <summary>Triángulos de la cara exterior de un elemento de área: en techos y losas, sus caras superiores; en
+        /// otros (paneles, modelos genéricos), la cara plana más grande de su sólido.</summary>
+        private List<XYZ[]> TriangulosExteriores(Element e)
+        {
+            var caras = new List<Face>();
+            if (e is HostObject ho && (e is RoofBase || e is Floor || e is Ceiling))
+            {
+                try
+                {
+                    foreach (var rf in HostObjectUtils.GetTopFaces(ho))
+                        if (ho.GetGeometryObjectFromReference(rf) is Face f) caras.Add(f);
+                }
+                catch { }
+            }
+            if (caras.Count == 0)
+            {
+                Face mayor = null;
+                void Buscar(GeometryElement ge)
+                {
+                    if (ge == null) return;
+                    foreach (var go in ge)
+                    {
+                        if (go is Solid so && so.Volume > 1e-9)
+                            foreach (Face f in so.Faces)
+                                if (f is PlanarFace && (mayor == null || f.Area > mayor.Area)) mayor = f;
+                        if (go is GeometryInstance gi) Buscar(gi.GetInstanceGeometry());
+                    }
+                }
+                try { Buscar(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine })); } catch { }
+                if (mayor != null) caras.Add(mayor);
+            }
+            var tris = new List<XYZ[]>();
+            foreach (var f in caras)
+            {
+                Mesh m;
+                try { m = f.Triangulate(); } catch { continue; }
+                if (m == null) continue;
+                for (int i = 0; i < m.NumTriangles; i++)
+                {
+                    var t = m.get_Triangle(i);
+                    tris.Add(new[] { t.get_Vertex(0), t.get_Vertex(1), t.get_Vertex(2) });
+                }
+            }
+            return tris;
+        }
+
         public Informe ExportarModelo3D(ICollection<ElementId> seleccion, string ruta, string nombre)
         {
             double R(double v) => Math.Round(v, 4);
@@ -85,6 +131,7 @@ namespace Cad2Revit
             var pilares = new List<object>();
             var vigas = new List<object>();
             var muros = new List<object>();
+            var superficies = new List<object>();          // techos y otros elementos de área: triángulos de su cara exterior
             int omitidos = 0;
             var motivos = new Dictionary<string, int>();
             var recortadas = new List<string>();
@@ -197,6 +244,18 @@ namespace Cad2Revit
                         espesor = R(Mt(w.Width)), nucleo = R(capaEst != null ? Mt(capaEst.Width) : Mt(w.Width)), perfil, vanos,
                     });
                 }
+                else if (e is RoofBase || EsCat(e, BuiltInCategory.OST_Roofs) || EsCat(e, BuiltInCategory.OST_GenericModel) ||
+                         EsCat(e, BuiltInCategory.OST_CurtainWallPanels) || EsCat(e, BuiltInCategory.OST_Floors) ||
+                         EsCat(e, BuiltInCategory.OST_Ceilings) || EsCat(e, BuiltInCategory.OST_StructuralFoundation) == false && e is HostObject)
+                {
+                    var tris = TriangulosExteriores(e);
+                    if (tris.Count == 0) { Omitir(e, "sin superficie"); continue; }
+                    superficies.Add(new
+                    {
+                        id = e.Id.ToString(), categoria = e.Category?.Name ?? "", tipo = (_doc.GetElement(e.GetTypeId()) as ElementType)?.Name ?? e.Name,
+                        triangulos = tris.Select(t => t.Select(q => P(q)).ToArray()).ToList(),
+                    });
+                }
                 else Omitir(e, "categoría no estructural");
             }
             var niveles = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation)
@@ -205,18 +264,19 @@ namespace Cad2Revit
             {
                 tipo_archivo = "cad2revit-modelo-3d", version = 1, unidades = "m", nombre, proyecto = _doc.Title, niveles,
                 omitidos = motivos.Select(kv => new { motivo = kv.Key, n = kv.Value }).ToList(), seleccionados = seleccion.Count,
-                pilares, vigas, muros,
+                pilares, vigas, muros, superficies,
             };
             File.WriteAllText(ruta, JsonSerializer.Serialize(archivo, new JsonSerializerOptions { WriteIndented = true }));
             _inf.Contar("Pilares", pilares.Count);
             _inf.Contar("Vigas y diagonales", vigas.Count);
             _inf.Contar("Muros", muros.Count);
+            _inf.Contar("Techos y otras superficies", superficies.Count);
             if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D: " +
                 string.Join("; ", motivos.Select(kv => $"{kv.Value} {kv.Key}")));
             if (recortadas.Count > 0)
                 _inf.Advertencia($"{recortadas.Count} viga(s) con la línea de ubicación distinta de la viga dibujada (extensiones o recortes); se usó su largo real: " +
                     string.Join(", ", recortadas.Take(8)) + (recortadas.Count > 8 ? "…" : ""));
-            if (pilares.Count + vigas.Count + muros.Count == 0) _inf.Error("La selección no tiene pilares, vigas ni muros");
+            if (pilares.Count + vigas.Count + muros.Count + superficies.Count == 0) _inf.Error("La selección no tiene pilares, vigas ni muros");
             _inf.Advertencia($"Archivo: {ruta}");
             return _inf;
         }

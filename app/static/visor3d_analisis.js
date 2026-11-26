@@ -60,7 +60,7 @@ export function mostrar(contenedor, d, onClick) {
   ctx.objetos = [];
   const pts = Object.values(d.nudos);
   if (!pts.length && !(d.fantasmas || []).length) return;
-  const todos = pts.concat((d.fantasmas || []).flatMap(f => f.p));
+  const todos = pts.concat((d.fantasmas || []).flatMap(f => f.p), (d.superficies || []).flatMap(sf => sf.tris.flat()));
   const min = [0, 1, 2].map(k => Math.min(...todos.map(p => p[k]))), max = [0, 1, 2].map(k => Math.max(...todos.map(p => p[k])));
   const tam = Math.max(max[0] - min[0], max[1] - min[1], max[2] - min[2], 1);
   ctx.umbral = tam / 150;
@@ -101,6 +101,15 @@ export function mostrar(contenedor, d, onClick) {
     for (let k = 0; k < p.length; k++) bordes.push(p[k], p[(k + 1) % p.length]);
     g.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(bordes),
       new THREE.LineBasicMaterial({ color: 0x8a6a30, transparent: true, opacity: 0.35 })));
+  });
+  // envolvente sin rigidez (techos y cerramientos de Revit): translúcida, clic para quitarla o incluirla
+  (d.superficies || []).forEach(sf => {
+    const geo = new THREE.BufferGeometry().setFromPoints(sf.tris.flatMap(t => t.map(V)));
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: sf.tipo === "techo" ? 0x8fa3bf : 0x9cc7e8,
+      side: THREE.DoubleSide, transparent: true, opacity: 0.28, depthWrite: false, roughness: 0.9 }));
+    m.userData = { origen: sf.id, tipo: "superficie" };
+    g.add(m); ctx.objetos.push(m);
   });
   // apoyos
   const r = tam / 120;

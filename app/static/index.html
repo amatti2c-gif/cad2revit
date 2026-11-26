@@ -250,6 +250,7 @@
           <span id="m3d-leyenda-razon" class="oculto">· diseño: <span style="color:#1b6e20">━ ≤0,7</span>
             <span style="color:#e0a000">━ ≤1</span> <span style="color:#b00020">━ &gt;1</span></span>
           <span style="color:#999">┄ excluido</span> <span style="color:#d0702a">┄ sin apoyo (no se modela)</span>
+          <span style="color:#8fa3bf">▮ techo de Revit</span> <span style="color:#7fb3dc">▮ cerramiento</span>
           · apoyos: <span style="color:#1b6e20">■ empotrado</span> <span style="color:#1f4e9c">▲ fijo</span> <span style="color:#c06000">▲ deslizante</span>
           <span style="color:#7a3fb0">▲ base de muro (solo horizontal)</span></div>
         <details class="plegable"><summary><strong>Elementos del modelo 3D</strong>
@@ -306,6 +307,7 @@
             <div class="sap-form">
               <label>Ancho colaborante (m; carga/m² → carga/m) <input data-sap="cargas.ancho_colaborante" id="sap-ancho" type="number" step="any"></label>
               <label>Peso del techo (kgf/m²) <input data-sap="cargas.peso_techo" data-f="0.001" type="number" step="any" value="30"></label>
+              <label class="solo3d">Peso de cerramientos (kgf/m²; 3D: muros y paneles sin rigidez) <input data-sap="cargas.peso_cerramiento" data-f="0.001" type="number" step="any" value="15"></label>
               <label>Sobrecarga de techo Lo (kgf/m²) <input data-sap="cargas.lo_techo" data-f="0.001" type="number" step="any" value="102"></label>
               <label>Reducción de Lr (NCh1537 §8.2: área y pendiente)
                 <select data-sap="cargas.reducir_lr"><option value="true" selected>sí, según cálculo</option><option value="false">no (Lo completa)</option></select></label>
