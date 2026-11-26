@@ -1046,6 +1046,118 @@ def lineas_fundacion(apoyos: list[dict], tol: float = 0.30) -> list[dict]:
     return lineas
 
 
+def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: float = 0.10) -> tuple[list[dict], list[str]]:
+    """Líneas de fundación con la geometría exportada de Revit («Fundaciones a análisis»): zapatas corridas, vigas y
+    zapatas aisladas son las fundaciones; los muros (sobrecimientos) sobre ellas dan el pedestal. Los tramos colineales
+    y continuos de una misma sección se juntan. A cada fundación van los apoyos del modelo 3D que caen sobre ella (en
+    planta, dentro de su ancho + 10 cm). Devuelve (líneas con su geometría, avisos); los apoyos que no caen sobre
+    ninguna quedan en líneas automáticas."""
+    ox, oy = origen_xy or (0.0, 0.0)
+    els = []
+    for e in fund.get("elementos") or []:
+        a = np.array([e["a"][0] - ox, e["a"][1] - oy])
+        b = np.array([e["b"][0] - ox, e["b"][1] - oy])
+        L = float(np.linalg.norm(b - a))
+        u = (b - a) / L if L > 1e-6 else np.array([1.0, 0.0])
+        els.append({**e, "A": a, "B": b, "L": L, "u": u})
+    avisos = []
+    terreno = next((n["z"] for n in fund.get("niveles") or [] if "terreno" in str(n.get("nombre", "")).lower()), None)
+    bases = [e for e in els if e["clase"] in ("zapata_corrida", "viga", "zapata", "losa")]
+    muros = [e for e in els if e["clase"] == "muro"]
+    usados = set()
+    # sobrecimiento sin zapata debajo: es su propia fundación (zapata del ancho del muro, sin pedestal)
+    for m in muros:
+        sobre = [b for b in bases if abs(float(m["u"] @ b["u"])) > 0.98 and
+                 abs(float((m["A"] + m["B"]) / 2 @ np.array([-b["u"][1], b["u"][0]]) - b["A"] @ np.array([-b["u"][1], b["u"][0]]))) <= b["ancho"] / 2 + 0.05
+                 and abs(m["z_inf"] - b["z_sup"]) < 0.15]
+        if not sobre:
+            bases.append({**m, "clase": "muro_fundacion"})
+    # juntar tramos colineales continuos de la misma sección
+    bases.sort(key=lambda e: (round(float(e["u"][0]), 2), round(float(e["u"][1]), 2), e["z_inf"]))
+    grupos = []
+    for e in bases:
+        for g in grupos:
+            h = g[0]
+            n = np.array([-h["u"][1], h["u"][0]])
+            if (e["clase"] == h["clase"] != "zapata" and abs(float(e["u"] @ h["u"])) > 0.999 and abs(float((e["A"] - h["A"]) @ n)) < 0.05
+                    and abs(e["ancho"] - h["ancho"]) < 0.02 and abs(e["z_inf"] - h["z_inf"]) < 0.05 and abs(e["z_sup"] - h["z_sup"]) < 0.05):
+                ts = sorted([(float((x["A"] - h["A"]) @ h["u"]), float((x["B"] - h["A"]) @ h["u"])) for x in g])
+                t0, t1 = sorted((float((e["A"] - h["A"]) @ h["u"]), float((e["B"] - h["A"]) @ h["u"])))
+                if any(t0 <= b_ + 0.05 and t1 >= a_ - 0.05 for a_, b_ in [tuple(sorted(t)) for t in ts]):
+                    g.append(e)
+                    break
+        else:
+            grupos.append([e])
+    lineas = []
+    for g in grupos:
+        h = g[0]
+        u = h["u"]
+        n = np.array([-u[1], u[0]])
+        ts = [float((p - h["A"]) @ u) for x in g for p in (x["A"], x["B"])]
+        t0, t1 = min(ts), max(ts)
+        A = h["A"] + u * t0
+        B_ = h["ancho"]
+        z_inf, z_sup = min(x["z_inf"] for x in g), max(x["z_sup"] for x in g)
+        # pedestal: muros paralelos sobre la zapata
+        ped = [m for m in muros if abs(float(m["u"] @ u)) > 0.98 and abs(float(((m["A"] + m["B"]) / 2 - A) @ n)) <= B_ / 2 + 0.05
+               and abs(m["z_inf"] - z_sup) < 0.15 and h["clase"] != "muro_fundacion"]
+        geo = {"b_zapata": B_, "h_zapata": max(z_sup - z_inf, 0.05)}
+        if ped:
+            geo["b_pedestal"] = float(np.median([m["ancho"] for m in ped]))
+            geo["h_pedestal"] = max(float(np.median([m["z_sup"] for m in ped])) - z_sup, 0.05)
+        elif h["clase"] == "muro_fundacion":
+            geo["b_pedestal"], geo["h_pedestal"] = B_, 0.01
+        else:
+            geo["b_pedestal"], geo["h_pedestal"] = min(B_, 0.2), 0.01
+        if terreno is not None:
+            geo["profundidad"] = max(terreno - z_inf, geo["h_zapata"])
+        eje = "X" if abs(u[0]) >= abs(u[1]) else "Y"
+        lineas.append({"u": u, "n": n, "A": A, "L": t1 - t0, "geometria": geo, "eje": eje,
+                       "ids": [x["id"] for x in g] + [m["id"] for m in ped], "clase": h["clase"], "tipo": h.get("tipo", ""),
+                       "aislada": h["clase"] == "zapata", "apoyos": []})
+    # apoyos sobre cada fundación (la más cercana)
+    libres = []
+    for a in apoyos:
+        p = np.array(a["xyz"][:2])
+        mejor = None
+        for l_ in lineas:
+            t = float((p - l_["A"]) @ l_["u"])
+            d = abs(float((p - l_["A"]) @ l_["n"]))
+            if -tol_apoyo <= t <= l_["L"] + tol_apoyo and d <= l_["geometria"]["b_zapata"] / 2 + tol_apoyo:
+                if mejor is None or d < mejor[0]:
+                    mejor = (d, l_, t)
+        if mejor:
+            mejor[1]["apoyos"].append({**a, "t": mejor[2]})
+        else:
+            libres.append(a)
+    sin = [l_ for l_ in lineas if not l_["apoyos"]]
+    if sin:
+        avisos.append(f"{len(sin)} fundación(es) de Revit sin apoyos del modelo 3D encima (no se analizan): "
+                      + ", ".join(l_["ids"][0] for l_ in sin[:10]))
+    out = []
+    for l_ in lineas:
+        if not l_["apoyos"]:
+            continue
+        l_["apoyos"].sort(key=lambda a: a["t"])
+        ex, ey = float(l_["u"][0]), float(l_["u"][1])
+        out.append({"dir": (ex, ey), "eje": l_["eje"], "coord": 0.0, "aislada": l_["aislada"], "revit": True,
+                    "x0": 0.0, "x1": l_["L"], "geometria": l_["geometria"], "ids": l_["ids"],
+                    "A": [float(l_["A"][0]), float(l_["A"][1])], "apoyos": l_["apoyos"],
+                    "nombre_base": f"{'zapata aislada' if l_['aislada'] else 'fundación corrida'} {l_['tipo']} (Revit {l_['ids'][0]})"})
+    if libres:
+        avisos.append(f"{len(libres)} apoyo(s) del modelo 3D no caen sobre ninguna fundación de Revit: se agrupan en líneas automáticas")
+        out += lineas_fundacion(libres)
+    for i, l_ in enumerate(out):
+        g = l_.get("geometria")
+        if l_.get("revit"):
+            l_["nombre"] = (f"F{i + 1}: {l_['nombre_base']}, L = {l_['x1']:.2f} m, {len(l_['apoyos'])} apoyo(s); zapata "
+                            f"{g['b_zapata'] * 100:.0f}×{g['h_zapata'] * 100:.0f} cm" +
+                            (f", pedestal {g['b_pedestal'] * 100:.0f}×{g['h_pedestal'] * 100:.0f} cm" if g["h_pedestal"] > 0.02 else ""))
+        else:
+            l_["nombre"] = f"F{i + 1}: " + l_["nombre"].split(": ", 1)[-1] + " (automática)"
+    return out, avisos
+
+
 def apoyos_de_linea(linea: dict) -> list[dict]:
     """Apoyos de una línea en el formato del análisis de fundación corrida del eje: casos [H en la línea, Rz, M en el
     plano vertical de la línea]; el sismo en la dirección de la línea va como EX y el vertical como EZ (el sismo

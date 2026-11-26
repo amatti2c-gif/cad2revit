@@ -500,11 +500,17 @@
           <label><input type="radio" name="fun-origen" value="3d"> el modelo 3D (todas sus líneas de fundación)</label></div>
         <div class="fila-sap"><label id="fun-lbl-eje">Eje <select id="sel-eje-fun"></select></label>
           <label id="fun-lbl-m3d" class="oculto">Modelo 3D <select id="sel-m3d-fun"></select></label>
+          <label id="fun-lbl-geo" class="oculto">Geometría de las fundaciones <select id="sel-geo-fun"></select></label>
+          <label id="fun-lbl-subir" class="link oculto">Subir .fundaciones.json<input id="inp-fun-revit" type="file" accept=".json" hidden></label>
           <span id="fun-estado" class="tenue"></span></div>
         <p id="fun-nota-3d" class="tenue oculto">Los apoyos del modelo 3D se agrupan en líneas de fundación corrida (apoyos alineados
           en X o en Y; los que quedan solos, fundación aislada) y cada línea se analiza como la fundación de un eje, con las
           reacciones del análisis 3D por estado de carga: verticales, fuerza horizontal y momento en el plano de la línea, sismo
-          en su dirección (EX o EY) y vertical (EZ). Si el modelo 3D no tiene un análisis vigente, se analiza primero.</p>
+          en su dirección (EX o EY) y vertical (EZ). Si el modelo 3D no tiene un análisis vigente, se analiza primero.
+          Con el botón <strong>Fundaciones a análisis</strong> de Revit (seleccionando zapatas corridas, sobrecimientos,
+          zapatas aisladas, vigas o losas de fundación) se usa la geometría real: largo y posición de cada fundación, ancho y
+          alto de la zapata, pedestal (sobrecimiento) y profundidad respecto del nivel de terreno; esos datos reemplazan a los
+          de «Geometría» de esta pestaña.</p>
         <div id="fun-avance" class="sap-avance oculto"><div class="sap-avance-barra"><div id="fun-avance-relleno" class="relleno-avance"></div></div>
           <span id="fun-avance-txt"></span></div>
       </div>

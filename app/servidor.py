@@ -2040,6 +2040,7 @@ def ver_detalle_eje(pid: str, nombre: str):
 
 class PedidoFundacion(BaseModel):
     parametros: dict = {}               # ParametrosFundacion (geometría, suelo, materiales) y «armaduras»
+    geometria: str | None = None        # modelo 3D: fundaciones exportadas de Revit (nombre); None = líneas automáticas
 
 
 @app.post("/api/proyectos/{pid}/sap/{nombre}/fundacion")
@@ -2242,12 +2243,57 @@ def analizar_modelo3d(pid: str, nombre: str, aj: AjustesEje):
     return Response(texto, media_type="application/json")
 
 
+def _fund_revit(d: Path, nombre: str) -> Path:
+    f = d / "fundaciones3d" / f"{nombre}.fundaciones.json"
+    if not re.fullmatch(r"[\w.\-]+", nombre) or not f.is_file():
+        raise HTTPException(404, f"No existen las fundaciones de Revit {nombre}")
+    return f
+
+
+@app.get("/api/proyectos/{pid}/fundaciones-revit")
+def listar_fundaciones_revit(pid: str):
+    out = []
+    for f in sorted((_proyecto(pid) / "fundaciones3d").glob("*.fundaciones.json")):
+        try:
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cl = [x.get("clase") for x in e.get("elementos") or []]
+        out.append({"nombre": f.name[: -len(".fundaciones.json")], "proyecto_revit": e.get("proyecto"),
+                    "fecha": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                    "elementos": len(cl), "zapatas_corridas": cl.count("zapata_corrida"), "muros": cl.count("muro"),
+                    "zapatas": cl.count("zapata"), "vigas": cl.count("viga"), "losas": cl.count("losa")})
+    return out
+
+
+@app.post("/api/proyectos/{pid}/fundaciones-revit", status_code=201)
+async def subir_fundaciones_revit(pid: str, archivo: UploadFile = File(...)):
+    """El .fundaciones.json del botón «Fundaciones a análisis» de Revit (geometría de las fundaciones elegidas)."""
+    d = _proyecto(pid)
+    try:
+        e = json.loads((await archivo.read()).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "El archivo no es JSON")
+    if e.get("tipo_archivo") != "cad2revit-fundaciones":
+        raise HTTPException(400, "No es un archivo del botón «Fundaciones a análisis» de Revit")
+    nombre = "fun-" + re.sub(r"[^\w.\-]", "_", str(e.get("nombre") or e.get("proyecto") or "revit"))[:60]
+    (d / "fundaciones3d").mkdir(exist_ok=True)
+    (d / "fundaciones3d" / f"{nombre}.fundaciones.json").write_text(json.dumps(e, ensure_ascii=False), encoding="utf-8")
+    return {"nombre": nombre}
+
+
+@app.delete("/api/proyectos/{pid}/fundaciones-revit/{nombre}", status_code=204)
+def borrar_fundaciones_revit(pid: str, nombre: str):
+    _fund_revit(_proyecto(pid), nombre).unlink()
+
+
 @app.post("/api/proyectos/{pid}/modelos3d/{nombre}/fundacion")
 def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
     """Fundaciones corridas del modelo 3D: los apoyos se agrupan en líneas (alineados en X o en Y) y cada línea se
     analiza como la fundación de un eje (viga sobre resortes de compresión) con las reacciones del análisis 3D."""
     from app.sap.fundacion import ArmadurasFundacion, ParametrosFundacion, analizar_fundacion
-    from app.sap.modelo3d import apoyos_de_linea, lineas_fundacion
+    import dataclasses
+    from app.sap.modelo3d import apoyos_de_linea, lineas_desde_revit, lineas_fundacion
     f = _modelo3d_f(_proyecto(pid), nombre)
     rf = _hermano3d(f, ".resultado.json")
     if not rf.is_file():
@@ -2263,23 +2309,32 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
                                                                  if k in ArmadurasFundacion.__dataclass_fields__ and v not in (None, "")}))
     except (TypeError, ValueError) as e:
         raise HTTPException(400, f"Parámetros no válidos: {e}")
-    lineas = lineas_fundacion(res["apoyos"])
+    avisos = []
+    if pedido.geometria:
+        fund = json.loads(_fund_revit(_proyecto(pid), pedido.geometria).read_text(encoding="utf-8"))
+        lineas, avisos = lineas_desde_revit(res["apoyos"], fund, res.get("origen_xy"))
+    else:
+        lineas = lineas_fundacion(res["apoyos"])
     clave = f"{pid}/{nombre}/fundacion3d"
     out = []
     try:
         for i, l_ in enumerate(lineas):
             base = 100 * i / len(lineas)
-            r = analizar_fundacion(apoyos_de_linea(l_), res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf,
+            pf_l = dataclasses.replace(pf, **(l_.get("geometria") or {}))
+            r = analizar_fundacion(apoyos_de_linea(l_), res.get("combos_lrfd") or {}, res.get("patrones") or {}, pf_l,
+                                   x0=l_.get("x0"), x1=l_.get("x1"),
                                    avance=lambda pct, etapa, hasta=None, i=i, base=base: _AVANCE_ANALISIS.__setitem__(
                                        clave, {"pct": base + pct / len(lineas), "etapa": f"{lineas[i]['nombre']}: {etapa}",
                                                "hasta": base + (hasta if hasta is not None else pct) / len(lineas)}))
             out.append({"nombre": l_["nombre"], "eje": l_["eje"], "coord": l_["coord"], "aislada": bool(l_.get("aislada")),
-                        "resultado": r})
+                        "revit": bool(l_.get("revit")), "ids": l_.get("ids") or [], "A": l_.get("A"),
+                        "dir": list(l_.get("dir") or (1.0, 0.0)), "geometria": l_.get("geometria"), "resultado": r})
     except ValueError as e:
         raise HTTPException(400, str(e))
     finally:
         _AVANCE_ANALISIS.pop(clave, None)
     d = {"lineas": out, "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"), "analisis_3d": res.get("fecha"),
+         "geometria": pedido.geometria, "avisos": avisos,
          "nota": "Cada línea se analiza en su plano vertical: cargas verticales, fuerza horizontal en la dirección de la línea y "
                  "momento en ese plano, con el sismo en esa dirección (EX o EY) y el vertical (EZ). Las fuerzas perpendiculares a "
                  "la línea (viento o sismo transversal) no se incluyen en la viga de fundación: las toman las fundaciones "

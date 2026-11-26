@@ -95,6 +95,13 @@ namespace Cad2Revit
                           "en la pestaña «6 · Análisis y diseño» de la app (modo 3D): análisis PyNite con sismo espectral NCh433 en " +
                           "X e Y, viento, techo, y diseño de acero AISC 360-16 (flexión biaxial) y de muros de madera."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitFundaciones", "Fundaciones\na análisis",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoFundaciones).FullName)
+            {
+                ToolTip = "Exporta las fundaciones que selecciones (zapatas corridas, sobrecimientos, zapatas aisladas, vigas y " +
+                          "losas de fundación) con su geometría y las abre en la pestaña «Fundaciones» de la app, para analizarlas " +
+                          "con las reacciones del modelo 3D."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitCostaneras", "Costaneras\na análisis",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoCostaneras).FullName)
             {
@@ -727,6 +734,59 @@ namespace Cad2Revit
                 MainInstruction = abierto != null ? "Modelo 3D abierto en la pestaña de análisis y diseño de la app" : "Modelo 3D exportado",
                 MainContent = informe.Resumen() + (abierto != null ? "\n\nSe abrió la app (pestaña 6 · Análisis y diseño, modo 3D)."
                     : $"\n\nNo se pudo subir a la app ({falla ?? "cancelado"}). Súbelo a mano en la pestaña 6 (modo 3D): {ruta}"),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
+        }
+    }
+
+    /// <summary>Exporta las fundaciones seleccionadas (geometría) y las sube a la pestaña Fundaciones de la app.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public class ComandoFundaciones : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var sel = uidoc.Selection.GetElementIds();
+            if (sel.Count == 0)
+            {
+                try
+                {
+                    sel = uidoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element,
+                        "Selecciona las zapatas, sobrecimientos, vigas y losas de fundación (Finalizar para terminar)")
+                        .Select(r => r.ElementId).ToList();
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (sel.Count == 0) return Result.Cancelled;
+            string ruta;
+            using (var dlg = new System.Windows.Forms.SaveFileDialog
+            {
+                Title = "Guardar las fundaciones para análisis",
+                Filter = "Fundaciones de cad2revit (*.fundaciones.json)|*.fundaciones.json",
+                FileName = $"{U.NombreSeguro(doc.Title)}.fundaciones.json",
+            })
+            {
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return Result.Cancelled;
+                ruta = dlg.FileName;
+            }
+            var nombre = System.IO.Path.GetFileName(ruta).Replace(".fundaciones.json", "");
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ExportarFundaciones(sel, ruta, nombre);
+            if (informe.Errores.Count > 0)
+            {
+                new TaskDialog("cad2revit") { MainInstruction = "No se pudieron exportar las fundaciones", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
+                return Result.Failed;
+            }
+            string abierto = null, falla = null;
+            try { abierto = ComandoCostaneras.Subir(ruta, "fundaciones-revit", "fundaciones", "fundrevit", "estas fundaciones"); }
+            catch (System.Exception ex) { falla = ex.Message; }
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = abierto != null ? "Fundaciones abiertas en la pestaña Fundaciones de la app" : "Fundaciones exportadas",
+                MainContent = informe.Resumen() + (abierto != null ? "\n\nSe abrió la app (pestaña Fundaciones, cargas del modelo 3D)."
+                    : $"\n\nNo se pudo subir a la app ({falla ?? "cancelado"}). Súbelas a mano en la pestaña Fundaciones: {ruta}"),
                 ExpandedContent = informe.Detalle(),
             }.Show();
             return Result.Succeeded;

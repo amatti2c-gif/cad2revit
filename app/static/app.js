@@ -2685,12 +2685,14 @@ $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 // ------------------------------------------------------------------ Fundaciones (pestaña 7)
 const fun = { res: null };
 
-const fun3 = { activo: false, nombre: null, d: null };
+const fun3 = { activo: false, nombre: null, d: null, geo: null };
 function funOrigen(tres) {
   fun3.activo = tres;
   $$('input[name="fun-origen"]').forEach(el => { el.checked = el.value === (tres ? "3d" : "2d"); });
   $("#fun-lbl-eje").classList.toggle("oculto", tres);
   $("#fun-lbl-m3d").classList.toggle("oculto", !tres);
+  $("#fun-lbl-geo").classList.toggle("oculto", !tres);
+  $("#fun-lbl-subir").classList.toggle("oculto", !tres);
   $("#fun-nota-3d").classList.toggle("oculto", !tres);
   $("#fun-lineas-panel").classList.add("oculto");
   $("#fun-res").classList.add("oculto");
@@ -2705,6 +2707,14 @@ async function cargarFundacion3d() {
   const n = fun3.nombre || m3d.nombre;
   if (lista.some(e => e.nombre === n)) sel.value = n;
   fun3.nombre = sel.value || null;
+  const geos = await api("GET", P("/fundaciones-revit"));
+  const sg = $("#sel-geo-fun");
+  sg.replaceChildren(h("option", { value: "" }, "automática: líneas de apoyos alineados (datos de «Geometría»)"),
+    ...geos.map(g => h("option", { value: g.nombre }, `de Revit: ${g.nombre.replace(/^fun-/, "")} · ` +
+      [[g.zapatas_corridas, "zapatas corridas"], [g.muros, "sobrecimientos"], [g.zapatas, "zapatas aisladas"], [g.vigas, "vigas"], [g.losas, "losas"]]
+        .filter(([k]) => k).map(([k, t]) => `${k} ${t}`).join(", ") + ` · ${g.fecha.slice(0, 16).replace("T", " ")}`)));
+  if (fun3.geo && geos.some(g => g.nombre === fun3.geo)) sg.value = fun3.geo;
+  fun3.geo = sg.value || null;
   $("#fun-estado").textContent = "";
   if (!fun3.nombre) return;
   try {
@@ -2729,7 +2739,7 @@ async function funAnalizar3d() {
   }
   $("#fun-estado").textContent = "Analizando las fundaciones…";
   const d = await conAvance("fun", R3("/fundacion/avance"), $("#btn-fundacion"),
-    () => api("POST", R3("/fundacion"), { parametros: par.fundacion }));
+    () => api("POST", R3("/fundacion"), { parametros: par.fundacion, geometria: fun3.geo }));
   funMostrar3d(d);
   $("#fun-estado").textContent = "Listo";
 }
@@ -2750,35 +2760,39 @@ function funMostrar3d(d) {
   const sel = $("#sel-linea-fun"), antes = sel.value;
   sel.replaceChildren(...d.lineas.map((l, i) => h("option", { value: i }, l.nombre)));
   sel.value = antes && antes < d.lineas.length ? antes : "0";
-  $("#fun-nota-lineas").textContent = (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
+  $("#fun-nota-lineas").textContent = (d.geometria ? `Geometría de Revit: ${d.geometria.replace(/^fun-/, "")}. ` : "Geometría automática. ") +
+    (d.avisos?.length ? d.avisos.join(". ") + ". " : "") + (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
   funPlanta3d();
   if (d.lineas.length) funMostrar(d.lineas[Number(sel.value) || 0].resultado);
 }
 function funPlanta3d() {
   const d = fun3.d; if (!d) return;
   const svg = $("#fun-planta"), elegida = Number($("#sel-linea-fun").value) || 0;
-  const pts = d.lineas.flatMap(l => l.resultado.apoyos.map(a => l.eje === "X" ? [a.x, l.coord] : [l.coord, a.x]));
+  const base = l => { const u = l.dir || (l.eje === "X" ? [1, 0] : [0, 1]); const A = l.A || (l.eje === "X" ? [0, l.coord] : [l.coord, 0]);
+    return { u, A, P: t => [A[0] + u[0] * t, A[1] + u[1] * t] }; };
+  const pts = d.lineas.flatMap(l => { const b = base(l); return [b.P(l.resultado.x0), b.P(l.resultado.x1)]; });
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1, y0 = Math.min(...ys) - 1.5, y1 = Math.max(...ys) + 3;
   const W = x1 - x0, H = y1 - y0, k = Math.max(W, H) / 100;
   svg.setAttribute("viewBox", `${x0} ${-y1} ${W} ${H}`);
   const hijos = [];
   d.lineas.forEach((l, i) => {
-    const r = l.resultado, sel_ = i === elegida, b = Math.max(r.seccion.b_zapata, 3 * k);
-    const [a0, a1] = [r.x0, r.x1];
-    const rect = l.eje === "X" ? { x: a0, y: -(l.coord + b / 2), width: a1 - a0, height: b } : { x: l.coord - b / 2, y: -a1, width: b, height: a1 - a0 };
-    hijos.push(s("rect", { ...rect, fill: sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)", stroke: sel_ ? "#2d6cdf" : "#888",
-      "stroke-width": k * 0.3, style: "cursor:pointer" }));
-    const t = s("text", { x: l.eje === "X" ? a0 : l.coord + b, y: l.eje === "X" ? -(l.coord + b / 2 + k) : -a1, "font-size": 2.4 * k, fill: "#333" });
+    const r = l.resultado, sel_ = i === elegida, b = Math.max(r.seccion.b_zapata, 3 * k), g = base(l);
+    const nx = -g.u[1] * b / 2, ny = g.u[0] * b / 2, p0 = g.P(r.x0), p1 = g.P(r.x1);
+    const esq = [[p0[0] + nx, p0[1] + ny], [p1[0] + nx, p1[1] + ny], [p1[0] - nx, p1[1] - ny], [p0[0] - nx, p0[1] - ny]];
+    hijos.push(s("polygon", { points: esq.map(q => `${q[0]},${-q[1]}`).join(" "), fill: sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)",
+      stroke: sel_ ? "#2d6cdf" : "#888", "stroke-width": k * 0.3, style: "cursor:pointer", "data-i": i }));
+    const t = s("text", { x: esq[0][0], y: -(esq[0][1]) - k, "font-size": 2.4 * k, fill: "#333" });
     t.textContent = l.nombre.split(":")[0];
     hijos.push(t);
     for (const a of r.apoyos) {
-      const [px, py] = l.eje === "X" ? [a.x, l.coord] : [l.coord, a.x];
+      const [px, py] = g.P(a.x);
       hijos.push(s("circle", { cx: px, cy: -py, r: 0.9 * k, fill: a.pilar ? "#1f4e9c" : "#b98a4a" }));
     }
   });
   svg.replaceChildren(...hijos);
-  svg.querySelectorAll("rect").forEach((el, i) => el.addEventListener("click", () => { $("#sel-linea-fun").value = i; funPlanta3d(); funMostrar(d.lineas[i].resultado); }));
+  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => { const i = Number(el.dataset.i);
+    $("#sel-linea-fun").value = i; funPlanta3d(); funMostrar(d.lineas[i].resultado); }));
 }
 
 async function cargarFundacion() {
@@ -3022,6 +3036,16 @@ function funEsquema() {
 $("#btn-fundacion").addEventListener("click", () => intentar(() => fun3.activo ? funAnalizar3d() : funAnalizar()));
 $$('input[name="fun-origen"]').forEach(el => el.addEventListener("change", () => intentar(async () => { funOrigen(el.value === "3d"); await cargarFundacion(); })));
 $("#sel-m3d-fun").addEventListener("change", ev => intentar(async () => { fun3.nombre = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); await cargarFundacion3d(); }));
+$("#sel-geo-fun").addEventListener("change", ev => { fun3.geo = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); });
+$("#inp-fun-revit").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append("archivo", f);
+  const r = await api("POST", P("/fundaciones-revit"), fd);
+  ev.target.value = "";
+  fun3.geo = r.nombre;
+  await cargarFundacion3d();
+}));
 $("#sel-linea-fun").addEventListener("change", () => { if (fun3.d) { funPlanta3d(); funMostrar(fun3.d.lineas[Number($("#sel-linea-fun").value) || 0].resultado); } });
 try { if (localStorage.getItem("c2r-fun-origen") === "3d") funOrigen(true); } catch {}
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("input", funEsquema));
@@ -4257,6 +4281,7 @@ intentar(async () => {
   if (q.get("eje")) sap.nombre = sap.auto = q.get("eje");
   if (q.get("techo")) cos.nombre = q.get("techo");
   if (q.get("modelo3d")) { m3d.nombre = q.get("modelo3d"); m3dModo(true); }
+  if (q.get("fundrevit")) { fun3.geo = q.get("fundrevit"); funOrigen(true); }
   await cargarProyectos(q.get("proyecto") || undefined);
   let tab = q.get("tab");
   if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}

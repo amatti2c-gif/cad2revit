@@ -188,3 +188,40 @@ def test_fundaciones_del_modelo_3d():
     assert all("EX" in a["casos"] and "EZ" in a["casos"] and "EY" not in a["casos"] for a in apoyos_de_linea(ls[0]))
     f = analizar_fundacion(apoyos_de_linea(ls[0]), r["combos_lrfd"], r["patrones"], ParametrosFundacion())
     assert f["servicio"] and f["viga"] and f["resumen_suelo"]["FU_presion_max"] > 0
+
+
+def _fundaciones_revit(y_filas, x0=-0.2, x1=6.2, tramos=2):
+    """Zapatas corridas 60×25 cm en tramos (como se modelan por vano en Revit) con sobrecimiento 20×75 cm encima."""
+    els = []
+    paso = (x1 - x0) / tramos
+    for k, y in enumerate(y_filas):
+        for i in range(tramos):
+            a, b = x0 + i * paso, x0 + (i + 1) * paso
+            els.append({"id": f"Z{k}{i}", "clase": "zapata_corrida", "tipo": "Zapata 60", "a": [a, y], "b": [b, y], "largo": paso,
+                        "ancho": 0.6, "z_inf": -0.80, "z_sup": -0.55})
+        els.append({"id": f"S{k}", "clase": "muro", "tipo": "Sobrecimiento 20", "a": [x0, y], "b": [x1, y], "largo": x1 - x0,
+                    "ancho": 0.2, "z_inf": -0.55, "z_sup": 0.20})
+    return {"tipo_archivo": "cad2revit-fundaciones", "niveles": [{"nombre": "NIVEL TERRENO NATURAL", "z": 0.0}], "elementos": els}
+
+
+def test_fundaciones_con_geometria_de_revit():
+    import json
+    from sap.fundacion import ParametrosFundacion, analizar_fundacion
+    from sap.modelo3d import apoyos_de_linea, lineas_desde_revit
+    import dataclasses
+    mod = mallar3d(_portico())
+    r = json.loads(json.dumps(analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas()),
+                              default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))
+    ls, avisos = lineas_desde_revit(r["apoyos"], _fundaciones_revit([0.0, -3.334]), r["origen_xy"])
+    assert len(ls) == 2 and not avisos, avisos
+    for l_ in ls:
+        g = l_["geometria"]
+        assert abs(l_["x1"] - 6.4) < 1e-6 and len(l_["apoyos"]) == 3          # los dos tramos se juntaron
+        assert abs(g["b_zapata"] - 0.6) < 1e-9 and abs(g["h_zapata"] - 0.25) < 1e-9
+        assert abs(g["b_pedestal"] - 0.2) < 1e-9 and abs(g["h_pedestal"] - 0.75) < 1e-9 and abs(g["profundidad"] - 0.8) < 1e-9
+        f = analizar_fundacion(apoyos_de_linea(l_), r["combos_lrfd"], r["patrones"], dataclasses.replace(ParametrosFundacion(), **g),
+                               x0=l_["x0"], x1=l_["x1"])
+        assert abs(f["L"] - 6.4) < 1e-6
+    # una fila sin fundación en Revit: sus apoyos van a una línea automática, con aviso
+    ls2, av2 = lineas_desde_revit(r["apoyos"], _fundaciones_revit([0.0]), r["origen_xy"])
+    assert len(ls2) == 2 and any("no caen" in a for a in av2) and ls2[1]["nombre"].endswith("(automática)")

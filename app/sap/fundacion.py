@@ -226,7 +226,8 @@ def _expandir(combos: dict, vientos: list[str]) -> list[tuple[str, dict, bool]]:
 
 # ------------------------------------------------------------------------------------- análisis y diseño
 
-def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf: ParametrosFundacion, avance=None) -> dict:
+def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf: ParametrosFundacion, avance=None,
+                        x0: float | None = None, x1: float | None = None) -> dict:
     def paso(pct, etapa, hasta=None):
         if avance:
             avance(round(pct), etapa, round(hasta if hasta is not None else pct))
@@ -235,7 +236,9 @@ def analizar_fundacion(apoyos: list[dict], combos_lrfd: dict, patrones: dict, pf
         raise ValueError("El análisis del eje no tiene apoyos: vuelve a analizar el eje")
     vientos = sorted({c for a in apoyos for c in a["casos"] if patrones.get(c) == "WIND"})
     xs_ap = [a["x"] for a in apoyos]
-    x0, x1 = min(xs_ap) - pf.voladizo, max(xs_ap) + pf.voladizo
+    # extremos: los de la fundación de Revit si se dan; si no, el voladizo más allá de los apoyos extremos
+    x0 = min(xs_ap) - pf.voladizo if x0 is None else min(x0, min(xs_ap) - 0.05)
+    x1 = max(xs_ap) + pf.voladizo if x1 is None else max(x1, max(xs_ap) + 0.05)
     n_el = max(int(math.ceil((x1 - x0) / pf.dx)), 2)
     malla = np.linspace(x0, x1, n_el + 1)
     paso_m = (x1 - x0) / n_el
