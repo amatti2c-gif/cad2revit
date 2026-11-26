@@ -26,7 +26,8 @@ from .eje_revit import ACERO, ParametrosMuroMadera, _seccion, mallar
 VERSION_3D = 1
 MASA_OBJETIVO = 0.90
 MODOS_MAX = 400
-TOL = 0.003                     # m: nudos a menos de esta distancia son el mismo
+TOL = 0.003                     # m: puntos que caen sobre una barra (para partirla)
+TOL_NUDO = 0.005                # m: puntos a menos de esta distancia son el mismo nudo
 TOL_UNION = 0.10                # m: barras que pasan a menos de esto se unen (excentricidades de modelación en Revit)
 
 
@@ -203,7 +204,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     # vigas que se cruzan o se tocan a menos de 0,10 m (extremos que no llegan justo, uniones excéntricas en Revit):
     # se unen en un nudo común; las cabezas de pilar no se mueven
     cabezas = [c["p1"] for c in pilares]
-    fijo = lambda p_: any(math.dist(p_, q) < 0.005 for q in cabezas)                         # noqa: E731
+    fijo = lambda p_: any(math.dist(p_, q) < TOL_NUDO for q in cabezas)                      # noqa: E731
     n_uniones = 0
     for ia in range(len(vigas)):
         for ib in range(ia + 1, len(vigas)):
@@ -238,15 +239,29 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         mod.avisos.append(f"{n_uniones} unión(es) entre vigas que en Revit no se tocan exactamente (≤ {TOL_UNION * 100:.0f} cm): "
                           "se unieron en un nudo común")
 
-    claves: dict = {}
+    celdas: dict = {}                       # celda de TOL_NUDO → nudos (búsqueda en las 27 vecinas)
+
+    def buscar(p):
+        cx, cy, cz = (int(math.floor(v / TOL_NUDO)) for v in p[:3])
+        mejor, dmin = None, TOL_NUDO
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                for k in (-1, 0, 1):
+                    for n in celdas.get((cx + i, cy + j, cz + k), ()):
+                        dd = math.dist(mod.nudos[n], p[:3])
+                        if dd < dmin:
+                            mejor, dmin = n, dd
+        return mejor
 
     def nudo(p):
-        k = _clave(p)
-        if k not in claves:
-            n = f"N{len(claves) + 1}"
-            claves[k] = n
-            mod.nudos[n] = (round(p[0], 4), round(p[1], 4), round(p[2], 4))
-        return claves[k]
+        n = buscar(p)
+        if n is None:
+            n = f"N{len(mod.nudos) + 1}"
+            while n in mod.nudos:
+                n += "b"
+            mod.nudos[n] = (round(float(p[0]), 4), round(float(p[1]), 4), round(float(p[2]), 4))
+            celdas.setdefault(tuple(int(math.floor(v / TOL_NUDO)) for v in mod.nudos[n]), []).append(n)
+        return n
 
     # ---- muros: cada uno se malla en su plano con la rutina del 2D (con los pilares y vigas de su plano) ----
     roles_muro = {str(k): v for k, v in (op.get("rol_muro") or {}).items()}
@@ -410,7 +425,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     for v in vigas:
         segs = [b for b in mod.barras if mod.origen.get(b[0]) == str(v["id"])]
         for k in ("p0", "p1"):
-            n_ = claves.get(_clave(v[k]))
+            n_ = buscar(v[k])
             if n_ is None or grado_n.get(n_, 0) != 1 or n_ in mod.apoyos:
                 continue
             seg = next((b for b in segs if n_ in b[1:3]), None)
@@ -446,7 +461,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         for lado, p in (("i", v["p0"]), ("j", v["p1"])):
             if u.get(lado) != "rotula":
                 continue
-            n_p = claves.get(_clave(p))
+            n_p = buscar(p)
             for nb, a_, b_, _ in segs:
                 for k_, n_ in ((0, a_), (1, b_)):
                     if n_ == n_p:
