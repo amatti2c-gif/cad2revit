@@ -960,6 +960,53 @@ def _razon_biaxial(Pu, Mux, Muy, Vu, cap) -> dict:
     return {"interaccion": it, "corte": Vu / cap["phiVn"] if cap["phiVn"] else 0.0, "ecuacion": ec}
 
 
+def cargas_para_visor(mod: Modelo3D, cargas: Cargas3D) -> dict:
+    """Esquema de cada estado de carga puro (sin mayorar) para el visor: en cada barra, intensidades (tonf/m, global)
+    en posiciones t ∈ [0, 1]; las cargas puntuales de la envolvente se muestran como intensidad de su tramo (F/tramo);
+    en los nudos, fuerzas (tonf). D incluye el peso propio de las barras y de los muros."""
+    out = {n: {"tipo": t, "barras": {}, "nudos": {}} for n, t in cargas.patrones.items() if t != "QUAKE"}
+    largo = {f: math.dist(mod.nudos[a], mod.nudos[b]) for f, a, b, _ in mod.barras}
+
+    def poner(pat, f, t, v):
+        if pat in out and any(abs(x) > 1e-9 for x in v):
+            out[pat]["barras"].setdefault(f, []).append([round(t, 4), *(round(float(x), 6) for x in v)])
+    for f, a, b, sec in mod.barras:                               # peso propio
+        s_ = mod.secciones.get(sec) or {}
+        try:
+            A = Perfil(s_["forma"], s_["d"], s_["bf"], s_.get("tw", 0.0), s_.get("tf", 0.0), s_.get("t", 0.0)).props()["A"]
+        except (KeyError, ZeroDivisionError, ValueError):
+            continue
+        for t in (0.1, 0.5, 0.9):
+            poner("DEAD", f, t, (0.0, 0.0, -7.85 * A))
+    for f, pat, v in cargas.barras:
+        for t in (0.1, 0.3, 0.5, 0.7, 0.9):
+            poner(pat, f, t, v)
+    for f, pat, x, v in cargas.barras_pt:
+        L = largo.get(f) or 1.0
+        tramo = L / max(1, int(math.ceil(L / 0.75)))
+        poner(pat, f, x / L, tuple(c_ / tramo for c_ in v))
+    for nombre, ns, sec in mod.areas:                             # peso propio de los muros, en sus nudos
+        a_ = mod.secciones_area[sec]
+        pts = np.array([mod.nudos[n] for n in ns])
+        nrm = np.array([*mod.normal_area[nombre], 0.0])
+        u = np.cross(np.array([0, 0, 1.0]), nrm)
+        tt, zz = pts @ u, pts[:, 2]
+        area = 0.5 * abs(sum(tt[k] * zz[(k + 1) % len(ns)] - tt[(k + 1) % len(ns)] * zz[k] for k in range(len(ns))))
+        w = mod.materiales[a_["material"]]["gamma"] * a_["espesor"] * area / len(ns)
+        for n in ns:
+            e = out["DEAD"]["nudos"].setdefault(n, [0.0, 0.0, 0.0])
+            e[2] -= w
+    for n, pat, v in cargas.nudos:
+        if pat in out:
+            e = out[pat]["nudos"].setdefault(n, [0.0, 0.0, 0.0])
+            for k in range(3):
+                e[k] += v[k]
+    for d in out.values():
+        d["barras"] = [[f, vals] for f, vals in d["barras"].items()]
+        d["nudos"] = [[n, *[round(x, 6) for x in v]] for n, v in d["nudos"].items() if any(abs(x) > 1e-9 for x in v)]
+    return out
+
+
 class ModeloInestable(ValueError):
     """El modelo tiene un mecanismo; el texto dice qué se mueve, hacia dónde y qué falta."""
 

@@ -150,6 +150,21 @@ export function mostrar(contenedor, d, onClick) {
     borde.position.copy(q);
     g.add(borde, m);
   });
+  // esquema de cargas: flechas que llegan a la barra (intensidad en tonf/m) o al nudo (fuerza en tonf)
+  if (d.flechas?.length) {
+    const largoMax = tam / 10;
+    const mB = Math.max(...d.flechas.filter(f => !f.nudo).map(f => Math.hypot(...f.v)), 1e-12);
+    const mN = Math.max(...d.flechas.filter(f => f.nudo).map(f => Math.hypot(...f.v)), 1e-12);
+    d.flechas.forEach(f => {
+      const mag = Math.hypot(...f.v);
+      if (mag < 1e-9) return;
+      const largo = Math.max(largoMax * mag / (f.nudo ? mN : mB), tam / 120);
+      const dir = V([f.v[0] / mag, f.v[1] / mag, f.v[2] / mag]);
+      const punta = V(f.p);
+      const cola = punta.clone().addScaledVector(dir, -largo);
+      g.add(new THREE.ArrowHelper(dir, cola, largo, f.color, Math.min(largo * 0.35, tam / 60), Math.min(largo * 0.2, tam / 110)));
+    });
+  }
   // cámara: solo al cambiar de modelo (los cambios de vista conservan el encuadre)
   const centro = V([(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2]);
   if (ctx.clave !== d.clave) {

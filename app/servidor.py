@@ -2183,6 +2183,7 @@ def _armar3d(datos: dict, aj: AjustesEje):
 
 @app.post("/api/proyectos/{pid}/modelos3d/{nombre}/vista")
 def vista_modelo3d(pid: str, nombre: str, aj: AjustesEje):
+    from app.sap.modelo3d import cargas_para_visor
     f = _modelo3d_f(_proyecto(pid), nombre)
     mod, _, cargas = _armar3d(json.loads(f.read_text(encoding="utf-8")), aj)
     return {
@@ -2196,6 +2197,7 @@ def vista_modelo3d(pid: str, nombre: str, aj: AjustesEje):
         "liberaciones": {k: list(v) for k, v in mod.liberaciones.items()},
         "superficies": [{k: v for k, v in s_.items() if k in ("id", "tipo", "nombre", "tris")} for s_ in mod.superficies],
         "envolvente": {k: v for k, v in cargas.envolvente.items() if k != "por_barra"},
+        "cargas_casos": cargas_para_visor(mod, cargas),
         "conteo": {"nudos": len(mod.nudos), "barras": len(mod.barras), "shells": len(mod.areas)},
     }
 

@@ -3042,6 +3042,9 @@ async function m3dActualizar() {
 function m3dOpcionesVer() {
   const sel = $("#m3d-ver"), antes = sel.value;
   const ops = [["modelo", "Modelo (elementos y apoyos)"]];
+  const NOMBRE_TIPO = { DEAD: "peso propio y permanentes", "ROOF LIVE": "sobrecarga de techo", WIND: "viento" };
+  Object.entries(m3d.vista?.cargas_casos || {}).forEach(([n, c]) =>
+    ops.push([`carga:${n}`, `Cargas ${n} (${NOMBRE_TIPO[c.tipo] || c.tipo}, sin mayorar)`]));
   if (m3d.res) {
     ops.push(["diseno", "Diseño: razón demanda/capacidad" + (m3d.vigente ? "" : " (análisis anterior)")], ["D", "Deformada por peso propio y techo (D)"]);
     (m3d.res.visor?.modos || []).forEach((m, i) => ops.push([`modo${i}`,
@@ -3078,7 +3081,7 @@ function m3dDibujar() {
   const R = m3d.res?.visor;
   const [ox, oy] = v.origen_xy || [0, 0];
   let d;
-  if (modo === "modelo" || !R) {
+  if (modo === "modelo" || modo.startsWith("carga:") || !R) {
     d = { nudos: v.nudos, apoyos: v.apoyos,
       barras: v.barras.map(b => ({ ni: b.ni, nj: b.nj, origen: b.origen, color: M3D_ROL[b.rol] || "#555555" })),
       quads: v.areas.map(a => ({ nudos: a.nudos, origen: a.origen, color: "#d9b26b" })) };
@@ -3098,7 +3101,7 @@ function m3dDibujar() {
   d.clave = m3d.nombre;
   // rótulas de vigas (siempre visibles en el modelo) y puntos editables según el modo
   const lib = v.liberaciones || {};
-  if (modo === "modelo" || !R) {
+  if (modo === "modelo" || modo.startsWith("carga:") || !R) {
     d.rotulas = v.barras.flatMap(b => { const L_ = lib[b.nombre] || [false, false], o = [];
       if (L_[0]) o.push([v.nudos[b.ni], v.nudos[b.nj]]); if (L_[1]) o.push([v.nudos[b.nj], v.nudos[b.ni]]); return o; });
     if (m3d.modo === "apoyos")
@@ -3108,6 +3111,30 @@ function m3dDibujar() {
   }
   $("#m3d-info").textContent = M3D_INFO[m3d.modo];
   $("#m3d-leyenda-razon").classList.toggle("oculto", modo !== "diseno");
+  if (modo.startsWith("carga:")) {
+    const caso = v.cargas_casos?.[modo.slice(6)];
+    const color = { DEAD: "#7a5a2a", "ROOF LIVE": "#2e8b3a", WIND: "#1f6fd1" }[caso?.tipo] || "#b00020";
+    const bar = Object.fromEntries(v.barras.map(b => [b.nombre, b]));
+    d.flechas = [];
+    let maxB = 0, maxN = 0;
+    for (const [f, vals] of caso?.barras || []) {
+      const b = bar[f];
+      if (!b) continue;
+      const p0 = v.nudos[b.ni], p1 = v.nudos[b.nj];
+      for (const [t, fx, fy, fz] of vals) {
+        d.flechas.push({ p: [0, 1, 2].map(k => p0[k] + t * (p1[k] - p0[k])), v: [fx, fy, fz], color });
+        maxB = Math.max(maxB, Math.hypot(fx, fy, fz));
+      }
+    }
+    for (const [n, fx, fy, fz] of caso?.nudos || []) {
+      if (!v.nudos[n]) continue;
+      d.flechas.push({ p: v.nudos[n], v: [fx, fy, fz], color: "#7a3fb0", nudo: true });
+      maxN = Math.max(maxN, Math.hypot(fx, fy, fz));
+    }
+    $("#m3d-info").textContent = `Estado ${modo.slice(6)} sin mayorar · flechas sobre barras: hasta ${(1000 * maxB).toFixed(1)} kgf/m` +
+      (maxN ? ` · en nudos de muros (morado): hasta ${(1000 * maxN).toFixed(1)} kgf` : "") +
+      " · el largo de cada flecha es proporcional a su valor";
+  }
   import("./visor3d_analisis.js").then(mod => mod.mostrar($("#m3d-visor"), d, (ud, ev) => {
     if (ud.tipo === "nudo") m3dApoyo(ev, ud.nudo);
     else if (ud.tipo === "extremo") m3dUnion(ud.id, ud.lado);
