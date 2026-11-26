@@ -33,6 +33,44 @@ namespace Cad2Revit
             return pts;
         }
 
+        /// <summary>Contornos (lazos) de la cara superior más grande del elemento, en m: el exterior y los huecos (p. ej. un
+        /// cimiento en anillo modelado como losa de fundación).</summary>
+        private List<List<double[]>> ContornosSuperiores(Element e)
+        {
+            Face mejor = null;
+            double area = 0;
+            void Buscar(GeometryElement ge)
+            {
+                if (ge == null) return;
+                foreach (var go in ge)
+                {
+                    if (go is Solid so && so.Volume > 1e-9)
+                        foreach (Face f in so.Faces)
+                            if (f is PlanarFace pf && pf.FaceNormal.Z > 0.9 && f.Area > area) { mejor = f; area = f.Area; }
+                    if (go is GeometryInstance gi) Buscar(gi.GetInstanceGeometry());
+                }
+            }
+            try { Buscar(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine })); } catch { }
+            var out_ = new List<List<double[]>>();
+            if (mejor == null) return out_;
+            try
+            {
+                foreach (var lazo in mejor.GetEdgesAsCurveLoops())
+                {
+                    var pts = new List<double[]>();
+                    foreach (var c in lazo)
+                    {
+                        var tes = c.Tessellate();
+                        for (int i = 0; i < tes.Count - 1; i++)
+                            pts.Add(new[] { Math.Round(Mt(tes[i].X), 4), Math.Round(Mt(tes[i].Y), 4), Math.Round(Mt(tes[i].Z), 4) });
+                    }
+                    if (pts.Count >= 3) out_.Add(pts);
+                }
+            }
+            catch { }
+            return out_;
+        }
+
         public Informe ExportarFundaciones(ICollection<ElementId> seleccion, string ruta, string nombre)
         {
             double R(double v) => Math.Round(v, 4);
@@ -94,6 +132,7 @@ namespace Cad2Revit
                     id = e.Id.ToString(), clase, categoria = e.Category?.Name ?? "", tipo, material = Material3D(e),
                     a = new[] { R(Mt(A.X)), R(Mt(A.Y)) }, b = new[] { R(Mt(B.X)), R(Mt(B.Y)) },
                     largo = R(Mt(t1 - t0)), ancho = R(Mt(n1 - n0)), z_inf = R(Mt(zi)), z_sup = R(Mt(zs)),
+                    contornos = clase == "losa" || clase == "zapata_corrida" ? ContornosSuperiores(e) : new List<List<double[]>>(),
                 });
             }
             var niveles = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation)

@@ -560,6 +560,16 @@
               <label>Zapata: estribo @ (cm) <input data-sap="fundacion.armaduras.fun_estribo_separacion_cm" type="number" step="any" value="20"></label>
           </div></div>
       </div>
+      <div class="panel oculto" id="fun-esquema3d-panel">
+        <div class="panel-tit"><span>Esquema 3D de las fundaciones</span>
+          <span class="acciones"><span class="tenue">arrastra para girar, rueda para acercar</span></span></div>
+        <div id="fun-visor3d" class="m3d-visor"></div>
+        <div class="tenue sap-leyenda"><span style="color:#8d8d8d">▮ cimiento / zapata / sobrecimiento</span>
+          <span style="color:#6d6d6d">▮ dado</span> <span style="color:#c9bfa6">▮ radier (no se modela)</span>
+          <span style="color:#2d6cdf">━ tramos del emparrillado (línea media)</span>
+          <span style="color:#1b6e20">▼ apoyo del modelo 3D sobre una fundación</span> <span style="color:#d0302a">▼ apoyo fuera de las fundaciones</span></div>
+        <ul id="fun-esquema3d-avisos" class="advertencias"></ul>
+      </div>
       <div class="panel oculto" id="fun-lineas-panel">
         <div class="panel-tit"><span>Líneas de fundación del modelo 3D</span></div>
         <div class="tabla-wrap"><table class="tabla sap-tabla" id="fun-lineas"></table></div>

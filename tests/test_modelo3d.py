@@ -259,3 +259,22 @@ def test_emparrillado_3d_de_fundaciones():
     assert e["conjunto"]["cruces"] == 4
     n_lineas = sum(next(s for s in x["servicio"] if s["combo"] == "D")["N"] for x in e["lineas"])
     assert abs(n_lineas - next(g for g in e["conjunto"]["servicio"] if g["combo"] == "D")["N"]) < 1e-6
+
+
+def test_cimiento_en_anillo():
+    """Un cimiento en anillo (losa de fundación con hueco) se modela por su línea media; los dados sobre él no son
+    fundaciones y el radier lleno no se modela."""
+    import math
+    from sap.modelo3d import _desplazar, preparar_fundaciones_revit
+    eje = [(10 * math.cos(t), 5 * math.sin(t)) for t in [2 * math.pi * k / 16 for k in range(16)]]
+    ext, inte = _desplazar(eje, -0.15), _desplazar(eje, 0.15)
+    fund = {"elementos": [
+        {"id": "C", "clase": "losa", "tipo": "Cimiento", "a": [-10, 0], "b": [10, 0], "largo": 20.3, "ancho": 10.3, "z_inf": -0.3, "z_sup": 0.0,
+         "contornos": [[[x, y, 0] for x, y in ext], [[x, y, 0] for x, y in inte]]},
+        {"id": "R", "clase": "losa", "tipo": "Radier", "a": [-9.8, 0], "b": [9.8, 0], "largo": 19.6, "ancho": 9.6, "z_inf": 0.0, "z_sup": 0.15,
+         "contornos": [[[x, y, 0] for x, y in inte]]},
+        {"id": "D", "clase": "zapata", "tipo": "Dado", "a": [9.9, 0], "b": [10.1, 0], "largo": 0.2, "ancho": 0.2, "z_inf": 0.0, "z_sup": 0.2}]}
+    els, avisos, extra = preparar_fundaciones_revit(fund)
+    assert len(extra["anillos"]) == 1 and abs(extra["anillos"][0]["ancho"] - 0.3) < 0.01
+    assert len([e for e in els if e.get("anillo") == "C"]) == 16
+    assert [d["id"] for d in extra["dados"]] == ["D"] and [r["id"] for r in extra["radieres"]] == ["R"]

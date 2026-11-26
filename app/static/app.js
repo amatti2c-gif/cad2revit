@@ -2688,6 +2688,25 @@ const fun = { res: null };
 const fun3 = { activo: false, nombre: null, d: null, geo: null };
 // panel «Geometría»: con fundaciones de Revit muestra los datos de la fundación elegida y no se edita (los da Revit)
 const FUN_GEO = ["b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad"];
+async function funEsquema3d() {
+  const panel = $("#fun-esquema3d-panel");
+  if (!fun3.activo || !fun3.geo) { panel.classList.add("oculto"); return; }
+  const v = await api("POST", P(`/fundaciones-revit/${encodeURIComponent(fun3.geo)}/vista`), { modelo3d: fun3.nombre });
+  // con resultados: cada tramo con el color de la peor razón de su fundación
+  if (fun3.d?.lineas) {
+    const peor = l => Math.max(l.resultado.resumen_suelo.FU_presion_max || 0, ...[...l.resultado.viga, ...l.resultado.zapata, ...l.resultado.pedestal].map(x => x.razon || 0));
+    const color = r => r <= 0.7 ? 0x1b6e20 : r <= 1 ? 0xe0a000 : 0xb00020;
+    for (const t of v.tramos) {
+      const l = fun3.d.lineas.find(l_ => (l_.ids || []).includes(t.id));
+      if (l) t.color = color(peor(l));
+    }
+  }
+  panel.classList.remove("oculto");
+  $("#fun-esquema3d-avisos").replaceChildren(...v.avisos.map(a => h("li", {}, a)));
+  v.clave = `${fun3.geo}|${fun3.nombre}`;
+  import("./visor_fundaciones.js").then(mod => mod.mostrar($("#fun-visor3d"), v))
+    .catch(e => toast("No se pudo cargar el visor 3D (¿sin internet para three.js?): " + e.message, true));
+}
 function funGeoInputs(geo, desdeRevit) {
   for (const k of FUN_GEO) {
     const el = $(`[data-sap="fundacion.${k}"]`);
@@ -2707,7 +2726,7 @@ function funOrigen(tres) {
   $("#fun-lbl-m3d").classList.toggle("oculto", !tres);
   $("#fun-lbl-geo").classList.toggle("oculto", !tres);
   $("#fun-lbl-subir").classList.toggle("oculto", !tres);
-  if (!tres) funGeoInputs(null, false);
+  if (!tres) { funGeoInputs(null, false); $("#fun-esquema3d-panel").classList.add("oculto"); }
   $("#fun-nota-3d").classList.toggle("oculto", !tres);
   $("#fun-lineas-panel").classList.add("oculto");
   $("#fun-res").classList.add("oculto");
@@ -2731,6 +2750,7 @@ async function cargarFundacion3d() {
   if (fun3.geo && geos.some(g => g.nombre === fun3.geo)) sg.value = fun3.geo;
   fun3.geo = sg.value || null;
   funGeoInputs(null, !!fun3.geo);
+  await funEsquema3d();
   $("#fun-estado").textContent = "";
   if (!fun3.nombre) return;
   try {
@@ -2783,6 +2803,7 @@ function funMostrar3d(d) {
     (d.avisos?.length ? d.avisos.join(". ") + ". " : "") + (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
   funPlanta3d();
   if (d.lineas.length) funElegirLinea(Number(sel.value) || 0);
+  intentar(funEsquema3d);
 }
 function funElegirLinea(i) {
   const d = fun3.d; if (!d || !d.lineas[i]) return;
@@ -3064,7 +3085,7 @@ $("#btn-fundacion").addEventListener("click", () => intentar(() => fun3.activo ?
 $$('input[name="fun-origen"]').forEach(el => el.addEventListener("change", () => intentar(async () => { funOrigen(el.value === "3d"); await cargarFundacion(); })));
 $("#sel-m3d-fun").addEventListener("change", ev => intentar(async () => { fun3.nombre = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); await cargarFundacion3d(); }));
 $("#sel-geo-fun").addEventListener("change", ev => { fun3.geo = ev.target.value || null; funGeoInputs(null, !!fun3.geo);
-  $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); });
+  fun3.d = null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); intentar(funEsquema3d); });
 $("#inp-fun-revit").addEventListener("change", ev => intentar(async () => {
   const f = ev.target.files[0];
   if (!f) return;

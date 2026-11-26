@@ -1046,6 +1046,138 @@ def lineas_fundacion(apoyos: list[dict], tol: float = 0.30) -> list[dict]:
     return lineas
 
 
+def _area_poligono(P) -> float:
+    x, y = np.asarray(P, float)[:, 0], np.asarray(P, float)[:, 1]
+    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+
+def _dist_poligono(p, P) -> float:
+    P = np.asarray(P, float)[:, :2]
+    d = np.inf
+    for a, b in zip(P, np.roll(P, -1, axis=0)):
+        ab = b - a
+        t = min(max(float((p - a) @ ab) / max(float(ab @ ab), 1e-12), 0.0), 1.0)
+        d = min(d, float(np.linalg.norm(p - (a + t * ab))))
+    return d
+
+
+def _dentro(p, P) -> bool:
+    P = np.asarray(P, float)[:, :2]
+    x, y = p
+    c = False
+    for (x1, y1), (x2, y2) in zip(P, np.roll(P, -1, axis=0)):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            c = not c
+    return c
+
+
+def _desplazar(P, d):
+    """Polígono desplazado d hacia adentro (lados paralelos, vértices en la intersección de lados vecinos)."""
+    P = np.asarray(P, float)[:, :2]
+    if _area_poligono(P) < 0:
+        P = P[::-1]
+    n = len(P)
+    lineas = []
+    for i in range(n):
+        a, b = P[i], P[(i + 1) % n]
+        u = (b - a) / max(np.linalg.norm(b - a), 1e-12)
+        lineas.append((a + d * np.array([-u[1], u[0]]), u))       # normal izquierda = hacia adentro (antihorario)
+    out = []
+    for i in range(n):
+        (p1, u1), (p2, u2) = lineas[i - 1], lineas[i]
+        M = np.array([u1, -u2]).T
+        if abs(np.linalg.det(M)) < 1e-9:
+            out.append(p2)
+        else:
+            t, _ = np.linalg.solve(M, p2 - p1)
+            out.append(p1 + t * u1)
+    return np.array(out)
+
+
+def _simplificar(P, ang: float = 4.0):
+    """Quita vértices casi alineados (arcos teselados) de un polígono cerrado."""
+    P = list(np.asarray(P, float))
+    cambio = True
+    while cambio and len(P) > 3:
+        cambio = False
+        for i in range(len(P)):
+            a, b, c = P[i - 1], P[i], P[(i + 1) % len(P)]
+            u, v = b - a, c - b
+            if np.linalg.norm(u) < 1e-6 or np.linalg.norm(v) < 1e-6 or \
+                    math.degrees(math.acos(min(1.0, abs(float(u @ v)) / (np.linalg.norm(u) * np.linalg.norm(v))))) < ang and float(u @ v) > 0:
+                P.pop(i)
+                cambio = True
+                break
+    return np.array(P)
+
+
+def preparar_fundaciones_revit(fund: dict) -> tuple[list[dict], list[str], dict]:
+    """Elementos de «Fundaciones a análisis» listos para el emparrillado: un cimiento en anillo (losa de fundación con
+    hueco) se convierte en tramos de fundación corrida por su línea media, con el ancho de la banda; los dados chicos
+    sobre un cimiento no son fundaciones (se informan); los radieres (losas llenas) no se modelan. Devuelve (elementos,
+    avisos, extra para el visor: anillos y dados)."""
+    avisos = []
+    out = []
+    extra = {"anillos": [], "dados": [], "radieres": []}
+    els = list(fund.get("elementos") or [])
+    for e in els:
+        if e["clase"] != "losa":
+            continue
+        cont = [np.asarray(c, float) for c in e.get("contornos") or [] if len(c) >= 3]
+        if len(cont) >= 2:
+            cont.sort(key=lambda c: -abs(_area_poligono(c)))
+            ext, inte = cont[0], cont[1]
+            if all(_dentro(q[:2], ext) for q in inte[:3]):
+                w = float(np.median([_dist_poligono(q[:2], inte) for q in _simplificar(ext)]))
+                eje = _simplificar(_desplazar(ext, w / 2))
+                n = len(eje)
+                for k in range(n):
+                    a, b = eje[k], eje[(k + 1) % n]
+                    L = float(np.linalg.norm(b - a))
+                    if L < 0.05:
+                        continue
+                    out.append({**{kk: v for kk, v in e.items() if kk != "contornos"}, "id": f"{e['id']}-{k + 1}",
+                                "clase": "zapata_corrida", "a": [float(a[0]), float(a[1])], "b": [float(b[0]), float(b[1])],
+                                "largo": L, "ancho": w, "anillo": e["id"]})
+                extra["anillos"].append({"id": e["id"], "tipo": e.get("tipo", ""), "ext": ext[:, :2].tolist(),
+                                         "int": inte[:, :2].tolist(), "eje": eje.tolist(), "ancho": w,
+                                         "z_inf": e["z_inf"], "z_sup": e["z_sup"]})
+                avisos.append(f"Cimiento en anillo {e.get('tipo', '')} (Revit {e['id']}): banda de {w * 100:.0f} cm × "
+                              f"{(e['z_sup'] - e['z_inf']) * 100:.0f} cm; se modela por su línea media en {n} tramos unidos")
+                continue
+        if e["largo"] > 3 * e["ancho"] and e["ancho"] < 2.0:
+            out.append({**e, "clase": "zapata_corrida"})               # losa angosta y larga: fundación corrida
+            continue
+        rad = {k: e[k] for k in ("id", "tipo", "a", "b", "ancho", "z_inf", "z_sup")}
+        if cont:
+            rad["ext"] = max(cont, key=lambda c: abs(_area_poligono(c)))[:, :2].tolist()
+        extra["radieres"].append(rad)
+        avisos.append(f"Losa {e.get('tipo', '')} (Revit {e['id']}, {e['largo']:.1f} × {e['ancho']:.1f} m): no se modela como "
+                      "fundación (radier o losa llena)" + ("" if e.get("contornos") else "; si es un cimiento en anillo, vuelve a "
+                                                            "exportar con el complemento al día para leer su forma"))
+    bases = [e for e in out] + [e for e in els if e["clase"] in ("zapata_corrida", "viga")]
+    for e in els:
+        if e["clase"] in ("zapata_corrida", "viga", "muro"):
+            out.append(e) if e["clase"] == "muro" else None
+            continue
+        if e["clase"] != "zapata":
+            continue
+        chico = max(e["largo"], e["ancho"]) <= 0.6
+        c = (np.array(e["a"]) + np.array(e["b"])) / 2
+        sobre = any(abs(e["z_inf"] - b["z_sup"]) < 0.06 and
+                    abs(float(np.cross(np.r_[np.subtract(b["b"], b["a"]), 0] / max(b["largo"], 1e-9), np.r_[c - np.array(b["a"]), 0])[2]))
+                    <= b["ancho"] / 2 + 0.05 for b in bases)
+        if chico and sobre:
+            extra["dados"].append({k: e[k] for k in ("id", "tipo", "a", "b", "ancho", "largo", "z_inf", "z_sup")})
+            continue
+        out.append(e)
+    out += [e for e in els if e["clase"] in ("zapata_corrida", "viga")]
+    if extra["dados"]:
+        avisos.append(f"{len(extra['dados'])} dado(s) sobre el cimiento (Revit «{extra['dados'][0]['tipo']}»): son el apoyo de los "
+                      "pilares, no fundaciones; la carga del pilar baja al cimiento")
+    return out, avisos, extra
+
+
 def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: float = 0.10) -> tuple[list[dict], list[str]]:
     """Líneas de fundación con la geometría exportada de Revit («Fundaciones a análisis»): zapatas corridas, vigas y
     zapatas aisladas son las fundaciones; los muros (sobrecimientos) sobre ellas dan el pedestal. Los tramos colineales
@@ -1053,14 +1185,14 @@ def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: flo
     planta, dentro de su ancho + 10 cm). Devuelve (líneas con su geometría, avisos); los apoyos que no caen sobre
     ninguna quedan en líneas automáticas."""
     ox, oy = origen_xy or (0.0, 0.0)
+    elementos, avisos, _ = preparar_fundaciones_revit(fund)
     els = []
-    for e in fund.get("elementos") or []:
+    for e in elementos:
         a = np.array([e["a"][0] - ox, e["a"][1] - oy])
         b = np.array([e["b"][0] - ox, e["b"][1] - oy])
         L = float(np.linalg.norm(b - a))
         u = (b - a) / L if L > 1e-6 else np.array([1.0, 0.0])
         els.append({**e, "A": a, "B": b, "L": L, "u": u})
-    avisos = []
     terreno = next((n["z"] for n in fund.get("niveles") or [] if "terreno" in str(n.get("nombre", "")).lower()), None)
     bases = [e for e in els if e["clase"] in ("zapata_corrida", "viga", "zapata", "losa")]
     muros = [e for e in els if e["clase"] == "muro"]

@@ -2287,6 +2287,46 @@ def leer_fundaciones_revit(pid: str, nombre: str):
     return json.loads(_fund_revit(_proyecto(pid), nombre).read_text(encoding="utf-8"))
 
 
+class PedidoVistaFund(BaseModel):
+    modelo3d: str | None = None
+
+
+@app.post("/api/proyectos/{pid}/fundaciones-revit/{nombre}/vista")
+def vista_fundaciones_revit(pid: str, nombre: str, pedido: PedidoVistaFund):
+    """Esquema 3D de las fundaciones de Revit: cimientos en anillo, zapatas, sobrecimientos, dados y radieres; los
+    tramos del emparrillado de cálculo; y los apoyos del modelo 3D (si está analizado), marcando los que caen sobre una
+    fundación."""
+    import numpy as np
+    from app.sap.modelo3d import lineas_desde_revit, preparar_fundaciones_revit
+    d = _proyecto(pid)
+    fund = json.loads(_fund_revit(d, nombre).read_text(encoding="utf-8"))
+    elementos, avisos, extra = preparar_fundaciones_revit(fund)
+    cajas = [{k: e[k] for k in ("id", "clase", "tipo", "a", "b", "ancho", "z_inf", "z_sup")} for e in elementos if not e.get("anillo")]
+    tramos = [{"a": e["a"], "b": e["b"], "z": e["z_sup"], "id": e["id"]} for e in elementos if e["clase"] in ("zapata_corrida", "viga")]
+    apoyos = []
+    if pedido.modelo3d:
+        rf = _hermano3d(_modelo3d_f(d, pedido.modelo3d), ".resultado.json")
+        if rf.is_file():
+            res = json.loads(rf.read_text(encoding="utf-8"))
+            if res.get("apoyos"):
+                ox, oy = res.get("origen_xy") or (0.0, 0.0)
+                lineas, av2 = lineas_desde_revit(res["apoyos"], fund, (ox, oy))
+                sobre = {a["nudo"] for l_ in lineas if l_.get("revit") for a in l_["apoyos"]}
+                apoyos = [{"p": [a["xyz"][0] + ox, a["xyz"][1] + oy, a["xyz"][2]], "ok": a["nudo"] in sobre, "pilar": a.get("pilar")}
+                          for a in res["apoyos"]]
+                avisos = av2
+                fuera = sum(1 for a in apoyos if not a["ok"])
+                if fuera == len(apoyos):
+                    avisos.append(f"Ninguno de los {len(apoyos)} apoyos del modelo 3D «{pedido.modelo3d}» cae sobre estas fundaciones: "
+                                  "¿son de otra parte del proyecto? Exporta el modelo 3D de la estructura que va sobre ellas")
+        else:
+            avisos.append("El modelo 3D elegido aún no está analizado: sus apoyos se verán después de analizarlo")
+    pts = [p for e in cajas for p in (e["a"], e["b"])] + [p for r in extra["anillos"] for p in r["ext"]] + [a["p"][:2] for a in apoyos]
+    origen = [float(np.mean([p[0] for p in pts])), float(np.mean([p[1] for p in pts]))] if pts else [0.0, 0.0]
+    return {"origen": origen, "anillos": extra["anillos"], "cajas": cajas, "dados": extra["dados"], "radieres": extra["radieres"],
+            "tramos": tramos, "apoyos": apoyos, "avisos": avisos}
+
+
 @app.delete("/api/proyectos/{pid}/fundaciones-revit/{nombre}", status_code=204)
 def borrar_fundaciones_revit(pid: str, nombre: str):
     _fund_revit(_proyecto(pid), nombre).unlink()
