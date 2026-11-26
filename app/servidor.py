@@ -2282,6 +2282,11 @@ async def subir_fundaciones_revit(pid: str, archivo: UploadFile = File(...)):
     return {"nombre": nombre}
 
 
+@app.get("/api/proyectos/{pid}/fundaciones-revit/{nombre}")
+def leer_fundaciones_revit(pid: str, nombre: str):
+    return json.loads(_fund_revit(_proyecto(pid), nombre).read_text(encoding="utf-8"))
+
+
 @app.delete("/api/proyectos/{pid}/fundaciones-revit/{nombre}", status_code=204)
 def borrar_fundaciones_revit(pid: str, nombre: str):
     _fund_revit(_proyecto(pid), nombre).unlink()
