@@ -350,3 +350,8 @@ button.sec.peligro { background: transparent; color: #b00020; border-color: #e3a
 button.peligro:disabled { opacity: .45; }
 #dlg-eliminar { max-width: 560px; }
 #dlg-eliminar h4 { margin: 16px 0 6px; }
+
+#tab-sap.modo3d .solo2d { display: none !important; }
+#tab-sap:not(.modo3d) .solo3d { display: none !important; }
+.m3d-visor { width: 100%; height: 520px; border: 1px solid var(--borde, #ddd); border-radius: 6px; background: #fafbfc; cursor: pointer; }
+@media (max-width: 700px) { .m3d-visor { height: 360px; } }

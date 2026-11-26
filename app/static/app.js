@@ -2077,6 +2077,7 @@ async function cargarSap(elegir) {
   if (lista.some(e => e.nombre === n)) sel.value = n;
   if (sel.value) await abrirEjeSap(sel.value);
   else $("#sap-contenido").classList.add("oculto");
+  if (m3d.activo) await cargarModelos3d();
 }
 
 async function sapAgente() {
@@ -2975,6 +2976,234 @@ $("#inp-eje-sap").addEventListener("change", ev => intentar(async () => {
   await cargarSap(r.nombre);
 }));
 
+// ------------------------------------------------------------------ Modelo 3D (pestaña 6, modo 3D): elementos elegidos en Revit
+const m3d = { activo: false, nombre: null, modelo: null, vista: null, res: null, vigente: false,
+  opciones: { excluir: [], apoyos: {}, l_fuera: {} } };
+const M3D_ROL = { pilar: "#1f4e9c", techo: "#c06000", viga: "#555555", diagonal: "#7a3fb0" };
+const m3dColorRazon = r => r == null ? "#888888" : r <= 0.7 ? "#1b6e20" : r <= 1 ? "#e0a000" : "#b00020";
+const M3 = (resto = "") => P(`/modelos3d/${encodeURIComponent(m3d.nombre)}${resto}`);
+const m3dAjustes = () => ({ parametros: sapParametros(), opciones: m3d.opciones });
+
+function m3dModo(activo, guardar = true) {
+  m3d.activo = activo;
+  $("#tab-sap").classList.toggle("modo3d", activo);
+  $$('input[name="sap-dim"]').forEach(el => { el.checked = el.value === (activo ? "3d" : "2d"); });
+  if (guardar) try { localStorage.setItem("c2r-sap-dim", activo ? "3d" : "2d"); } catch {}
+}
+
+async function cargarModelos3d(elegir) {
+  if (!estado.proyecto) return;
+  const lista = await api("GET", P("/modelos3d"));
+  const sel = $("#sel-m3d");
+  sel.replaceChildren(...(lista.length ? lista.map(e => h("option", { value: e.nombre },
+    `${e.nombre.replace(/^3d-/, "")} · ${e.pilares} pilares, ${e.vigas} vigas, ${e.muros} muros · ${e.fecha.slice(0, 16).replace("T", " ")}${e.analizado ? " · analizado" : ""}`))
+    : [h("option", { value: "" }, "— sin modelos 3D: usa el botón «Modelo 3D a análisis» de Revit o sube un .modelo3d.json —")]));
+  const n = elegir || m3d.nombre;
+  if (lista.some(e => e.nombre === n)) sel.value = n;
+  if (sel.value) await abrirModelo3d(sel.value);
+  else { $("#m3d-panel").classList.add("oculto"); $("#m3d-res").classList.add("oculto"); m3d.nombre = null; }
+}
+
+async function abrirModelo3d(nombre) {
+  m3d.nombre = nombre;
+  const d = await api("GET", M3());
+  m3d.modelo = d.modelo;
+  const aj = d.ajustes || {};
+  if (aj.parametros) sapPonerParametros(aj.parametros);
+  m3d.opciones = { excluir: [], apoyos: {}, l_fuera: {}, ...(aj.opciones || {}) };
+  $("#sap-contenido").classList.remove("oculto");
+  $("#m3d-panel").classList.remove("oculto");
+  m3d.res = null; m3d.vigente = false;
+  $("#m3d-res").classList.add("oculto");
+  await m3dActualizar();
+  try { m3dMostrarRes(await api("GET", M3("/resultado")), true); } catch { /* sin análisis */ }
+}
+
+async function m3dActualizar() {
+  if (!m3d.nombre) return;
+  m3d.vista = await api("POST", M3("/vista"), m3dAjustes());
+  const v = m3d.vista;
+  $("#m3d-estado").textContent = `${m3d.modelo.nombre || m3d.nombre} · ${v.conteo.nudos} nudos, ${v.conteo.barras} barras, ${v.conteo.shells} láminas`;
+  $("#m3d-cargas").replaceChildren(...v.cargas.map(c => h("li", {}, c)));
+  $("#m3d-avisos").replaceChildren(...v.avisos.map(a => h("li", {}, a)));
+  m3dTabla();
+  m3dOpcionesVer();
+  m3dDibujar();
+}
+
+function m3dOpcionesVer() {
+  const sel = $("#m3d-ver"), antes = sel.value;
+  const ops = [["modelo", "Modelo (elementos y apoyos)"]];
+  if (m3d.res) {
+    ops.push(["diseno", "Diseño: razón demanda/capacidad" + (m3d.vigente ? "" : " (análisis anterior)")], ["D", "Deformada por peso propio y techo (D)"]);
+    (m3d.res.visor?.modos || []).forEach((m, i) => ops.push([`modo${i}`,
+      `Modo ${m.n}: T = ${m.T.toFixed(3)} s · masa X ${(100 * m.masa_x).toFixed(0)} %, Y ${(100 * m.masa_y).toFixed(0)} %`]));
+  }
+  sel.replaceChildren(...ops.map(([v, t]) => h("option", { value: v }, t)));
+  sel.value = ops.some(o => o[0] === antes) ? antes : "modelo";
+}
+
+function m3dFantasmas(ox, oy) {
+  const M = m3d.modelo, v = m3d.vista;
+  const excl = new Set(m3d.opciones.excluir.map(String)), sin = new Set(v?.sin_apoyo || []), auto = new Set(v?.excluidos_auto || []);
+  const out = [];
+  const Q = p => [p[0] - ox, p[1] - oy, p[2]];
+  const color = id => sin.has(id) ? 0xd0702a : 0x999999;
+  [...(M.pilares || []), ...(M.vigas || [])].forEach(e => {
+    const id = String(e.id);
+    if (excl.has(id) || sin.has(id) || auto.has(id)) out.push({ origen: id, p: [Q(e.p0), Q(e.p1)], color: color(id) });
+  });
+  (M.muros || []).forEach(w => {
+    const id = String(w.id);
+    if (!(excl.has(id) || sin.has(id))) return;
+    const zt = Math.max(...(w.perfil || [[0, w.z0 + 2.4]]).map(q => q[1]));
+    const a = [w.a[0] - ox, w.a[1] - oy], b = [w.b[0] - ox, w.b[1] - oy];
+    out.push({ origen: id, cerrado: true, color: color(id), p: [[...a, w.z0], [...b, w.z0], [...b, zt], [...a, zt]] });
+  });
+  return out;
+}
+
+function m3dDibujar() {
+  const v = m3d.vista;
+  if (!v) return;
+  const modo = $("#m3d-ver").value || "modelo";
+  const R = m3d.res?.visor;
+  const [ox, oy] = v.origen_xy || [0, 0];
+  let d;
+  if (modo === "modelo" || !R) {
+    d = { nudos: v.nudos, apoyos: v.apoyos,
+      barras: v.barras.map(b => ({ ni: b.ni, nj: b.nj, origen: b.origen, color: M3D_ROL[b.rol] || "#555555" })),
+      quads: v.areas.map(a => ({ nudos: a.nudos, origen: a.origen, color: "#d9b26b" })) };
+  } else {
+    const fu = R.fu_muros || {};
+    d = { nudos: R.nudos, apoyos: R.apoyos,
+      barras: R.barras.map(([, ni, nj, origen, rol, , razon]) => ({ ni, nj, origen,
+        color: modo === "diseno" ? m3dColorRazon(razon) : (M3D_ROL[rol] || "#555555") })),
+      quads: R.quads.map(([, ns, origen]) => ({ nudos: ns, origen,
+        color: modo === "diseno" ? m3dColorRazon(fu[origen]) : "#d9b26b" })) };
+    if (modo === "D") d.desp = R.deformada_D;
+    else if (modo.startsWith("modo")) d.desp = R.modos[Number(modo.slice(4))]?.forma;
+    d.escala = Number($("#m3d-escala").value) / 40;
+  }
+  d.fantasmas = m3dFantasmas(ox, oy);
+  d.clave = m3d.nombre;
+  $("#m3d-leyenda-razon").classList.toggle("oculto", modo !== "diseno");
+  import("./visor3d_analisis.js").then(mod => mod.mostrar($("#m3d-visor"), d, origen => intentar(() => m3dAlternar(origen))))
+    .catch(e => toast("No se pudo cargar el visor 3D (¿sin internet para three.js?): " + e.message, true));
+}
+
+async function m3dAlternar(id) {
+  id = String(id);
+  const ex = m3d.opciones.excluir.map(String);
+  m3d.opciones.excluir = ex.includes(id) ? ex.filter(x => x !== id) : [...ex, id];
+  m3d.vigente = false;
+  toast(ex.includes(id) ? `Elemento ${id} incluido en el modelo` : `Elemento ${id} quitado del modelo`);
+  await m3dActualizar();
+}
+
+function m3dTabla() {
+  const M = m3d.modelo, v = m3d.vista, op = m3d.opciones;
+  const excl = new Set(op.excluir.map(String)), sin = new Set(v.sin_apoyo || []), auto = new Set(v.excluidos_auto || []);
+  const largo = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], (b[2] ?? 0) - (a[2] ?? 0)).toFixed(2);
+  const chk = id => h("input", { type: "checkbox", checked: !excl.has(id) || null, onchange: () => intentar(() => m3dAlternar(id)) });
+  const estadoTxt = id => excl.has(id) ? "excluido" : sin.has(id) ? "sin apoyo (no se modela)" : auto.has(id) ? "costanera (pestaña 8)" : "";
+  const sel = (valor, ops, cambio) => h("select", { onchange: ev => intentar(() => cambio(ev.target.value)) },
+    ...ops.map(([v_, t]) => h("option", { value: v_, selected: v_ === valor || null }, t)));
+  const baseOps = [["", "por defecto"], ["rotula", "fija (rotulada)"], ["empotrado", "empotrada"], ["deslizante", "deslizante"]];
+  const lfOps = [["", "largo completo"], ["plano", "entre nudos"]];
+  const setOp = (clave, id) => async val => {
+    if (val) op[clave][id] = val; else delete op[clave][id];
+    m3d.vigente = false; await m3dActualizar();
+  };
+  const filas = [];
+  (M.pilares || []).forEach(e => { const id = String(e.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id), h("td", {}, "pilar"),
+    h("td", {}, e.seccion), h("td", {}, largo(e.p0, e.p1)),
+    h("td", {}, sel(op.apoyos[id] || "", baseOps, setOp("apoyos", id))), h("td", {}, sel(op.l_fuera[id] || "", lfOps, setOp("l_fuera", id))),
+    h("td", { class: "tenue" }, estadoTxt(id)))); });
+  (M.vigas || []).forEach(e => { const id = String(e.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id),
+    h("td", {}, e.costanera ? "costanera" : e.tipo), h("td", {}, e.seccion), h("td", {}, largo(e.p0, e.p1)), h("td", {}, "—"),
+    h("td", {}, sel(op.l_fuera[id] || "", lfOps, setOp("l_fuera", id))), h("td", { class: "tenue" }, estadoTxt(id)))); });
+  (M.muros || []).forEach(w => { const id = String(w.id); filas.push(h("tr", {}, h("td", {}, chk(id)), h("td", {}, id), h("td", {}, "muro"),
+    h("td", {}, `${w.tipo} (${w.material})`), h("td", {}, Number(w.largo).toFixed(2)), h("td", {}, "—"), h("td", {}, "—"),
+    h("td", { class: "tenue" }, estadoTxt(id) || `${(w.vanos || []).length} vano(s)`))); });
+  $("#m3d-elementos").replaceChildren(h("thead", {}, h("tr", {}, ...["Incluir", "Id Revit", "Tipo", "Sección", "L (m)", "Base",
+    "Pandeo fuera del plano", "Estado"].map(t => h("th", {}, t)))), h("tbody", {}, ...filas));
+}
+
+async function m3dAnalizar() {
+  if (!m3d.nombre) throw new Error("Elige un modelo 3D");
+  const r = await conAvance("m3d", M3("/avance"), $("#btn-m3d-analizar"), () => api("POST", M3("/analizar"), m3dAjustes()));
+  m3dMostrarRes(r, false);
+  toast("Análisis 3D listo");
+}
+
+function m3dMostrarRes(r, guardado) {
+  m3d.res = r; m3d.vigente = true;
+  const f2 = x => x == null ? "—" : Number(x).toFixed(2), f3 = x => x == null ? "—" : Number(x).toFixed(3);
+  const pc = x => x == null ? "—" : (100 * x).toFixed(0) + " %";
+  const celda = x => h("td", { class: x == null ? "" : (x > 1 ? "nocumple" : "cumple") }, f2(x));
+  const tabla = (id, cab, filas) => $(id).replaceChildren(h("thead", {}, h("tr", {}, ...cab.map(t => h("th", {}, t)))), h("tbody", {}, ...filas));
+  $("#m3d-res").classList.remove("oculto");
+  const mp = r.masa_participante, dX = r.direcciones.X, dY = r.direcciones.Y;
+  const malos = r.acero.filter(a => a.razon > 1).length + r.madera.filter(m => m.FU > 1).length + r.deformaciones.filter(d => d.razon > 1).length;
+  $("#m3d-resumen").replaceChildren(
+    `${r.conteo.nudos} nudos, ${r.conteo.barras} barras, ${r.conteo.shells} láminas · ${r.n_modos} modos (masa X ${pc(mp.X)}, Y ${pc(mp.Y)}) · `,
+    `peso sísmico ${f2(r.peso_sismico)} tonf · Qmín ${f2(r.q_min)}, Qmáx ${f2(r.q_max)} tonf · `,
+    `T* X ${f3(dX.T)} s, Y ${f3(dY.T)} s · ${r.sistema?.texto || ""} · `,
+    h("strong", { class: malos ? "nocumple" : "cumple" }, malos ? `${malos} verificación(es) no cumplen` : "todas las verificaciones cumplen"),
+    r.fecha ? h("span", { class: "tenue" }, ` · ${r.fecha.slice(0, 16).replace("T", " ")}`) : "");
+  const modos = (r.visor?.modos || []);
+  tabla("#m3d-modos", ["Modo", "T (s)", "Masa X", "Masa Y"], modos.map(m => h("tr", {}, h("td", {}, m.n), h("td", {}, f3(m.T)),
+    h("td", {}, pc(m.masa_x)), h("td", {}, pc(m.masa_y)))));
+  tabla("#m3d-casos", ["Caso", "Tipo", "Rx (tonf)", "Ry (tonf)", "Rz (tonf)", "Corte basal (tonf)", "Factor Qmín/Qmáx", "T* (s)"],
+    r.casos.map(c => h("tr", {}, h("td", {}, c.caso), h("td", {}, c.tipo), h("td", {}, f2(c.Rx)), h("td", {}, f2(c.Ry)), h("td", {}, f2(c.Rz)),
+      h("td", {}, f2(c.corte_basal)), h("td", {}, c.factor == null ? "—" : f3(c.factor)), h("td", {}, c.T == null ? "—" : f3(c.T)))));
+  tabla("#m3d-acero", ["Elemento", "Rol", "Sección", "L (m)", "Combo", "Pu (tonf)", "Mux (tonf·m)", "Muy (tonf·m)", "Vu (tonf)",
+    "φPn", "φMnx", "φMny", "KL/r", "Ec.", "Interacción", "Corte", "Notas"],
+    r.acero.map(a => h("tr", {}, h("td", {}, a.origen), h("td", {}, a.rol), h("td", {}, a.seccion), h("td", {}, f2(a.L)), h("td", {}, a.combo || "—"),
+      h("td", {}, f2(a.Pu)), h("td", {}, f2(a.Mux)), h("td", {}, f2(a.Muy)), h("td", {}, f2(a.Vu)), h("td", {}, f2(a.phiPn)),
+      h("td", {}, f2(a.phiMnx)), h("td", {}, f2(a.phiMny)), h("td", {}, a.KL_r == null ? "—" : Number(a.KL_r).toFixed(0)), h("td", {}, a.ecuacion || ""),
+      celda(a.interaccion), celda(a.corte), h("td", { class: "tenue" }, (a.notas || []).join("; ")))));
+  tabla("#m3d-madera", ["Muro", "x0–x1 (m)", "L (m)", "H (m)", "Combo", "v (tonf/m)", "vadm (tonf/m)", "FU corte", "T anclaje (tonf)", "Combo anclaje"],
+    r.madera.map(m => h("tr", {}, h("td", {}, m.muro), h("td", {}, `${f2(m.x0)}–${f2(m.x1)}`), h("td", {}, f2(m.L)), h("td", {}, f2(m.H)),
+      h("td", {}, m.combo), h("td", {}, f3(m.v)), h("td", {}, f3(m.vn)), celda(m.FU), h("td", {}, f2(m.T_anclaje)), h("td", {}, m.combo_anclaje || "—"))));
+  tabla("#m3d-deform", ["Elemento", "Tipo", "Combo", "δ (mm)", "Límite (mm)", "Criterio", "Razón"],
+    r.deformaciones.map(d => h("tr", {}, h("td", {}, d.elemento), h("td", {}, d.tipo), h("td", {}, d.combo), h("td", {}, f2(d.delta_mm)),
+      h("td", {}, f2(d.limite_mm)), h("td", {}, d.criterio), celda(d.razon))));
+  m3dOpcionesVer();
+  if (!guardado) $("#m3d-ver").value = "diseno";
+  m3dDibujar();
+}
+
+$$('input[name="sap-dim"]').forEach(el => el.addEventListener("change", () => intentar(async () => {
+  m3dModo(el.value === "3d");
+  if (m3d.activo) await cargarModelos3d(); else await cargarSap();
+})));
+$("#sel-m3d").addEventListener("change", ev => ev.target.value && intentar(() => abrirModelo3d(ev.target.value)));
+$("#m3d-ver").addEventListener("change", m3dDibujar);
+$("#m3d-escala").addEventListener("input", () => { if ($("#m3d-ver").value !== "modelo") m3dDibujar(); });
+$("#btn-m3d-analizar").addEventListener("click", () => intentar(m3dAnalizar));
+$("#btn-m3d-guardar").addEventListener("click", () => intentar(async () => {
+  await api("PUT", M3("/ajustes"), m3dAjustes()); toast("Ajustes del modelo 3D guardados");
+}));
+$("#btn-borrar-m3d").addEventListener("click", () => intentar(async () => {
+  if (!m3d.nombre || !confirm(`¿Eliminar el modelo 3D ${m3d.nombre} de este proyecto?`)) return;
+  await api("DELETE", M3());
+  m3d.nombre = null;
+  await cargarModelos3d();
+}));
+$("#inp-m3d").addEventListener("change", ev => intentar(async () => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  const fd = new FormData(); fd.append("archivo", f);
+  const r = await api("POST", P("/modelos3d"), fd);
+  ev.target.value = "";
+  await cargarModelos3d(r.nombre);
+}));
+// los parámetros (paneles compartidos con el 2D) cambian también la vista del modelo 3D
+$$("[data-sap]").forEach(el => el.addEventListener("change", () => { if (m3d.activo && m3d.nombre) { m3d.vigente = false; intentar(m3dActualizar); } }));
+try { if (localStorage.getItem("c2r-sap-dim") === "3d") m3dModo(true, false); } catch {}
+
 
 // ------------------------------------------------------------------ Elementos secundarios: costaneras (pestaña 8)
 const cos = { nombre: null, datos: null, res: null, sel: null, ids: new Set(), apoyosEd: {} };
@@ -3757,6 +3986,7 @@ intentar(async () => {
   const q = new URLSearchParams(location.search);
   if (q.get("eje")) sap.nombre = sap.auto = q.get("eje");
   if (q.get("techo")) cos.nombre = q.get("techo");
+  if (q.get("modelo3d")) { m3d.nombre = q.get("modelo3d"); m3dModo(true); }
   await cargarProyectos(q.get("proyecto") || undefined);
   let tab = q.get("tab");
   if (!tab) try { tab = localStorage.getItem("c2r-tab"); } catch {}

@@ -88,6 +88,13 @@ namespace Cad2Revit
                           "(muros de marco plataforma como shell con su rigidez lateral), análisis con PyNite (sismo espectral " +
                           "NCh433 + DS61, viento NCh432, techo NCh1537) y verificación de acero AISC 360-16 y muros de madera."
             });
+            panel.AddItem(new PushButtonData("Cad2RevitModelo3D", "Modelo 3D\na análisis",
+                Assembly.GetExecutingAssembly().Location, typeof(ComandoModelo3D).FullName)
+            {
+                ToolTip = "Exporta los elementos que selecciones (pilares, vigas, diagonales y muros) como un modelo 3D y lo abre " +
+                          "en la pestaña «6 · Análisis y diseño» de la app (modo 3D): análisis PyNite con sismo espectral NCh433 en " +
+                          "X e Y, viento, techo, y diseño de acero AISC 360-16 (flexión biaxial) y de muros de madera."
+            });
             panel.AddItem(new PushButtonData("Cad2RevitCostaneras", "Costaneras\na análisis",
                 Assembly.GetExecutingAssembly().Location, typeof(ComandoCostaneras).FullName)
             {
@@ -670,6 +677,59 @@ namespace Cad2Revit
                 return c;
             }
             return null;
+        }
+    }
+
+    /// <summary>Exporta los elementos seleccionados como modelo 3D (.modelo3d.json) y lo sube a la app.</summary>
+    [Transaction(TransactionMode.ReadOnly)]
+    public class ComandoModelo3D : IExternalCommand
+    {
+        public Result Execute(ExternalCommandData data, ref string message, ElementSet elements)
+        {
+            var uidoc = data.Application.ActiveUIDocument;
+            var doc = uidoc?.Document;
+            if (doc == null || doc.IsFamilyDocument) { message = "Abre un proyecto de Revit."; return Result.Failed; }
+            var sel = uidoc.Selection.GetElementIds();
+            if (sel.Count == 0)
+            {
+                try
+                {
+                    sel = uidoc.Selection.PickObjects(Autodesk.Revit.UI.Selection.ObjectType.Element,
+                        "Selecciona los pilares, vigas, diagonales y muros del modelo 3D (Finalizar para terminar)")
+                        .Select(r => r.ElementId).ToList();
+                }
+                catch (Autodesk.Revit.Exceptions.OperationCanceledException) { return Result.Cancelled; }
+            }
+            if (sel.Count == 0) return Result.Cancelled;
+            string ruta;
+            using (var dlg = new System.Windows.Forms.SaveFileDialog
+            {
+                Title = "Guardar el modelo 3D para análisis",
+                Filter = "Modelo 3D de cad2revit (*.modelo3d.json)|*.modelo3d.json",
+                FileName = $"{U.NombreSeguro(doc.Title)}.modelo3d.json",
+            })
+            {
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return Result.Cancelled;
+                ruta = dlg.FileName;
+            }
+            var nombre = System.IO.Path.GetFileName(ruta).Replace(".modelo3d.json", "");
+            var informe = new Constructor(doc, new Modelo { Unidades = "m" }).ExportarModelo3D(sel, ruta, nombre);
+            if (informe.Errores.Count > 0)
+            {
+                new TaskDialog("cad2revit") { MainInstruction = "No se pudo exportar el modelo 3D", MainContent = informe.Resumen(), ExpandedContent = informe.Detalle() }.Show();
+                return Result.Failed;
+            }
+            string abierto = null, falla = null;
+            try { abierto = ComandoCostaneras.Subir(ruta, "modelos3d", "sap", "modelo3d", "este modelo 3D"); }
+            catch (System.Exception ex) { falla = ex.Message; }
+            new TaskDialog("cad2revit")
+            {
+                MainInstruction = abierto != null ? "Modelo 3D abierto en la pestaña de análisis y diseño de la app" : "Modelo 3D exportado",
+                MainContent = informe.Resumen() + (abierto != null ? "\n\nSe abrió la app (pestaña 6 · Análisis y diseño, modo 3D)."
+                    : $"\n\nNo se pudo subir a la app ({falla ?? "cancelado"}). Súbelo a mano en la pestaña 6 (modo 3D): {ruta}"),
+                ExpandedContent = informe.Detalle(),
+            }.Show();
+            return Result.Succeeded;
         }
     }
 

@@ -2092,6 +2092,162 @@ def fundacion_guardada(pid: str, nombre: str):
     return json.loads(r.read_text(encoding="utf-8"))
 
 
+# ------------------------------------------------------------------ modelos 3D (pestaña 6, modo 3D)
+def _modelo3d_f(d: Path, nombre: str) -> Path:
+    f = d / "modelos3d" / f"{nombre}.modelo3d.json"
+    if not re.fullmatch(r"[\w.\-]+", nombre) or not f.is_file():
+        raise HTTPException(404, f"No existe el modelo 3D {nombre}")
+    return f
+
+
+def _hermano3d(f: Path, ext: str) -> Path:
+    return f.with_name(f.name.replace(".modelo3d.json", ext))
+
+
+@app.get("/api/proyectos/{pid}/modelos3d")
+def listar_modelos3d(pid: str):
+    out = []
+    for f in sorted((_proyecto(pid) / "modelos3d").glob("*.modelo3d.json")):
+        try:
+            e = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        out.append({"nombre": f.name[: -len(".modelo3d.json")], "proyecto_revit": e.get("proyecto"),
+                    "fecha": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat(timespec="seconds"),
+                    "pilares": len(e.get("pilares") or []), "vigas": len(e.get("vigas") or []),
+                    "muros": len(e.get("muros") or []), "analizado": _hermano3d(f, ".resultado.json").is_file()})
+    return out
+
+
+@app.post("/api/proyectos/{pid}/modelos3d", status_code=201)
+async def subir_modelo3d(pid: str, archivo: UploadFile = File(...)):
+    """El .modelo3d.json del botón «Modelo 3D a análisis» de Revit (pilares, vigas, diagonales y muros elegidos)."""
+    d = _proyecto(pid)
+    try:
+        e = json.loads((await archivo.read()).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "El archivo no es JSON")
+    if e.get("tipo_archivo") != "cad2revit-modelo-3d":
+        raise HTTPException(400, "No es un archivo del botón «Modelo 3D a análisis» de Revit")
+    nombre = "3d-" + re.sub(r"[^\w.\-]", "_", str(e.get("nombre") or e.get("proyecto") or "revit"))[:60]
+    (d / "modelos3d").mkdir(exist_ok=True)
+    f = d / "modelos3d" / f"{nombre}.modelo3d.json"
+    f.write_text(json.dumps(e, ensure_ascii=False), encoding="utf-8")
+    r = _hermano3d(f, ".resultado.json")
+    if r.is_file():
+        r.unlink()                      # el resultado era de la versión anterior del modelo
+    return {"nombre": nombre}
+
+
+@app.get("/api/proyectos/{pid}/modelos3d/{nombre}")
+def leer_modelo3d(pid: str, nombre: str):
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    a = _hermano3d(f, ".ajustes.json")
+    return {"modelo": json.loads(f.read_text(encoding="utf-8")),
+            "ajustes": json.loads(a.read_text(encoding="utf-8")) if a.is_file() else {}}
+
+
+@app.delete("/api/proyectos/{pid}/modelos3d/{nombre}", status_code=204)
+def borrar_modelo3d(pid: str, nombre: str):
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    f.unlink()
+    for ext in (".ajustes.json", ".resultado.json"):
+        if _hermano3d(f, ext).is_file():
+            _hermano3d(f, ext).unlink()
+
+
+@app.put("/api/proyectos/{pid}/modelos3d/{nombre}/ajustes")
+def guardar_ajustes_3d(pid: str, nombre: str, datos: AjustesEje):
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    _hermano3d(f, ".ajustes.json").write_text(
+        json.dumps({"parametros": datos.parametros, "opciones": datos.opciones}, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {"guardado": True}
+
+
+def _armar3d(datos: dict, aj: AjustesEje):
+    from app.sap.eje_cargas import ParametrosCargas
+    from app.sap.eje_revit import ParametrosMuroMadera
+    from app.sap.modelo3d import cargas3d, mallar3d
+    par = aj.parametros or {}
+    try:
+        pm = ParametrosMuroMadera(**{k: v for k, v in (par.get("muro") or {}).items()
+                                     if k in ParametrosMuroMadera.__dataclass_fields__ and v not in (None, "")})
+        mod = mallar3d(datos, pm, malla=float(par.get("malla") or 0.5), apoyo_pilares=par.get("apoyo_pilares") or "rotula",
+                       opciones=aj.opciones)
+        pc = ParametrosCargas(**{k: v for k, v in (par.get("cargas") or {}).items()
+                                 if k in ParametrosCargas.__dataclass_fields__ and v not in (None, "")})
+        return mod, pc, cargas3d(mod, pc)
+    except (ValueError, KeyError, TypeError) as e:
+        raise HTTPException(400, f"Parámetros no válidos: {e}")
+
+
+@app.post("/api/proyectos/{pid}/modelos3d/{nombre}/vista")
+def vista_modelo3d(pid: str, nombre: str, aj: AjustesEje):
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    mod, _, cargas = _armar3d(json.loads(f.read_text(encoding="utf-8")), aj)
+    return {
+        "nombre": mod.nombre, "nudos": mod.nudos, "apoyos": mod.apoyos, "apoyos_defecto": mod.apoyos_defecto,
+        "barras": [{"nombre": b, "ni": a, "nj": c, "seccion": sec, "rol": mod.roles.get(b), "origen": mod.origen.get(b)}
+                   for b, a, c, sec in mod.barras],
+        "areas": [{"nombre": a, "nudos": ns, "origen": mod.origen.get(a)} for a, ns, _ in mod.areas],
+        "muros": [{k: v for k, v in m.items() if k not in ("a", "u")} for m in mod.resumen_muros],
+        "secciones": mod.secciones, "cargas": cargas.resumen, "combos": list(cargas.combos), "avisos": mod.avisos,
+        "sin_apoyo": mod.sin_apoyo, "excluidos_auto": mod.excluidos_auto, "trib": cargas.trib, "origen_xy": list(mod.origen_xy),
+        "conteo": {"nudos": len(mod.nudos), "barras": len(mod.barras), "shells": len(mod.areas)},
+    }
+
+
+@app.post("/api/proyectos/{pid}/modelos3d/{nombre}/analizar")
+def analizar_modelo3d(pid: str, nombre: str, aj: AjustesEje):
+    """Análisis 3D con PyNite (estático y modal espectral NCh433:2026 en X e Y) y diseño de acero y muros de madera."""
+    import numpy as np
+    from app.sap.diseno_acero import FY_A270ES
+    from app.sap.modelo3d import analizar3d
+    f = _modelo3d_f(_proyecto(pid), nombre)
+    guardar_ajustes_3d(pid, nombre, aj)
+    mod, pc, cargas = _armar3d(json.loads(f.read_text(encoding="utf-8")), aj)
+    if not mod.barras and not mod.areas:
+        raise HTTPException(400, "El modelo no tiene elementos para analizar")
+    par = aj.parametros or {}
+    clave = f"{pid}/{nombre}/3d"
+    _AVANCE_ANALISIS[clave] = {"pct": 0, "etapa": "Preparando", "hasta": 2}
+    try:
+        dis = par.get("diseno") or {}
+        fy = float(dis.get("fy_mpa") or 0) * 1000 / 9.80665 or FY_A270ES
+        limites = {k: float(dis[k]) for k in ("viga_total", "lateral_viento", "deriva_sismo") if dis.get(k) not in (None, "")}
+        r = analizar3d(mod, cargas, pc, fy=fy, limites=limites or None,
+                       avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
+                           clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
+    except np.linalg.LinAlgError:
+        raise HTTPException(400, "El modelo 3D es inestable (matriz de rigidez singular): revise los apoyos y las uniones, "
+                                 "o saque los elementos sueltos")
+    except Exception as e:
+        if "singular" in str(e).lower():
+            raise HTTPException(400, "El modelo 3D es inestable (matriz de rigidez singular): revise los apoyos y las uniones, "
+                                     "o saque los elementos sueltos")
+        raise
+    finally:
+        _AVANCE_ANALISIS.pop(clave, None)
+    r["fecha"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    texto = json.dumps(r, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else
+                       (sorted(o) if isinstance(o, set) else (float(o) if isinstance(o, np.floating) else str(o))))
+    _hermano3d(f, ".resultado.json").write_text(texto, encoding="utf-8")
+    return Response(texto, media_type="application/json")
+
+
+@app.get("/api/proyectos/{pid}/modelos3d/{nombre}/avance")
+def avance_modelo3d(pid: str, nombre: str):
+    return _AVANCE_ANALISIS.get(f"{pid}/{nombre}/3d") or {"pct": None, "etapa": ""}
+
+
+@app.get("/api/proyectos/{pid}/modelos3d/{nombre}/resultado")
+def resultado_modelo3d(pid: str, nombre: str):
+    r = _hermano3d(_modelo3d_f(_proyecto(pid), nombre), ".resultado.json")
+    if not r.is_file():
+        raise HTTPException(404, "Este modelo 3D aún no se ha analizado")
+    return json.loads(r.read_text(encoding="utf-8"))
+
+
 # ------------------------------------------------------------------ costaneras (elementos secundarios, pestaña 8)
 def _costaneras(d: Path, nombre: str) -> Path:
     f = d / "costaneras" / f"{nombre}.costaneras.json"

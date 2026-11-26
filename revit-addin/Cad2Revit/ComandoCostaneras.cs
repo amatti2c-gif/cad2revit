@@ -147,7 +147,10 @@ namespace Cad2Revit
         }
 
         /// <summary>Sube el archivo a un proyecto de la app (se elige; se recuerda el último) y abre la pestaña 8.</summary>
-        private static string Subir(string ruta)
+        /// <summary>Sube un archivo a un recurso de un proyecto de la app (se elige el proyecto; se recuerda el último) y abre
+        /// la pestaña indicada con ese archivo elegido.</summary>
+        internal static string Subir(string ruta, string recurso = "costaneras", string tab = "secundarios", string param = "techo",
+                                     string que = "estas costaneras")
         {
             var c = ComandoArmaduras.CargarConexion(false);
             for (int intento = 0; c != null && intento < 3; intento++)
@@ -168,7 +171,7 @@ namespace Cad2Revit
                 string ultimo = System.IO.File.Exists(archivoUltimo) ? System.IO.File.ReadAllText(archivoUltimo).Trim() : null;
                 using (var f = new System.Windows.Forms.Form
                 {
-                    Text = "Proyecto de la app para estas costaneras", Width = 460, Height = 150,
+                    Text = $"Proyecto de la app para {que}", Width = 460, Height = 150,
                     FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog,
                     StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false,
                 })
@@ -188,11 +191,11 @@ namespace Cad2Revit
                 var bytes = new System.Net.Http.ByteArrayContent(System.IO.File.ReadAllBytes(ruta));
                 bytes.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
                 cuerpo.Add(bytes, "archivo", System.IO.Path.GetFileName(ruta));
-                var s = http.PostAsync($"{c.Url}/api/proyectos/{System.Uri.EscapeDataString(ultimo)}/costaneras", cuerpo).GetAwaiter().GetResult();
+                var s = http.PostAsync($"{c.Url}/api/proyectos/{System.Uri.EscapeDataString(ultimo)}/{recurso}", cuerpo).GetAwaiter().GetResult();
                 var texto = s.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                 if (!s.IsSuccessStatusCode) throw new System.Exception($"la app respondió {(int)s.StatusCode}: {texto}");
                 var nombre = System.Text.Json.JsonDocument.Parse(texto).RootElement.GetProperty("nombre").GetString();
-                var url = $"{c.Url}/?proyecto={System.Uri.EscapeDataString(ultimo)}&tab=secundarios&techo={System.Uri.EscapeDataString(nombre)}";
+                var url = $"{c.Url}/?proyecto={System.Uri.EscapeDataString(ultimo)}&tab={tab}&{param}={System.Uri.EscapeDataString(nombre)}";
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = url, UseShellExecute = true });
                 return url;
             }
