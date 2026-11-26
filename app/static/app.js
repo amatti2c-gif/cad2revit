@@ -3221,7 +3221,7 @@ function m3dOpcionesVer() {
     ops.push([`carga:${n}`, `Cargas ${n} (${NOMBRE_TIPO[c.tipo] || c.tipo}, sin mayorar)`]));
   if (m3d.res) {
     ops.push(["diseno", "Diseño: razón demanda/capacidad" + (m3d.vigente ? "" : " (análisis anterior)")], ["D", "Deformada por peso propio y techo (D)"]);
-    (m3d.res.visor?.modos || []).forEach((m, i) => ops.push([`modo${i}`,
+    (m3d.res.visor?.modos || []).forEach((m, i) => ops.push([`modo${i}`,      // vienen de mayor a menor masa
       `Modo ${m.n}: T = ${m.T.toFixed(3)} s · masa X ${(100 * m.masa_x).toFixed(0)} %, Y ${(100 * m.masa_y).toFixed(0)} %`]));
   }
   sel.replaceChildren(...ops.map(([v, t]) => h("option", { value: v }, t)));
@@ -3462,9 +3462,19 @@ function m3dMostrarRes(r, guardado) {
     `T* X ${f3(dX.T)} s, Y ${f3(dY.T)} s · ${r.sistema?.texto || ""} · `,
     h("strong", { class: malos ? "nocumple" : "cumple" }, malos ? `${malos} verificación(es) no cumplen` : "todas las verificaciones cumplen"),
     r.fecha ? h("span", { class: "tenue" }, ` · ${r.fecha.slice(0, 16).replace("T", " ")}`) : "");
-  const modos = (r.visor?.modos || []);
-  tabla("#m3d-modos", ["Modo", "T (s)", "Masa X", "Masa Y"], modos.map(m => h("tr", {}, h("td", {}, m.n), h("td", {}, f3(m.T)),
-    h("td", {}, pc(m.masa_x)), h("td", {}, pc(m.masa_y)))));
+  // modos ordenados de mayor a menor masa traslacional en cada dirección, con la masa acumulada en ese orden
+  const todos = r.modos_masa || (r.visor?.modos || []);
+  const pc1 = x => x == null ? "—" : (100 * x).toFixed(1) + " %";
+  for (const [dir, k, otra] of [["x", "masa_x", "masa_y"], ["y", "masa_y", "masa_x"]]) {
+    const orden = [...todos].sort((a, b) => b[k] - a[k]);
+    const visibles = orden.filter(m => m[k] >= 0.001);
+    let acum = 0;
+    tabla(`#m3d-modos-${dir}`, ["Modo", "T (s)", `Masa ${dir.toUpperCase()}`, "Acumulada", `Masa ${otra.slice(-1).toUpperCase()}`],
+      visibles.map(m => { acum += m[k]; return h("tr", {}, h("td", {}, m.n), h("td", {}, f3(m.T)), h("td", {}, h("strong", {}, pc1(m[k]))),
+        h("td", { class: acum >= 0.9 ? "cumple" : "" }, pc1(acum)), h("td", { class: "tenue" }, pc1(m[otra]))); }));
+  }
+  $("#m3d-modos-nota").textContent = `${todos.length} modos calculados; se listan los que aportan al menos 0,1 % de la masa en esa dirección. ` +
+    "En verde, desde donde la masa acumulada alcanza el 90 % (NCh433:2026).";
   tabla("#m3d-casos", ["Caso", "Tipo", "Rx (tonf)", "Ry (tonf)", "Rz (tonf)", "Corte basal (tonf)", "Factor Qmín/Qmáx", "T* (s)"],
     r.casos.map(c => h("tr", {}, h("td", {}, c.caso), h("td", {}, c.tipo), h("td", {}, f2(c.Rx)), h("td", {}, f2(c.Ry)), h("td", {}, f2(c.Rz)),
       h("td", {}, f2(c.corte_basal)), h("td", {}, c.factor == null ? "—" : f3(c.factor)), h("td", {}, c.T == null ? "—" : f3(c.T)))));

@@ -1862,7 +1862,8 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
     ver_modos = []
     pX = mef["X"] / masa["X"] if masa["X"] else mef["X"] * 0
     pY = mef["Y"] / masa["Y"] if masa["Y"] else mef["Y"] * 0
-    for i in aporta[:12]:
+    # en el visor: los modos de mayor masa traslacional primero (X o Y), hasta 15
+    for i in sorted(aporta, key=lambda i: -max(float(pX[i]), float(pY[i])))[:15]:
         nombre = f"_MODO{i + 1}"
         forma = {n: [round(m.nodes[n].DX[nombre], 5), round(m.nodes[n].DY[nombre], 5), round(m.nodes[n].DZ[nombre], 5)] for n in mod.nudos}
         ver_modos.append({"n": i + 1, "T": float(periodos[i]), "masa_x": float(pX[i]), "masa_y": float(pY[i]), "forma": forma})
@@ -1875,6 +1876,8 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
     visor["fu_muros"] = madera_fu
     return {
         "version": VERSION_3D, "tipo": "3d", "periodos": [float(x) for x in periodos[:60]],
+        "modos_masa": [{"n": i + 1, "T": float(periodos[i]), "masa_x": float(pX[i]), "masa_y": float(pY[i]),
+                        "masa_z": float(mef["Z"][i] / masa["Z"]) if masa["Z"] else 0.0} for i in range(nmod)],
         "masa_participante": {k: float(part[k]) for k in "XYZ"}, "n_modos": int(nmod),
         "direcciones": {k: {kk: (v if kk != "Sa" else None) for kk, v in d.items() if kk != "Sa"} for k, d in dirs.items()},
         "q_min": q_min, "q_max": q_max, "peso_sismico": peso, "sistema": sis, "centro_masas": [float(cm[0]), float(cm[1])],
