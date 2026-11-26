@@ -2202,7 +2202,7 @@ def analizar_modelo3d(pid: str, nombre: str, aj: AjustesEje):
     """Análisis 3D con PyNite (estático y modal espectral NCh433:2026 en X e Y) y diseño de acero y muros de madera."""
     import numpy as np
     from app.sap.diseno_acero import FY_A270ES
-    from app.sap.modelo3d import analizar3d
+    from app.sap.modelo3d import ModeloInestable, analizar3d
     f = _modelo3d_f(_proyecto(pid), nombre)
     guardar_ajustes_3d(pid, nombre, aj)
     mod, pc, cargas = _armar3d(json.loads(f.read_text(encoding="utf-8")), aj)
@@ -2218,6 +2218,8 @@ def analizar_modelo3d(pid: str, nombre: str, aj: AjustesEje):
         r = analizar3d(mod, cargas, pc, fy=fy, limites=limites or None,
                        avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
                            clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
+    except ModeloInestable as e:
+        raise HTTPException(400, str(e))
     except np.linalg.LinAlgError:
         raise HTTPException(400, "El modelo 3D es inestable (matriz de rigidez singular): revise los apoyos y las uniones, "
                                  "o saque los elementos sueltos")

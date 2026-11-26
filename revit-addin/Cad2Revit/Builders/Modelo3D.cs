@@ -46,7 +46,8 @@ namespace Cad2Revit
             Leer("bf", "bf", "b", "Width", "Ancho", "B");
             Leer("tw", "tw", "Web Thickness", "s", "Espesor alma");
             Leer("tf", "tf", "Flange Thickness", "Espesor ala");
-            Leer("t", "t", "tdes", "Wall Thickness", "Espesor");
+            Leer("t", "t", "tdes", "Wall Thickness", "Wall Nominal Thickness", "Espesor", "Espesor de pared", "e");
+            Leer("D", "D", "OD", "Outside Diameter", "Diameter", "Diámetro", "Diametro", "Diámetro exterior");
             return r;
         }
 
@@ -58,6 +59,14 @@ namespace Cad2Revit
             var vigas = new List<object>();
             var muros = new List<object>();
             int omitidos = 0;
+            var motivos = new Dictionary<string, int>();
+            void Omitir(Element el, string motivo)
+            {
+                omitidos++;
+                var k = $"{motivo} ({el?.Category?.Name ?? "sin categoría"})";
+                motivos[k] = motivos.TryGetValue(k, out var n) ? n + 1 : 1;
+            }
+            bool EsCat(Element el, BuiltInCategory c) => el?.Category != null && el.Category.Id.Value == (long)c;
             var enSistemas = new HashSet<ElementId>(new FilteredElementCollector(_doc).OfClass(typeof(BeamSystem))
                 .Cast<BeamSystem>().SelectMany(bs => bs.GetBeamIds()));
             var todosMuros = new FilteredElementCollector(_doc).OfClass(typeof(Wall)).Cast<Wall>()
@@ -66,11 +75,12 @@ namespace Cad2Revit
             {
                 var e = _doc.GetElement(id);
                 var com = e?.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
-                if (e == null || com.StartsWith("cad2revit-entramado") || com.StartsWith(Marca + "entramado")) { omitidos++; continue; }
-                if (e is FamilyInstance f && f.StructuralType == StructuralType.Column)
+                if (e == null) { omitidos++; continue; }
+                if (com.StartsWith("cad2revit-entramado") || com.StartsWith(Marca + "entramado")) { Omitir(e, "entramado de madera"); continue; }
+                if (e is FamilyInstance f && (f.StructuralType == StructuralType.Column || EsCat(f, BuiltInCategory.OST_StructuralColumns)))
                 {
                     var bb = f.get_BoundingBox(null);
-                    if (bb == null) { omitidos++; continue; }
+                    if (bb == null) { Omitir(f, "sin geometría"); continue; }
                     XYZ pb, pt;
                     double giro = 0;
                     if (f.Location is LocationPoint lp)
@@ -88,18 +98,21 @@ namespace Cad2Revit
                         giro = lp.Rotation * 180 / Math.PI;
                     }
                     else if (f.Location is LocationCurve lcc) { pb = lcc.Curve.GetEndPoint(0); pt = lcc.Curve.GetEndPoint(1); }
-                    else { omitidos++; continue; }
-                    if (Material3D(f) == "hormigon") { omitidos++; continue; }
+                    else { Omitir(f, "sin ubicación"); continue; }
+                    if (Material3D(f) == "hormigon") { Omitir(f, "hormigón"); continue; }
                     pilares.Add(new
                     {
                         id = f.Id.ToString(), seccion = f.Symbol.Name, familia = f.Symbol.FamilyName, material = Material3D(f),
                         p0 = P(pb), p1 = P(pt), giro = R(giro), dims = Dims3D(f),
                     });
                 }
-                else if (e is FamilyInstance fv && (fv.StructuralType == StructuralType.Beam || fv.StructuralType == StructuralType.Brace))
+                else if (e is FamilyInstance fv && (fv.StructuralType == StructuralType.Beam || fv.StructuralType == StructuralType.Brace ||
+                         EsCat(fv, BuiltInCategory.OST_StructuralFraming)))
                 {
-                    if (!(fv.Location is LocationCurve lc) || !(lc.Curve is Line lv)) { omitidos++; continue; }
-                    if (Material3D(fv) == "hormigon") { omitidos++; continue; }
+                    if (!(fv.Location is LocationCurve lc)) { Omitir(fv, "sin línea de ubicación"); continue; }
+                    // vigas curvas: la cuerda entre sus extremos
+                    var lv = lc.Curve as Line ?? Line.CreateBound(lc.Curve.GetEndPoint(0), lc.Curve.GetEndPoint(1));
+                    if (Material3D(fv) == "hormigon") { Omitir(fv, "hormigón"); continue; }
                     var dims = Dims3D(fv);
                     // eje de la sección: la línea de Revit suele ir en la cara superior (justificación «Top»)
                     double bajar = 0;
@@ -139,7 +152,7 @@ namespace Cad2Revit
                         : texto.IndexOf("madera", StringComparison.OrdinalIgnoreCase) >= 0 || texto.IndexOf("plataforma", StringComparison.OrdinalIgnoreCase) >= 0 ||
                           texto.IndexOf("pino", StringComparison.OrdinalIgnoreCase) >= 0 || texto.IndexOf("wood", StringComparison.OrdinalIgnoreCase) >= 0
                             ? "madera" : "otro";
-                    if (material == "hormigon") { omitidos++; continue; }
+                    if (material == "hormigon") { Omitir(w, "muro de hormigón"); continue; }
                     muros.Add(new
                     {
                         id = w.Id.ToString(), tipo = nombreTipo, material,
@@ -147,20 +160,22 @@ namespace Cad2Revit
                         espesor = R(Mt(w.Width)), nucleo = R(capaEst != null ? Mt(capaEst.Width) : Mt(w.Width)), perfil, vanos,
                     });
                 }
-                else omitidos++;
+                else Omitir(e, "categoría no estructural");
             }
             var niveles = new FilteredElementCollector(_doc).OfClass(typeof(Level)).Cast<Level>().OrderBy(l => l.Elevation)
                 .Select(l => new { nombre = l.Name, z = R(Mt(l.Elevation)) }).ToList();
             var archivo = new
             {
                 tipo_archivo = "cad2revit-modelo-3d", version = 1, unidades = "m", nombre, proyecto = _doc.Title, niveles,
+                omitidos = motivos.Select(kv => new { motivo = kv.Key, n = kv.Value }).ToList(), seleccionados = seleccion.Count,
                 pilares, vigas, muros,
             };
             File.WriteAllText(ruta, JsonSerializer.Serialize(archivo, new JsonSerializerOptions { WriteIndented = true }));
             _inf.Contar("Pilares", pilares.Count);
             _inf.Contar("Vigas y diagonales", vigas.Count);
             _inf.Contar("Muros", muros.Count);
-            if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D (hormigón, entramado de madera u otras categorías)");
+            if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D: " +
+                string.Join("; ", motivos.Select(kv => $"{kv.Value} {kv.Key}")));
             if (pilares.Count + vigas.Count + muros.Count == 0) _inf.Error("La selección no tiene pilares, vigas ni muros");
             _inf.Advertencia($"Archivo: {ruta}");
             return _inf;

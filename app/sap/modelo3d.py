@@ -11,6 +11,7 @@ es vertical, así que la flexión por gravedad (eje fuerte) es en torno al eje l
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -25,6 +26,7 @@ VERSION_3D = 1
 MASA_OBJETIVO = 0.90
 MODOS_MAX = 400
 TOL = 0.003                     # m: nudos a menos de esta distancia son el mismo
+TOL_UNION = 0.10                # m: barras que pasan a menos de esto se unen (excentricidades de modelación en Revit)
 
 
 @dataclass
@@ -53,6 +55,61 @@ class Modelo3D:
 
 
 # ------------------------------------------------------------------------------------------------- malla
+T_TUBO_DEFECTO = 0.005          # m: espesor de un tubo circular cuando Revit no lo da
+
+
+def _seccion3d(m: dict, s: dict, avisos: list, cambios: dict | None = None) -> str:
+    """Como _seccion del 2D, más tubos circulares («D240mm», «Ø140», dims D y t) y cajones cuyas medidas vienen en
+    el nombre («300x100x3»): si las dimensiones de la familia no calzan con el nombre, manda el nombre."""
+    nombre = (m.get("seccion") or "SIN_NOMBRE").replace(" ", "_")
+    if nombre in s:
+        return nombre
+    d = dict(m.get("dims") or {})
+    cam = (cambios or {}).get(nombre) or {}
+    txt = str(m.get("seccion") or "") + " " + str(m.get("familia") or "")
+    circ = re.search(r"(?:\bD|Ø|ø|diam\w*\s*)\s*(\d+(?:[.,]\d+)?)\s*(mm)?", txt, re.I) if re.search(r"circ|tubo|pipe|Ø|ø|\bD\d", txt, re.I) else None
+    caja = re.search(r"(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)(?!\s*[xX×])", txt)
+    mm = lambda v: float(str(v).replace(",", ".")) / 1000                                    # noqa: E731
+    if cam.get("forma") == "Pipe" or ("D" in cam) or (circ and not cam.get("forma")):
+        D = cam.get("D") or cam.get("d") or d.get("D") or (mm(circ.group(1)) if circ else d.get("d", 0.1))
+        t = cam.get("t") or d.get("t")
+        if not t:
+            t = T_TUBO_DEFECTO
+            avisos.append(f"Sección {nombre}: tubo circular Ø{D * 1000:.0f} mm; Revit no dio el espesor, se usó "
+                          f"{t * 1000:.0f} mm (cámbialo en «Secciones de acero»)")
+        s[nombre] = {"forma": "Pipe", "material": "ACERO", "d": float(D), "bf": float(D), "t": float(t)}
+        return nombre
+    if cam.get("forma") == "Box" and all(cam.get(k) for k in ("d", "bf", "t")):
+        s[nombre] = {"forma": "Box", "material": "ACERO", **{k: float(cam[k]) for k in ("d", "bf", "t")}}
+        return nombre
+    if cam.get("forma") == "I" and all(cam.get(k) for k in ("d", "bf", "tw", "tf")):
+        s[nombre] = {"forma": "I", "material": "ACERO", **{k: float(cam[k]) for k in ("d", "bf", "tw", "tf")}}
+        return nombre
+    if caja and not cam and not all(k in d for k in ("tw", "tf")):
+        a, b, t = (mm(caja.group(i)) for i in (1, 2, 3))
+        if not ("d" in d and "bf" in d and "t" in d) or abs(d["d"] - a) > 0.2 * a or abs(d["bf"] - b) > 0.2 * b:
+            if "d" in d:
+                avisos.append(f"Sección {nombre}: las dimensiones de la familia (d {d.get('d', 0) * 1000:.0f}, b "
+                              f"{d.get('bf', 0) * 1000:.0f} mm) no calzan con el nombre; se usó el nombre: cajón "
+                              f"{a * 1000:.0f}x{b * 1000:.0f}x{t * 1000:g}")
+            s[nombre] = {"forma": "Box", "material": "ACERO", "d": a, "bf": b, "t": t}
+            return nombre
+    return _seccion(m, s, avisos, cambios)
+
+
+def _mas_cercanos(a0, da, b0, db):
+    """Parámetros (ta, tb) en [0, 1] de los puntos más cercanos entre dos segmentos a0 + ta·da y b0 + tb·db."""
+    r_ = a0 - b0
+    A, B, C, D, E = da @ da, da @ db, db @ db, da @ r_, db @ r_
+    den = A * C - B * B
+    ta = min(max((B * E - C * D) / den, 0.0), 1.0) if den > 1e-12 else 0.0
+    tb = (B * ta + E) / C
+    if tb < 0 or tb > 1:
+        tb = min(max(tb, 0.0), 1.0)
+        ta = min(max((B * tb - D) / A, 0.0), 1.0)
+    return float(ta), float(tb)
+
+
 def _clave(p):
     return (round(p[0] / TOL), round(p[1] / TOL), round(p[2] / TOL))
 
@@ -71,6 +128,9 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     ys_ += [p[1] for w in datos.get("muros") or [] for p in (w["a"], w["b"])]
     ox, oy = (min(xs_), min(ys_)) if xs_ else (0.0, 0.0)
     mod.origen_xy = (ox, oy)
+    om = datos.get("omitidos") or []
+    if om:
+        mod.avisos.append("Revit no exportó " + "; ".join(f"{o.get('n')} {o.get('motivo')}" for o in om))
     P = lambda p: (float(p[0]) - ox, float(p[1]) - oy, float(p[2]))                       # noqa: E731
 
     pilares = []
@@ -100,7 +160,9 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
                 if math.hypot(x - cx, y - cy) <= 0.40 and min(c["p0"][2], c["p1"][2]) - 0.4 <= z <= max(c["p0"][2], c["p1"][2]) + 0.4:
                     v[k] = (cx, cy, z)
                     break
-    # pilar que no llega por poco a una viga que pasa sobre él (≤ 0,30 m): se prolonga
+    # pilar que no llega por poco a una viga que pasa sobre él (≤ 0,30 m en altura, ≤ 0,10 m en planta, p. ej. por la
+    # justificación de la viga en Revit): su cabeza se lleva al punto de la viga sobre su eje y la viga se parte ahí
+    unidos = []
     for c in pilares:
         cx, cy, ztop = c["p1"]
         mejor = None
@@ -112,15 +174,62 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
             t = ((cx - x0) * (x1 - x0) + (cy - y0) * (y1 - y0)) / L2
             if not (-0.02 <= t <= 1.02):
                 continue
+            t = min(max(t, 0.0), 1.0)
             px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
-            if math.hypot(px - cx, py - cy) > 0.05:
+            dp = math.hypot(px - cx, py - cy)
+            if dp > TOL_UNION:
                 continue
             zv = z0 + t * (z1 - z0)
-            if abs(zv - ztop) <= 0.30 and (mejor is None or abs(zv - ztop) < abs(mejor - ztop)):
-                mejor = zv
-        if mejor is not None and abs(mejor - ztop) > 0.005:
-            mod.avisos.append(f"Pilar {c.get('id')}: su cabeza (z {ztop:.2f} m) se unió a la viga en z {mejor:.2f} m")
-            c["p1"] = (cx, cy, mejor)
+            if abs(zv - ztop) <= 0.30 and (mejor is None or abs(zv - ztop) + dp < mejor[0]):
+                mejor = (abs(zv - ztop) + dp, (px, py, zv), v)
+        if mejor is not None:
+            q, v = mejor[1], mejor[2]
+            if math.dist(q, c["p1"]) > 0.005:
+                unidos.append((str(c.get("id")), abs(q[2] - ztop), math.hypot(q[0] - cx, q[1] - cy)))
+            c["p1"] = q
+            v.setdefault("cortes", []).append(q)
+    if unidos:
+        mod.avisos.append(f"{len(unidos)} pilar(es) cuya cabeza no tocaba la viga en Revit se unieron a ella (separación hasta "
+                          f"{1000 * max(u[1] for u in unidos):.0f} mm en altura y {1000 * max(u[2] for u in unidos):.0f} mm en "
+                          f"planta, p. ej. por la justificación de la viga): " + ", ".join(u[0] for u in unidos[:15]) +
+                          ("…" if len(unidos) > 15 else ""))
+    # vigas que se cruzan o se tocan a menos de 0,10 m (extremos que no llegan justo, uniones excéntricas en Revit):
+    # se unen en un nudo común; las cabezas de pilar no se mueven
+    cabezas = [c["p1"] for c in pilares]
+    fijo = lambda p_: any(math.dist(p_, q) < 0.005 for q in cabezas)                         # noqa: E731
+    n_uniones = 0
+    for ia in range(len(vigas)):
+        for ib in range(ia + 1, len(vigas)):
+            A, B = vigas[ia], vigas[ib]
+            a0, a1, b0, b1 = (np.array(A["p0"], float), np.array(A["p1"], float), np.array(B["p0"], float), np.array(B["p1"], float))
+            da, db = a1 - a0, b1 - b0
+            La, Lb = float(np.linalg.norm(da)), float(np.linalg.norm(db))
+            if La < 1e-3 or Lb < 1e-3 or abs(float(da @ db)) / (La * Lb) > 0.995:
+                continue
+            ta, tb = _mas_cercanos(a0, da, b0, db)
+            pa, pb = a0 + ta * da, b0 + tb * db
+            if float(np.linalg.norm(pa - pb)) > TOL_UNION:
+                continue
+            ext_a = "p0" if ta * La <= TOL_UNION else ("p1" if (1 - ta) * La <= TOL_UNION else None)
+            ext_b = "p0" if tb * Lb <= TOL_UNION else ("p1" if (1 - tb) * Lb <= TOL_UNION else None)
+            if ext_a and ext_b:
+                q = A[ext_a] if fijo(A[ext_a]) else (B[ext_b] if fijo(B[ext_b]) else tuple(pa))
+            elif ext_b:
+                q = B[ext_b] if fijo(B[ext_b]) else tuple(pa)
+            elif ext_a:
+                q = A[ext_a] if fijo(A[ext_a]) else tuple(pb)
+            else:
+                q = tuple(pa)
+            q = tuple(float(x) for x in q)
+            for V_, ext in ((A, ext_a), (B, ext_b)):
+                if ext and not fijo(V_[ext]):
+                    V_[ext] = q
+                else:
+                    V_.setdefault("cortes", []).append(q)
+            n_uniones += 1
+    if n_uniones:
+        mod.avisos.append(f"{n_uniones} unión(es) entre vigas que en Revit no se tocan exactamente (≤ {TOL_UNION * 100:.0f} cm): "
+                          "se unieron en un nudo común")
 
     claves: dict = {}
 
@@ -188,9 +297,11 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         nudo(c["p0"]); nudo(c["p1"])
     for v in vigas:
         nudo(v["p0"]); nudo(v["p1"])
+        for q in v.get("cortes") or ():
+            nudo(q)
     coords = {n: np.array(p) for n, p in mod.nudos.items()}
 
-    def barra(p0, p1, sec, rol, origen, giro):
+    def barra(p0, p1, sec, rol, origen, giro, cortes=()):
         p0, p1 = np.array(p0, float), np.array(p1, float)
         d = p1 - p0
         L = float(np.linalg.norm(d))
@@ -203,6 +314,12 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
             t = float(w_ @ u)
             if 1e-3 < t < L - 1e-3 and np.linalg.norm(w_ - t * u) < 2 * TOL:
                 sobre.append((t, n))
+        for q in cortes:                                  # uniones que quedan levemente fuera del eje de la barra
+            t = float((np.array(q) - p0) @ u)
+            if 1e-3 < t < L - 1e-3:
+                sobre.append((t, nudo(q)))
+        sobre = sorted(dict((n, t) for t, n in sorted(sobre)).items(), key=lambda x: x[1])
+        sobre = [(t, n) for n, t in sobre]
         cadena = [nudo(p0)] + [n for _, n in sorted(sobre)] + [nudo(p1)]
         for a, b in zip(cadena, cadena[1:]):
             if a == b:
@@ -213,7 +330,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
             mod.origen[nombre] = origen
             mod.giro[nombre] = giro
     for c in pilares:
-        sec = _seccion(c, mod.secciones, mod.avisos, op.get("secciones"))
+        sec = _seccion3d(c, mod.secciones, mod.avisos, op.get("secciones"))
         barra(c["p0"], c["p1"], sec, "pilar", str(c["id"]), float(c.get("giro") or 0))
         base = c["p0"] if c["p0"][2] <= c["p1"][2] else c["p1"]
         mod.apoyos[nudo(base)] = (op.get("apoyos") or {}).get(str(c["id"]), apoyo_pilares)
@@ -235,8 +352,8 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     for v in vigas:
         rol = "diagonal" if v.get("tipo") == "diagonal" else (
             "techo" if abs(v["p1"][2] - v["p0"][2]) > 0.05 or not encima(v) else "viga")
-        sec = _seccion(v, mod.secciones, mod.avisos, op.get("secciones"))
-        barra(v["p0"], v["p1"], sec, rol, str(v["id"]), float(v.get("giro") or 0))
+        sec = _seccion3d(v, mod.secciones, mod.avisos, op.get("secciones"))
+        barra(v["p0"], v["p1"], sec, rol, str(v["id"]), float(v.get("giro") or 0), v.get("cortes") or ())
 
     # ---- apoyos y uniones cambiados a mano ----
     mod.apoyos_defecto = dict(mod.apoyos)
@@ -498,6 +615,9 @@ def _capacidades3d(p: Perfil, g: dict, L_y: float, L_z: float, Lb: float, Fy: fl
     """Capacidades con flexión en los dos ejes (AISC 360-16): eje fuerte con capacidades() del 2D; eje débil F6/F7."""
     from .diseno_acero import capacidades
     cap = capacidades(p, L_y, L_z, Lb, Fy=Fy)
+    if p.forma == "Pipe":
+        cap["phiMny"] = cap["phiMn"]
+        return cap
     if p.forma == "Box":
         Zy = g.get("Zy") or g["Iy"] / (p.bf / 2)
         Mny = Fy * Zy
@@ -523,6 +643,50 @@ def _razon_biaxial(Pu, Mux, Muy, Vu, cap) -> dict:
     else:
         it, ec = pr / 2 + m_, "H1-1b"
     return {"interaccion": it, "corte": Vu / cap["phiVn"] if cap["phiVn"] else 0.0, "ecuacion": ec}
+
+
+class ModeloInestable(ValueError):
+    """El modelo tiene un mecanismo; el texto dice qué se mueve, hacia dónde y qué falta."""
+
+
+def _mecanismo(m, mod: Modelo3D) -> str:
+    """Modo de cuerpo rígido (valor propio ~0 de K11): dirección dominante y elementos de Revit que se mueven."""
+    import scipy.sparse.linalg as sla
+    from Pynite import Analysis
+    try:
+        combo = list(m.load_combos)[0]
+        D1, _, _ = Analysis._partition_D(m)
+        K11 = m.Ke(combo, False, False, True).tocsr()[D1, :][:, D1]
+        n = K11.shape[0]
+        if n <= 2500:
+            w, V = np.linalg.eigh(K11.toarray())
+            v = V[:, 0]
+        else:
+            w, V = sla.eigsh(K11.tocsc(), k=1, sigma=-1.0, which="LM")
+            v = V[:, 0]
+    except Exception:                                       # noqa: BLE001
+        return ("El modelo 3D es inestable (matriz de rigidez singular): revise los apoyos y las uniones, o agregue "
+                "arriostramiento (vigas, diagonales o muros) en ambas direcciones")
+    ids = {nd.ID: nombre for nombre, nd in m.nodes.items()}
+    mov: dict = {}
+    for i, g in enumerate(D1):
+        if abs(v[i]) > 0.2 * np.abs(v).max():
+            mov.setdefault("DX DY DZ RX RY RZ".split()[g % 6], set()).add(ids[g // 6])
+    gl = max(("DX", "DY", "DZ"), key=lambda k: len(mov.get(k, ())))
+    nudos = mov.get(gl) or set().union(*mov.values())
+    elems = sorted({mod.origen.get(b[0]) for b in mod.barras if b[1] in nudos or b[2] in nudos} |
+                   {mod.origen.get(a[0]) for a in mod.areas if set(a[1]) & nudos} - {None})
+    eje = {"DX": "X", "DY": "Y", "DZ": "vertical"}[gl]
+    gira = [k for k in ("RX", "RY", "RZ") if mov.get(k)]
+    txt = (f"El modelo 3D es inestable: hay un mecanismo en la dirección {eje}" +
+           (f" (con giro {', '.join(gira)})" if gira else "") +
+           f" que mueve {len(elems)} elemento(s) de Revit: {', '.join(elems[:12])}{'…' if len(elems) > 12 else ''}. ")
+    if gl in ("DX", "DY"):
+        txt += (f"Nada los amarra en {eje}: faltan vigas, diagonales o muros en esa dirección (¿se seleccionaron todos en "
+                "Revit?), o use base empotrada en los pilares.")
+    else:
+        txt += "Revise que esos elementos lleguen a un apoyo o a otro elemento."
+    return txt
 
 
 def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: float = FY_A270ES, n_puntos: int = 7,
@@ -657,6 +821,10 @@ def analizar3d(mod: Modelo3D, cargas: Cargas3D, pc: ParametrosCargas, *, fy: flo
     Analysis._unpartition = _unpartition_rapido
     try:
         m.analyze_linear(check_statics=False)
+    except Exception as e:
+        if "singular" in str(e).lower() or "unstable" in str(e).lower():
+            raise ModeloInestable(_mecanismo(m, mod)) from e
+        raise
     finally:
         Analysis._calc_reactions = _calc
     K = _reacciones(m, estaticos)

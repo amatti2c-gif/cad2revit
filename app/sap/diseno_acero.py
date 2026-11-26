@@ -25,6 +25,15 @@ class Perfil:
 
     # ---- propiedades geométricas (m) ----
     def props(self) -> dict:
+        if self.forma == "Pipe":                     # tubo circular: d = diámetro exterior, t = espesor
+            D, t = self.d, self.t
+            Di = D - 2 * t
+            A = math.pi / 4 * (D ** 2 - Di ** 2)
+            I = math.pi / 64 * (D ** 4 - Di ** 4)
+            Z = (D ** 3 - Di ** 3) / 6
+            r_ = math.sqrt(I / A)
+            return {"A": A, "Ix": I, "Iy": I, "Sx": 2 * I / D, "Zx": Z, "Zy": Z, "J": 2 * I, "Cw": 0.0,
+                    "rx": r_, "ry": r_, "Aw": A / 2}
         if self.forma == "Box":
             d, b, t = self.d, self.bf, self.t
             A = d * b - (d - 2 * t) * (b - 2 * t)
@@ -66,7 +75,14 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
     raiz = math.sqrt(E / Fy)
     # ---- clasificación de elementos (Tabla B4.1) ----
     Q = 1.0
-    if p.forma == "I":
+    if p.forma == "Pipe":
+        dt = p.d / p.t
+        if dt > 0.11 * E / Fy:                       # Tabla B4.1a caso 9; E7.2(b)
+            Q = min(1.0, 0.038 * E / (Fy * dt) + 2 / 3)
+            notas.append(f"tubo esbelto en compresión (D/t = {dt:.0f} > 0,11·E/Fy; E7.2)")
+        lam_f = lam_w = dt
+        lp_f, lr_f, lp_w = 0.07 * E / Fy, 0.31 * E / Fy, 0.07 * E / Fy
+    elif p.forma == "I":
         lam_f, lam_w = p.bf / (2 * p.tf), g["h"] / p.tw
         lp_f, lr_f = 0.38 * raiz, 1.0 * raiz
         lp_w = 3.76 * raiz
@@ -126,10 +142,22 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
             Mn = Fy * Sx * 0.9
             notas.append("ala del cajón esbelta en flexión (aprox.)")
         detalle_m = "cajón (F7)"
+    if p.forma == "Pipe":                            # F8
+        Sx = g["Sx"]
+        if lam_f <= lp_f:
+            Mn = Mp
+        elif lam_f <= lr_f:
+            Mn = min(Mp, (0.021 * E / lam_f + Fy) * Sx)
+        else:
+            Mn = min(Mp, 0.33 * E / lam_f * Sx)
+            notas.append("tubo esbelto en flexión (F8)")
+        detalle_m = "tubo circular (F8)"
     phiMn = 0.9 * Mn
     # ---- corte (G2.1) ----
     h_tw = (g["h"] / p.tw) if p.forma == "I" else (p.d - 3 * p.t) / p.t
-    if p.forma == "I" and h_tw <= 2.24 * raiz:
+    if p.forma == "Pipe":                            # G5: Fcr = 0,6·Fy (tubos cortos y compactos), Vn = Fcr·Ag/2
+        phi_v, Cv1 = 0.9, 1.0
+    elif p.forma == "I" and h_tw <= 2.24 * raiz:
         phi_v, Cv1 = 1.0, 1.0
     else:
         phi_v = 0.9

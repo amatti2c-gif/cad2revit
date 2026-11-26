@@ -64,3 +64,35 @@ def test_analisis_3d_con_muros():
     # los muros rigidizan: el periodo fundamental baja respecto al marco solo
     r0 = analizar3d(mallar3d(galpon(False)), cargas3d(mallar3d(galpon(False)), ParametrosCargas()), ParametrosCargas())
     assert r["periodos"][0] < r0["periodos"][0]
+
+
+def _portico(con_longitudinal=True):
+    """Pórticos con la viga inclinada 2,5 cm al lado de los pilares y 5 cm sobre su cabeza (como en Revit), tubos
+    circulares sin espesor y vigas «300x100x3» con dimensiones de familia que no calzan con el nombre."""
+    pil, vig = [], []
+    for i, x in enumerate((0.0, 3.0, 6.0)):
+        pil.append({"id": f"A{i}", "seccion": "PILAR CIRCULAR D240mm", "p0": [x, 0, 0.2], "p1": [x, 0, 2.6065], "dims": {}})
+        pil.append({"id": f"B{i}", "seccion": "PILAR CIRCULAR D140mm", "p0": [x, -3.334, 0.2], "p1": [x, -3.334, 3.085], "dims": {}})
+        vig.append({"id": f"T{i}", "seccion": "300x100x3", "tipo": "viga", "p0": [x + 0.025, 0, 2.655], "p1": [x + 0.025, -9.975, 4.09],
+                    "giro": 90, "dims": {"d": 0.05, "bf": 0.15, "t": 0.003}})
+    if con_longitudinal:
+        vig.append({"id": "L1", "seccion": "300x100x3", "tipo": "viga", "p0": [0, 0.026, 2.655], "p1": [6, 0.026, 2.655], "dims": {}})
+        vig.append({"id": "L2", "seccion": "300x100x3", "tipo": "viga", "p0": [0, -3.31, 3.135], "p1": [6, -3.31, 3.135], "dims": {}})
+    return {"pilares": pil, "vigas": vig, "muros": []}
+
+
+def test_uniones_con_excentricidad():
+    mod = mallar3d(_portico())
+    assert not mod.sin_apoyo
+    assert mod.secciones["PILAR_CIRCULAR_D240mm"]["forma"] == "Pipe"
+    assert mod.secciones["300x100x3"] == {"forma": "Box", "material": "ACERO", "d": 0.3, "bf": 0.1, "t": 0.003}
+    r = analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())
+    assert r["acero"]
+
+
+def test_mecanismo_explicado():
+    import pytest
+    from sap.modelo3d import ModeloInestable
+    mod = mallar3d(_portico(False))
+    with pytest.raises(ModeloInestable, match="dirección X"):
+        analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())

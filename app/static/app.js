@@ -3027,6 +3027,7 @@ async function m3dActualizar() {
   $("#m3d-cargas").replaceChildren(...v.cargas.map(c => h("li", {}, c)));
   $("#m3d-avisos").replaceChildren(...v.avisos.map(a => h("li", {}, a)));
   m3dTabla();
+  m3dSecciones();
   m3dOpcionesVer();
   m3dDibujar();
 }
@@ -3128,6 +3129,36 @@ function m3dTabla() {
     h("td", { class: "tenue" }, estadoTxt(id) || `${(w.vanos || []).length} vano(s)`))); });
   $("#m3d-elementos").replaceChildren(h("thead", {}, h("tr", {}, ...["Incluir", "Id Revit", "Tipo", "Sección", "L (m)", "Base",
     "Pandeo fuera del plano", "Estado"].map(t => h("th", {}, t)))), h("tbody", {}, ...filas));
+}
+
+function m3dSecciones() {
+  const S = m3d.vista.secciones || {};
+  m3d.opciones.secciones ||= {};
+  const campos = { I: ["d", "bf", "tw", "tf"], Box: ["d", "bf", "t"], Pipe: ["d", "t"] };
+  const nombres = { d: "d / D", bf: "b", tw: "tw", tf: "tf", t: "t" };
+  const guardar = async (nom, forma, fila) => {
+    const c = { forma };
+    campos[forma].forEach(k => { const v = Number(fila.querySelector(`[data-k="${k}"]`)?.value); if (v > 0) c[k] = v / 1000; });
+    if (forma === "Pipe") c.D = c.d;
+    m3d.opciones.secciones[nom] = c;
+    m3d.vigente = false; await m3dActualizar();
+  };
+  const filas = Object.entries(S).map(([nom, s_]) => {
+    const fila = h("tr", {});
+    const forma = s_.forma;
+    const selF = h("select", { onchange: ev => intentar(() => guardar(nom, ev.target.value, fila)) },
+      ...[["I", "I"], ["Box", "cajón"], ["Pipe", "tubo circular"]].map(([v, t]) => h("option", { value: v, selected: v === forma || null }, t)));
+    fila.append(h("td", {}, nom), h("td", {}, selF),
+      ...["d", "bf", "t", "tw", "tf"].map(k => h("td", {}, campos[forma].includes(k) && !(forma === "Pipe" && k === "bf")
+        ? h("input", { type: "number", step: "any", "data-k": k, value: +(1000 * (s_[k] || 0)).toFixed(2), style: "width:6em",
+          onchange: () => intentar(() => guardar(nom, forma, fila)) }) : "—")),
+      h("td", {}, m3d.opciones.secciones[nom] ? h("button", { type: "button", class: "sec", onclick: () => intentar(async () => {
+        delete m3d.opciones.secciones[nom]; m3d.vigente = false; await m3dActualizar(); }) }, "Volver a Revit") : h("span", { class: "tenue" }, "de Revit")));
+    return fila;
+  });
+  $("#m3d-secciones").replaceChildren(h("thead", {}, h("tr", {}, ...["Sección", "Forma", "d / D", "b", "t", "tw", "tf", ""].map(t => h("th", {}, t)))),
+    h("tbody", {}, ...filas));
+  if (Object.keys(S).length && (m3d.vista.avisos || []).some(a => a.startsWith("Sección"))) $("#m3d-secciones-caja").open = true;
 }
 
 async function m3dAnalizar() {
