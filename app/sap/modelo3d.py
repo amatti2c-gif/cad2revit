@@ -143,12 +143,23 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
 
     pilares = []
     vigas = []
+    hormigon_acero, hormigon_fuera = [], []
+
+    def _acero_o_aviso(e, que):
+        """Elementos con material hormigón en Revit: si su sección es de acero (tubo «D240mm», cajón «400x300x3», perfil
+        con espesor) se modelan como acero y se avisa; si no, no se modelan (también con aviso)."""
+        if e.get("material") != "hormigon":
+            return True
+        txt = f"{e.get('seccion', '')} {e.get('familia', '')}"
+        acero = bool(re.search(r"\d+\s*[xX×]\s*\d+\s*[xX×]\s*\d+|circ|tubo|pipe|\bD\s*\d+|Ø|\b(HEA|HEB|IPE|IN|HN|W)\s*\d+|\b[LC]\s*\d+", txt, re.I))
+        (hormigon_acero if acero else hormigon_fuera).append(f"{que} {e.get('id')} ({e.get('seccion', '')})")
+        return acero
     for c in datos.get("pilares") or []:
-        if str(c.get("id")) in excluir or c.get("material") in ("madera", "hormigon"):
+        if str(c.get("id")) in excluir or c.get("material") == "madera" or not _acero_o_aviso(c, "pilar"):
             continue
         pilares.append({**c, "p0": P(c["p0"]), "p1": P(c["p1"])})
     for v in datos.get("vigas") or []:
-        if str(v.get("id")) in excluir or v.get("material") in ("madera", "hormigon"):
+        if str(v.get("id")) in excluir or v.get("material") == "madera" or not _acero_o_aviso(v, "viga"):
             continue
         if v.get("costanera") and not op.get("incluir_costaneras"):
             mod.excluidos_auto.append(str(v.get("id")))
@@ -157,6 +168,12 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
                 mod.dir_costaneras.append((dx_ / math.hypot(dx_, dy_), dy_ / math.hypot(dx_, dy_)))
             continue
         vigas.append({**v, "p0": P(v["p0"]), "p1": P(v["p1"])})
+    if hormigon_acero:
+        mod.avisos.append(f"{len(hormigon_acero)} elemento(s) con material «hormigón» en Revit pero sección de acero: se modelan como "
+                          "acero (corrige su material en Revit si corresponde): " + ", ".join(hormigon_acero[:12]))
+    if hormigon_fuera:
+        mod.avisos.append(f"{len(hormigon_fuera)} elemento(s) de hormigón no se modelan (la app diseña acero y madera): "
+                          + ", ".join(hormigon_fuera[:12]))
     if mod.excluidos_auto:
         mod.avisos.append(f"{len(mod.excluidos_auto)} costanera(s) de sistemas de vigas no se modelan (se verifican en la pestaña 8)")
     # extremos de vigas junto a un pilar (≤ 0,40 m en planta, dentro de su altura): al eje del pilar

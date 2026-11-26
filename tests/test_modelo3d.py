@@ -278,3 +278,15 @@ def test_cimiento_en_anillo():
     assert len(extra["anillos"]) == 1 and abs(extra["anillos"][0]["ancho"] - 0.3) < 0.01
     assert len([e for e in els if e.get("anillo") == "C"]) == 16
     assert [d["id"] for d in extra["dados"]] == ["D"] and [r["id"] for r in extra["radieres"]] == ["R"]
+
+
+def test_pilares_con_material_hormigon():
+    """Un pilar «PILAR CIRCULAR D240mm» con material hormigón en Revit se modela como acero (con aviso); uno de hormigón
+    de verdad (sección sin espesor) queda fuera, también con aviso."""
+    d = _portico()
+    d["pilares"][0]["material"] = "hormigon"
+    d["pilares"].append({"id": "HA", "seccion": "30x30", "material": "hormigon", "p0": [9, 0, 0.2], "p1": [9, 0, 3], "dims": {}})
+    mod = mallar3d(d)
+    origenes = {mod.origen[b[0]] for b in mod.barras}
+    assert d["pilares"][0]["id"] in origenes and "HA" not in origenes
+    assert any("sección de acero" in a for a in mod.avisos) and any("no se modelan" in a for a in mod.avisos)

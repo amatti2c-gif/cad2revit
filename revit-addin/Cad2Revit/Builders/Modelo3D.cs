@@ -174,7 +174,7 @@ namespace Cad2Revit
                     }
                     else if (f.Location is LocationCurve lcc) { pb = lcc.Curve.GetEndPoint(0); pt = lcc.Curve.GetEndPoint(1); }
                     else { Omitir(f, "sin ubicación"); continue; }
-                    if (Material3D(f) == "hormigon") { Omitir(f, "hormigón"); continue; }
+                    // los de hormigón también se exportan (con su material): la app decide según su sección
                     pilares.Add(new
                     {
                         id = f.Id.ToString(), seccion = f.Symbol.Name, familia = f.Symbol.FamilyName, material = Material3D(f),
@@ -187,7 +187,7 @@ namespace Cad2Revit
                     if (!(fv.Location is LocationCurve lc)) { Omitir(fv, "sin línea de ubicación"); continue; }
                     // vigas curvas: la cuerda entre sus extremos
                     var lv = lc.Curve as Line ?? Line.CreateBound(lc.Curve.GetEndPoint(0), lc.Curve.GetEndPoint(1));
-                    if (Material3D(fv) == "hormigon") { Omitir(fv, "hormigón"); continue; }
+                    // las de hormigón también se exportan (con su material): la app decide según su sección
                     var dims = Dims3D(fv);
                     // eje de la sección: la línea de Revit suele ir en la cara superior (justificación «Top»)
                     double bajar = 0;
