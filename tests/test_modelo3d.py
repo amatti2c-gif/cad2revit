@@ -123,13 +123,36 @@ def test_envolvente_viento_en_equilibrio():
     c = cargas3d(mod, ParametrosCargas())
     assert c.barras_pt and "W3a" in c.patrones and "W3b" in c.patrones
     r = analizar3d(mod, c, ParametrosCargas())
+    import math as _m
+    largo = {f: _m.dist(mod.nudos[a], mod.nudos[b]) for f, a, b, _ in mod.barras}
     for cs in r["casos"]:
         ap = c.envolvente["por_barra"].get(cs["caso"])
-        if ap:
-            assert abs(cs["Ry"] + ap["Fy"]) < 1e-3 and abs(cs["Rz"] + ap["Fz"]) < 1e-3
+        if ap:                                     # envolvente + viento en las barras que quedan sin cubrir
+            fy = ap["Fy"] + sum(w[2][1] * largo[w[0]] for w in c.barras if w[1] == cs["caso"])
+            fz = ap["Fz"] + sum(w[2][2] * largo[w[0]] for w in c.barras if w[1] == cs["caso"])
+            assert abs(cs["Ry"] + fy) < 1e-3 and abs(cs["Rz"] + fz) < 1e-3
     # el techo de Revit reemplaza al ancho tributario: su peso es 30 kgf/m² × área y el del panel 15 kgf/m² × área
     pc = ParametrosCargas()
     peso = -sum(f[3][2] for f in c.barras_pt if f[1] == "DEAD")
     esperado = pc.peso_techo * c.envolvente["area_techo"] + pc.peso_cerramiento * c.envolvente["area_cerramientos"]
     assert abs(peso - esperado) < 1e-6 and abs(c.envolvente["area_cerramientos"] - 6 * 2.9) < 0.01
     assert not [b for b in c.barras if b[1] == "DEAD"], "con techo de Revit no se usa el ancho tributario"
+
+
+def test_viento_en_barras_sin_cerramiento():
+    """Pilar suelto Ø240 de 2,4 m: w = qz·G·Cf·D (Cf 1,2 en tubos) en la dirección del viento; la viga paralela al
+    viento no recibe nada."""
+    from sap.eje_cargas import q_viento
+    d = {"pilares": [{"id": "P", "seccion": "PILAR CIRCULAR D240mm", "p0": [0, 0, 0], "p1": [0, 0, 2.4], "dims": {"t": 0.003}}],
+         "vigas": [{"id": "V", "seccion": "300x100x3", "tipo": "viga", "p0": [0, 0, 2.4], "p1": [4, 0, 2.4], "dims": {}}],
+         "muros": []}
+    pc = ParametrosCargas()
+    mod = mallar3d(d, apoyo_pilares="empotrado")
+    c = cargas3d(mod, pc)
+    pil = next(f for f, r in mod.roles.items() if r == "pilar")
+    w1 = [x for x in c.barras if x[0] == pil and x[1] == "W1"]
+    esperado = q_viento(pc, 1.2) * pc.g_rafaga * 1.2 * 0.24
+    assert len(w1) == 1 and abs(w1[0][2][0] - esperado) < 1e-9 and abs(w1[0][2][1]) < 1e-12
+    viga = [f for f, r in mod.roles.items() if r != "pilar"]
+    assert not [x for x in c.barras if x[0] in viga and x[1] == "W1"]          # paralela al viento X
+    assert [x for x in c.barras if x[0] in viga and x[1] == "W3"]               # normal al viento Y

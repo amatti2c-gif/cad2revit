@@ -723,6 +723,66 @@ def _cargas_envolvente(mod, p, c, qh, h, casos, Bx, By, xmin, xmax, ymin, ymax):
                      + "; cada punto de la envolvente se lleva a la barra más cercana")
 
 
+CF_BARRA = {"Pipe": 1.2, "Box": 2.0, "I": 2.0}     # NCh432 / ASCE 7 (Fig. 29.4-1 y 29.5): coef. de fuerza de barras sueltas
+
+
+def _ejes_seccion(u: np.ndarray, giro: float) -> tuple[np.ndarray, np.ndarray]:
+    """Direcciones (en el plano de la sección) de la altura d y del ancho bf de una barra de eje u, con la convención de
+    PyNite: barras verticales con local z = −X (d según X) y horizontales/inclinadas con d en el plano vertical que las
+    contiene; giro en grados en torno al eje de la barra."""
+    if abs(u[2]) > 0.999:
+        dv, bv = np.array([1.0, 0.0, 0.0]), np.array([0.0, 1.0, 0.0])
+    else:
+        bv = np.cross(np.array([0.0, 0.0, 1.0]), u)
+        bv /= np.linalg.norm(bv)
+        dv = np.cross(u, bv)
+    g = math.radians(giro or 0.0)
+    return math.cos(g) * dv + math.sin(g) * bv, -math.sin(g) * dv + math.cos(g) * bv
+
+
+def _viento_barras(mod: Modelo3D, p: ParametrosCargas, c: "Cargas3D", casos, z_base: float) -> int:
+    """Viento sobre las barras que ninguna superficie cubre (sin cerramiento, sin techo encima, fuera de los muros):
+    w = qz·G·Cf·(ancho expuesto) por metro, con qz a la altura media de la barra y el ancho de la sección proyectado
+    perpendicular al viento (cara expuesta según su orientación); solo la componente del viento normal al eje."""
+    mu = _muestras(mod, 0.5)
+    Q = np.array([m_[0] for m_ in mu]) if mu else np.zeros((0, 3))
+    en_area = {n for _, ns, _ in mod.areas for n in ns}
+    n_exp = 0
+    pats = {n: [x for x in c.patrones if x == n or (x.startswith(n) and len(x) == len(n) + 1)] for n, _ in casos}
+    for f, a, b, sec in mod.barras:
+        if a in en_area and b in en_area:
+            continue                                              # dentro de un muro estructural (el muro recibe el viento)
+        A_, B_ = np.array(mod.nudos[a], float), np.array(mod.nudos[b], float)
+        L = float(np.linalg.norm(B_ - A_))
+        if L < 1e-6:
+            continue
+        if len(Q):
+            pts = [A_ + t * (B_ - A_) for t in (0.2, 0.5, 0.8)]
+            if all(float(np.min(np.linalg.norm(Q - q, axis=1))) < 0.6 for q in pts):
+                continue                                          # cubierta por el techo o un cerramiento
+        u = (B_ - A_) / L
+        s_ = mod.secciones.get(sec) or {}
+        forma = s_.get("forma", "I")
+        dv, bv = _ejes_seccion(u, mod.giro.get(f, 0.0))
+        zq = (A_[2] + B_[2]) / 2 - z_base
+        qz = q_viento(p, max(zq, 0.0))
+        cf = CF_BARRA.get(forma, 2.0)
+        n_exp += 1
+        for nombre_w, dvec in casos:
+            d3 = np.array([dvec[0], dvec[1], 0.0])
+            dn = d3 - (d3 @ u) * u                              # viento normal al eje de la barra
+            sn = float(np.linalg.norm(dn))
+            if sn < 1e-6:
+                continue
+            e = np.cross(u, dn / sn)                            # dirección del ancho expuesto en la sección
+            ancho = s_.get("d", 0.1) if forma == "Pipe" else abs(e @ dv) * s_.get("d", 0.1) + abs(e @ bv) * s_.get("bf", 0.1)
+            w = qz * p.g_rafaga * cf * ancho * sn               # tonf/m, en la dirección de dn
+            fvec = w * dn / sn * sn                             # componente normal: ∝ sen²
+            for pat in pats[nombre_w]:
+                c.barras.append((f, pat, (float(fvec[0]), float(fvec[1]), float(fvec[2]))))
+    return n_exp
+
+
 def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
     c = Cargas3D()
     c.patrones = {"DEAD": "DEAD", "LR": "ROOF LIVE"}
@@ -819,6 +879,12 @@ def cargas3d(mod: Modelo3D, p: ParametrosCargas) -> Cargas3D:
             c.barras.append((f, nombre_w, (0.0, 0.0, -pn * trib[f])))
     if mod.superficies:
         _cargas_envolvente(mod, p, c, qh, h, casos, Bx, By, xmin, xmax, ymin, ymax)
+    n_exp = _viento_barras(mod, p, c, casos, z_base)
+    if n_exp:
+        c.resumen.append(f"Viento sobre {n_exp} barra(s) sin cerramiento ni techo que las cubra: qz·G·Cf por el ancho de la cara "
+                         "expuesta (la dimensión de la sección perpendicular al viento, según su orientación y giro); Cf 2,0 en "
+                         "cajones y perfiles I, 1,2 en tubos; solo la componente del viento normal al eje; sin reducción por "
+                         "apantallamiento entre marcos (conservador)")
     c.resumen.append(f"Viento NCh432 (simplificado 3D): q_h = {qh * 1000:.1f} kgf/m² (V {p.v_viento} m/s, exposición {p.exposicion}, "
                      f"h {h:.2f} m); muros exteriores: barlovento Cp {p.cp_barlovento_muro:.1f}, sotavento según L/B, laterales −0,7; "
                      + ("techo: succión Cp −0,7 con GCpi +0,18; " if techo else "") + "W1 +X, W2 −X, W3 +Y, W4 −Y")
