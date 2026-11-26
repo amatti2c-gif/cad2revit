@@ -71,7 +71,12 @@ def _seccion3d(m: dict, s: dict, avisos: list, cambios: dict | None = None) -> s
     caja = re.search(r"(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)(?!\s*[xX×])", txt)
     mm = lambda v: float(str(v).replace(",", ".")) / 1000                                    # noqa: E731
     if cam.get("forma") == "Pipe" or ("D" in cam) or (circ and not cam.get("forma")):
-        D = cam.get("D") or cam.get("d") or d.get("D") or (mm(circ.group(1)) if circ else d.get("d", 0.1))
+        D_nom = mm(circ.group(1)) if circ else None
+        D_fam = d.get("D") or (d.get("d") if not D_nom else None)
+        D = cam.get("D") or cam.get("d") or (D_nom if D_nom and (not D_fam or abs(D_fam - D_nom) > 0.2 * D_nom) else D_fam) or 0.1
+        if not cam and D_nom and D_fam and abs(D_fam - D_nom) > 0.2 * D_nom:
+            avisos.append(f"Sección {nombre}: la familia dice Ø{D_fam * 1000:.0f} mm y el nombre Ø{D_nom * 1000:.0f} mm; se usó el "
+                          "nombre (revísalo en «Secciones de acero»)")
         t = cam.get("t") or d.get("t")
         if not t:
             t = T_TUBO_DEFECTO

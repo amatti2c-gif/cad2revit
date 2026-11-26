@@ -145,8 +145,10 @@ namespace Cad2Revit
                     // eje de la sección: la línea de Revit suele ir en la cara superior (justificación «Top»)
                     double bajar = 0;
                     var zj = fv.get_Parameter(BuiltInParameter.Z_JUSTIFICATION)?.AsInteger();
-                    if (dims.TryGetValue("d", out var dd) && zj == (int)ZJustification.Top) bajar = dd / 2;
-                    else if (dims.TryGetValue("d", out dd) && zj == (int)ZJustification.Bottom) bajar = -dd / 2;
+                    // con la sección girada ~90° la medida vertical es el ancho
+                    var rot = Math.Abs(Math.Sin(fv.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE)?.AsDouble() ?? 0));
+                    if (dims.TryGetValue(rot > 0.7 && dims.ContainsKey("bf") ? "bf" : "d", out var dv))
+                        bajar = zj == (int)ZJustification.Top ? dv / 2 : zj == (int)ZJustification.Bottom ? -dv / 2 : 0;
                     XYZ a = lv.GetEndPoint(0), b = lv.GetEndPoint(1);
                     // la línea de ubicación puede ser más larga (extensiones negativas, uniones) o más corta (Start/End
                     // Extension) que la viga dibujada: se lleva a lo que ocupa su sólido a lo largo de la línea

@@ -213,8 +213,10 @@ namespace Cad2Revit
                     var dims = Dims(f);
                     double bajar = 0;
                     var zj = f.get_Parameter(BuiltInParameter.Z_JUSTIFICATION)?.AsInteger();
-                    if (dims.TryGetValue("d", out var dd) && zj == (int)ZJustification.Top) bajar = dd / 2;
-                    else if (dims.TryGetValue("d", out dd) && zj == (int)ZJustification.Bottom) bajar = -dd / 2;
+                    // con la sección girada ~90° la medida vertical es el ancho
+                    var rot = Math.Abs(Math.Sin(f.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE)?.AsDouble() ?? 0));
+                    if (dims.TryGetValue(rot > 0.7 && dims.ContainsKey("bf") ? "bf" : "d", out var dv))
+                        bajar = zj == (int)ZJustification.Top ? dv / 2 : zj == (int)ZJustification.Bottom ? -dv / 2 : 0;
                     if (MaterialDe(f) == "hormigon") { omitidos++; continue; }
                     vigas.Add(new
                     {
