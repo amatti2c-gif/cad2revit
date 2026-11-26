@@ -23,8 +23,45 @@ class Perfil:
     tf: float = 0.0
     t: float = 0.0                 # cajón: espesor de pared
 
+    def _props_compuesta(self) -> dict:
+        """Ángulo L (d, bf, t) y canal C (d, bf, tw, tf; o t): suma de rectángulos; ejes principales para el ángulo."""
+        if self.forma == "L":
+            t = self.t or self.tw
+            rects = [(0, 0, t, self.d), (t, 0, self.bf, t)]                     # (x0, y0, x1, y1)
+        else:
+            tw, tf = (self.tw or self.t), (self.tf or self.t)
+            rects = [(0, 0, tw, self.d), (tw, 0, self.bf, tf), (tw, self.d - tf, self.bf, self.d)]
+        A = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in rects)
+        xc = sum((x1 - x0) * (y1 - y0) * (x0 + x1) / 2 for x0, y0, x1, y1 in rects) / A
+        yc = sum((x1 - x0) * (y1 - y0) * (y0 + y1) / 2 for x0, y0, x1, y1 in rects) / A
+        Ix = Iy = Ixy = 0.0
+        for x0, y0, x1, y1 in rects:
+            b, h = x1 - x0, y1 - y0
+            cx, cy = (x0 + x1) / 2 - xc, (y0 + y1) / 2 - yc
+            Ix += b * h ** 3 / 12 + b * h * cy ** 2
+            Iy += h * b ** 3 / 12 + b * h * cx ** 2
+            Ixy += b * h * cx * cy
+        m, rr = (Ix + Iy) / 2, math.sqrt(((Ix - Iy) / 2) ** 2 + Ixy ** 2)
+        Imin = m - rr
+        J = sum(max(x1 - x0, y1 - y0) * min(x1 - x0, y1 - y0) ** 3 / 3 for x0, y0, x1, y1 in rects)
+        Sx = Ix / max(yc, self.d - yc)
+        Sy = Iy / max(xc, self.bf - xc)
+        out = {"A": A, "Ix": Ix, "Iy": Iy, "Sx": Sx, "Sy": Sy, "J": J, "Smin": min(Sx, Sy)}
+        if self.forma == "L":
+            r = math.sqrt(Imin / A)
+            out.update({"Zx": 1.5 * Sx, "Zy": 1.5 * Sy, "Cw": 0.0, "rx": r, "ry": r, "Aw": self.d * t, "Imin": Imin})
+        else:
+            h, ho = self.d - 2 * tf, self.d - tf
+            Cw = tf * self.bf ** 3 * ho ** 2 / 12 * (3 * self.bf * tf + 2 * ho * tw) / (6 * self.bf * tf + ho * tw)
+            Zx = self.bf * tf * (self.d - tf) + tw * h ** 2 / 4
+            out.update({"Zx": Zx, "Zy": 1.5 * Sy, "Cw": Cw, "h": h, "ho": ho, "rx": math.sqrt(Ix / A), "ry": math.sqrt(Iy / A),
+                        "Aw": self.d * tw})
+        return out
+
     # ---- propiedades geométricas (m) ----
     def props(self) -> dict:
+        if self.forma in ("L", "C"):
+            return self._props_compuesta()
         if self.forma == "Pipe":                     # tubo circular: d = diámetro exterior, t = espesor
             D, t = self.d, self.t
             Di = D - 2 * t
@@ -82,8 +119,17 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
             notas.append(f"tubo esbelto en compresión (D/t = {dt:.0f} > 0,11·E/Fy; E7.2)")
         lam_f = lam_w = dt
         lp_f, lr_f, lp_w = 0.07 * E / Fy, 0.31 * E / Fy, 0.07 * E / Fy
-    elif p.forma == "I":
-        lam_f, lam_w = p.bf / (2 * p.tf), g["h"] / p.tw
+    elif p.forma == "L":
+        t = p.t or p.tw
+        lam_f = lam_w = max(p.d, p.bf) / t
+        lp_f, lr_f, lp_w = 0.54 * raiz, 0.91 * raiz, 0.54 * raiz
+        if lam_f > 0.45 * raiz:                         # E7.1 caso c (ala de ángulo)
+            Q = 1.34 - 0.76 * lam_f / raiz if lam_f <= 0.91 * raiz else 0.53 / (lam_f / raiz) ** 2
+            notas.append(f"ala del ángulo esbelta en compresión (b/t = {lam_f:.1f}; E7)")
+    elif p.forma in ("I", "C"):
+        tw, tf = (p.tw or p.t), (p.tf or p.t)
+        p = Perfil(p.forma, p.d, p.bf, tw, tf, p.t)
+        lam_f, lam_w = (p.bf / (2 * p.tf) if p.forma == "I" else p.bf / p.tf), g["h"] / p.tw
         lp_f, lr_f = 0.38 * raiz, 1.0 * raiz
         lp_w = 3.76 * raiz
         if lam_f > 0.56 * raiz:
@@ -107,7 +153,7 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
     phiPn = 0.9 * _fcr(Fy, E, klr, Q) * g["A"]
     # ---- flexión, eje fuerte ----
     Mp = Fy * g["Zx"]
-    if p.forma == "I":
+    if p.forma in ("I", "C"):
         ry, ho, J, Sx, Iy, Cw = g["ry"], g["ho"], g["J"], g["Sx"], g["Iy"], g["Cw"]
         rts = math.sqrt(math.sqrt(Iy * Cw) / Sx)
         Lp = 1.76 * ry * raiz
@@ -142,6 +188,10 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
             Mn = Fy * Sx * 0.9
             notas.append("ala del cajón esbelta en flexión (aprox.)")
         detalle_m = "cajón (F7)"
+    if p.forma == "L":                               # F10 (simplificado): fluencia en la fibra más solicitada
+        Mn = Fy * g["Smin"]
+        detalle_m = "ángulo (F10 simplificado: Mn = Fy·S mín.)"
+        notas.append("ángulo: flexión con Mn = Fy·S mín. y pandeo con el radio de giro mínimo (conservador)")
     if p.forma == "Pipe":                            # F8
         Sx = g["Sx"]
         if lam_f <= lp_f:
@@ -154,7 +204,7 @@ def capacidades(p: Perfil, L_plano: float, L_fuera: float, Lb: float, Fy: float 
         detalle_m = "tubo circular (F8)"
     phiMn = 0.9 * Mn
     # ---- corte (G2.1) ----
-    h_tw = (g["h"] / p.tw) if p.forma == "I" else (p.d - 3 * p.t) / p.t
+    h_tw = (g["h"] / p.tw) if p.forma in ("I", "C") else ((max(p.d, p.bf) / (p.t or p.tw)) if p.forma == "L" else (p.d - 3 * p.t) / p.t)
     if p.forma == "Pipe":                            # G5: Fcr = 0,6·Fy (tubos cortos y compactos), Vn = Fcr·Ag/2
         phi_v, Cv1 = 0.9, 1.0
     elif p.forma == "I" and h_tw <= 2.24 * raiz:

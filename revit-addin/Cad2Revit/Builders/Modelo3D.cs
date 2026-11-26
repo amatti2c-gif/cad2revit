@@ -135,6 +135,7 @@ namespace Cad2Revit
             int omitidos = 0;
             var motivos = new Dictionary<string, int>();
             var recortadas = new List<string>();
+            int curvas = 0;
             void Omitir(Element el, string motivo)
             {
                 omitidos++;
@@ -146,7 +147,29 @@ namespace Cad2Revit
                 .Cast<BeamSystem>().SelectMany(bs => bs.GetBeamIds()));
             var todosMuros = new FilteredElementCollector(_doc).OfClass(typeof(Wall)).Cast<Wall>()
                 .Where(w => w.Location is LocationCurve lc2 && lc2.Curve is Line).ToList();
-            foreach (var id in seleccion)
+            // grupos, ensamblajes, cerchas (Truss) y sistemas de vigas: se exportan sus elementos
+            var lista = new List<ElementId>();
+            var vistos = new HashSet<ElementId>();
+            int expandidos = 0;
+            void Agregar(ElementId id0, int prof)
+            {
+                if (id0 == null || id0 == ElementId.InvalidElementId || !vistos.Add(id0) || prof > 6) return;
+                var e0 = _doc.GetElement(id0);
+                IEnumerable<ElementId> hijos = null;
+                if (e0 is Group g) hijos = g.GetMemberIds();
+                else if (e0 is AssemblyInstance ai) hijos = ai.GetMemberIds();
+                else if (e0 is Truss tr) hijos = tr.Members;
+                else if (e0 is BeamSystem bs) hijos = bs.GetBeamIds();
+                if (hijos != null)
+                {
+                    expandidos++;
+                    foreach (var h in hijos) Agregar(h, prof + 1);
+                }
+                else lista.Add(id0);
+            }
+            foreach (var id0 in seleccion) Agregar(id0, 0);
+            if (expandidos > 0) _inf.Advertencia($"{expandidos} grupo(s), cercha(s) o sistema(s) de vigas: se exportaron sus elementos");
+            foreach (var id in lista)
             {
                 var e = _doc.GetElement(id);
                 var com = e?.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
@@ -185,8 +208,38 @@ namespace Cad2Revit
                          EsCat(fv, BuiltInCategory.OST_StructuralFraming)))
                 {
                     if (!(fv.Location is LocationCurve lc)) { Omitir(fv, "sin línea de ubicación"); continue; }
-                    // vigas curvas: la cuerda entre sus extremos
-                    var lv = lc.Curve as Line ?? Line.CreateBound(lc.Curve.GetEndPoint(0), lc.Curve.GetEndPoint(1));
+                    if (!(lc.Curve is Line))
+                    {
+                        // viga curva: tramos rectos por los puntos de la curva (mismo elemento: «grupo» = su id)
+                        if (Material3D(fv) == "hormigon") { Omitir(fv, "hormigón"); continue; }
+                        var dimsC = Dims3D(fv);
+                        var zjC = fv.get_Parameter(BuiltInParameter.Z_JUSTIFICATION)?.AsInteger();
+                        var rotC = Math.Abs(Math.Sin(fv.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE)?.AsDouble() ?? 0));
+                        double bajarC = 0;
+                        if (dimsC.TryGetValue(rotC > 0.7 && dimsC.ContainsKey("bf") ? "bf" : "d", out var dvC))
+                            bajarC = zjC == (int)ZJustification.Top ? dvC / 2 : zjC == (int)ZJustification.Bottom ? -dvC / 2 : 0;
+                        var tes = lc.Curve.Tessellate();
+                        // a lo más ~12 tramos, ninguno de menos de 0,3 m
+                        var pts = new List<XYZ> { tes[0] };
+                        double paso = Math.Max(lc.Curve.Length / 12, U.M(0.3));
+                        for (int i = 1; i < tes.Count - 1; i++) if (tes[i].DistanceTo(pts[pts.Count - 1]) >= paso) pts.Add(tes[i]);
+                        pts.Add(tes[tes.Count - 1]);
+                        var giroC = (fv.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE)?.AsDouble() ?? 0) * 180 / Math.PI;
+                        for (int i = 0; i < pts.Count - 1; i++)
+                        {
+                            var q0 = P(pts[i]); var q1 = P(pts[i + 1]);
+                            q0[2] = R(q0[2] - bajarC); q1[2] = R(q1[2] - bajarC);
+                            vigas.Add(new
+                            {
+                                id = $"{fv.Id}~{i + 1}", grupo = fv.Id.ToString(), seccion = fv.Symbol.Name, familia = fv.Symbol.FamilyName,
+                                material = Material3D(fv), tipo = fv.StructuralType == StructuralType.Brace ? "diagonal" : "viga",
+                                costanera = enSistemas.Contains(fv.Id), p0 = q0, p1 = q1, giro = R(giroC), dims = dimsC,
+                            });
+                        }
+                        curvas++;
+                        continue;
+                    }
+                    var lv = (Line)lc.Curve;
                     if (Material3D(fv) == "hormigon") { Omitir(fv, "hormigón"); continue; }
                     var dims = Dims3D(fv);
                     // eje de la sección: la línea de Revit suele ir en la cara superior (justificación «Top»)
@@ -273,6 +326,7 @@ namespace Cad2Revit
             _inf.Contar("Techos y otras superficies", superficies.Count);
             if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D: " +
                 string.Join("; ", motivos.Select(kv => $"{kv.Value} {kv.Key}")));
+            if (curvas > 0) _inf.Advertencia($"{curvas} viga(s) curva(s): se exportaron en tramos rectos que siguen la curva");
             if (recortadas.Count > 0)
                 _inf.Advertencia($"{recortadas.Count} viga(s) con la línea de ubicación distinta de la viga dibujada (extensiones o recortes); se usó su largo real: " +
                     string.Join(", ", recortadas.Take(8)) + (recortadas.Count > 8 ? "…" : ""));

@@ -1,5 +1,6 @@
 """Modelo 3D (pestaña 6, modo 3D): malla, cargas, análisis y diseño de un galpón chico con pilares, vigas y muros."""
 
+import math
 import sys
 from pathlib import Path
 
@@ -278,3 +279,36 @@ def test_cimiento_en_anillo():
     assert len(extra["anillos"]) == 1 and abs(extra["anillos"][0]["ancho"] - 0.3) < 0.01
     assert len([e for e in els if e.get("anillo") == "C"]) == 16
     assert [d["id"] for d in extra["dados"]] == ["D"] and [r["id"] for r in extra["radieres"]] == ["R"]
+
+
+def test_cercha_con_angulos_pilares_colgantes_y_viga_curva():
+    """Pórtico con cercha de ángulos (cuerdas y diagonales L), un montante colgado de la cercha (sin apoyo) y una viga
+    curva exportada en tramos (mismo elemento de Revit)."""
+    from sap.diseno_acero import Perfil, capacidades
+    L = Perfil("L", 0.05, 0.05, t=0.005)
+    g = L.props()
+    assert abs(g["A"] - (0.05 * 0.005 * 2 - 0.005 ** 2)) < 1e-9 and g["Imin"] < g["Ix"]
+    cap = capacidades(L, 1.0, 1.0, 1.0)
+    assert 0 < cap["phiPn"] < cap["phiTn"] and cap["phiMn"] > 0
+    C = Perfil("C", 0.10, 0.05, t=0.003)
+    assert capacidades(C, 2.0, 2.0, 2.0)["phiMn"] > 0
+    pil = [{"id": f"P{i}", "seccion": "200x100x4", "p0": [x, 0, 0], "p1": [x, 0, 3], "dims": {}} for i, x in enumerate((0, 6))]
+    pil.append({"id": "COLG", "seccion": "L50x50x5", "p0": [3, 0, 2.0], "p1": [3, 0, 2.5], "dims": {}})       # colgado de la cuerda inferior
+    vig = [{"id": "CS", "seccion": "L50x50x5", "tipo": "viga", "p0": [0, 0, 3], "p1": [6, 0, 3], "dims": {}},
+           {"id": "CI", "seccion": "L50x50x5", "tipo": "viga", "p0": [0, 0, 2.5], "p1": [6, 0, 2.5], "dims": {}}]
+    for i, x in enumerate((0, 1.5, 3, 4.5)):
+        vig.append({"id": f"D{i}", "seccion": "L50x50x5", "tipo": "diagonal", "p0": [x, 0, 2.5], "p1": [x + 1.5, 0, 3], "dims": {}})
+    arco = [(math.cos(t) * 3 + 3, -3 + math.sin(t) * 0.0, 3) for t in (0, 0.5, 1.0)]
+    for k in range(2):
+        vig.append({"id": f"ARC~{k + 1}", "grupo": "ARC", "seccion": "200x100x4", "tipo": "viga", "p0": [0, 0, 3], "p1": [0, -3 + k, 3], "dims": {}})
+    vig[-1]["p0"] = [0, -3, 3]; vig[-1]["p1"] = [0, -2, 3]
+    vig[-2]["p0"] = [0, 0, 3]; vig[-2]["p1"] = [0, -3, 3]
+    del arco
+    mod = mallar3d({"pilares": pil, "vigas": vig, "muros": []}, apoyo_pilares="empotrado")
+    assert mod.secciones["L50x50x5"]["forma"] == "L"
+    colg = [b for b in mod.barras if mod.origen[b[0]] == "COLG"]
+    assert colg and not any(n in mod.apoyos for b in colg for n in b[1:3]), "el montante colgante no lleva apoyo"
+    assert any("no llegan al nivel de fundación" in a for a in mod.avisos)
+    assert {mod.origen[b[0]] for b in mod.barras} >= {"ARC"} and not any(mod.origen[b[0]].startswith("ARC~") for b in mod.barras)
+    r = analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())
+    assert any(a["seccion"] == "L50x50x5" for a in r["acero"])

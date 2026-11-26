@@ -87,6 +87,20 @@ def _seccion3d(m: dict, s: dict, avisos: list, cambios: dict | None = None) -> s
                           f"{t * 1000:.0f} mm (cámbialo en «Secciones de acero»)")
         s[nombre] = {"forma": "Pipe", "material": "ACERO", "d": float(D), "bf": float(D), "t": float(t)}
         return nombre
+    # ángulos (L50x50x5) y canales (C100x50x3, [100x50x3; con 4 medidas, C100x50x15x3: la pestaña no se considera)
+    lc = re.search(r"(?:^|[\s_\-])(L|C|\[|CA)\s*(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)\s*[xX×]\s*(\d+(?:[.,]\d+)?)"
+                   r"(?:\s*[xX×]\s*(\d+(?:[.,]\d+)?))?", " " + str(m.get("seccion") or ""), re.I)
+    if lc and not cam.get("forma") and not re.search(r"circ|tubo|pipe", txt, re.I):
+        nums = [mm(g_) for g_ in lc.groups()[1:] if g_]
+        if lc.group(1).upper() == "L":
+            s[nombre] = {"forma": "L", "material": "ACERO", "d": nums[0], "bf": nums[1], "t": nums[-1]}
+        else:
+            s[nombre] = {"forma": "C", "material": "ACERO", "d": nums[0], "bf": nums[1], "t": nums[-1], "tw": nums[-1], "tf": nums[-1]}
+        return nombre
+    if cam.get("forma") in ("L", "C") and all(cam.get(k) for k in ("d", "bf", "t")):
+        s[nombre] = {"forma": cam["forma"], "material": "ACERO", **{k: float(cam[k]) for k in ("d", "bf", "t")},
+                     **({"tw": float(cam["t"]), "tf": float(cam["t"])} if cam["forma"] == "C" else {})}
+        return nombre
     if cam.get("forma") == "Box" and all(cam.get(k) for k in ("d", "bf", "t")):
         s[nombre] = {"forma": "Box", "material": "ACERO", **{k: float(cam[k]) for k in ("d", "bf", "t")}}
         return nombre
@@ -148,7 +162,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
             continue
         pilares.append({**c, "p0": P(c["p0"]), "p1": P(c["p1"])})
     for v in datos.get("vigas") or []:
-        if str(v.get("id")) in excluir or v.get("material") in ("madera", "hormigon"):
+        if str(v.get("grupo") or v.get("id")) in excluir or v.get("material") in ("madera", "hormigon"):
             continue
         if v.get("costanera") and not op.get("incluir_costaneras"):
             mod.excluidos_auto.append(str(v.get("id")))
@@ -171,8 +185,19 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     # pilar que no llega por poco a una viga que pasa sobre él (≤ 0,30 m en altura, ≤ 0,10 m en planta, p. ej. por la
     # justificación de la viga en Revit): su cabeza se lleva al punto de la viga sobre su eje y la viga se parte ahí
     unidos = []
+    zs_base = [min(c["p0"][2], c["p1"][2]) for c in pilares] + [float(w["z0"]) for w in datos.get("muros") or []]
+    z_suelo = min(zs_base) if zs_base else 0.0
     for c in pilares:
-        cx, cy, ztop = c["p1"]
+        if c["p0"][2] > c["p1"][2]:
+            c["p0"], c["p1"] = c["p1"], c["p0"]
+        c["colgante"] = c["p0"][2] > z_suelo + 0.5 and str(c.get("id")) not in (op.get("apoyos") or {})
+    colgantes = [str(c.get("id")) for c in pilares if c["colgante"]]
+    if colgantes:
+        mod.avisos.append(f"{len(colgantes)} pilar(es) que no llegan al nivel de fundación (base más de 0,5 m sobre la más baja, "
+                          f"z {z_suelo:.2f} m): sin apoyo, colgados de las vigas o cuerdas que tocan: " + ", ".join(colgantes[:12]) +
+                          ("…" if len(colgantes) > 12 else "") + " (si alguno sí apoya, elige su base en la tabla de elementos)")
+    for c, k_ext in [(c, "p1") for c in pilares] + [(c, "p0") for c in pilares if c["colgante"]]:
+        cx, cy, ztop = c[k_ext]
         mejor = None
         for v in vigas:
             (x0, y0, z0), (x1, y1, z1) = v["p0"], v["p1"]
@@ -192,9 +217,9 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
                 mejor = (abs(zv - ztop) + dp, (px, py, zv), v)
         if mejor is not None:
             q, v = mejor[1], mejor[2]
-            if math.dist(q, c["p1"]) > 0.005:
+            if math.dist(q, c[k_ext]) > 0.005:
                 unidos.append((str(c.get("id")), abs(q[2] - ztop), math.hypot(q[0] - cx, q[1] - cy)))
-            c["p1"] = q
+            c[k_ext] = q
             v.setdefault("cortes", []).append(q)
     if unidos:
         mod.avisos.append(f"{len(unidos)} pilar(es) cuya cabeza no tocaba la viga en Revit se unieron a ella (separación hasta "
@@ -203,7 +228,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
                           ("…" if len(unidos) > 15 else ""))
     # vigas que se cruzan o se tocan a menos de 0,10 m (extremos que no llegan justo, uniones excéntricas en Revit):
     # se unen en un nudo común; las cabezas de pilar no se mueven
-    cabezas = [c["p1"] for c in pilares]
+    cabezas = [c["p1"] for c in pilares] + [c["p0"] for c in pilares if c.get("colgante")]
     fijo = lambda p_: any(math.dist(p_, q) < TOL_NUDO for q in cabezas)                      # noqa: E731
     n_uniones = 0
     for ia in range(len(vigas)):
@@ -393,8 +418,8 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
     for c in pilares:
         sec = _seccion3d(c, mod.secciones, mod.avisos, op.get("secciones"))
         barra(c["p0"], c["p1"], sec, "pilar", str(c["id"]), float(c.get("giro") or 0))
-        base = c["p0"] if c["p0"][2] <= c["p1"][2] else c["p1"]
-        mod.apoyos[nudo(base)] = (op.get("apoyos") or {}).get(str(c["id"]), apoyo_pilares)
+        if not c.get("colgante"):
+            mod.apoyos[nudo(c["p0"])] = (op.get("apoyos") or {}).get(str(c["id"]), apoyo_pilares)
     # techo: vigas inclinadas o sin otra viga encima (reciben el peso del techo, la sobrecarga y el viento)
     def encima(v):
         (x0, y0, z0), (x1, y1, z1) = v["p0"], v["p1"]
@@ -414,7 +439,7 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         rol = "diagonal" if v.get("tipo") == "diagonal" else (
             "techo" if abs(v["p1"][2] - v["p0"][2]) > 0.05 or not encima(v) else "viga")
         sec = _seccion3d(v, mod.secciones, mod.avisos, op.get("secciones"))
-        barra(v["p0"], v["p1"], sec, rol, str(v["id"]), float(v.get("giro") or 0), v.get("cortes") or ())
+        barra(v["p0"], v["p1"], sec, rol, str(v.get("grupo") or v["id"]), float(v.get("giro") or 0), v.get("cortes") or ())
 
     # ---- voladizos: extremos de viga que no llegan a nada (la línea de Revit puede ser más larga que la viga) ----
     grado_n: dict = {}
@@ -932,6 +957,9 @@ def _capacidades3d(p: Perfil, g: dict, L_y: float, L_z: float, Lb: float, Fy: fl
     cap = capacidades(p, L_y, L_z, Lb, Fy=Fy)
     if p.forma == "Pipe":
         cap["phiMny"] = cap["phiMn"]
+        return cap
+    if p.forma in ("L", "C"):
+        cap["phiMny"] = 0.9 * Fy * (g["Smin"] if p.forma == "L" else g["Sy"])     # eje débil: fluencia (conservador)
         return cap
     if p.forma == "Box":
         Zy = g.get("Zy") or g["Iy"] / (p.bf / 2)
