@@ -51,6 +51,33 @@ namespace Cad2Revit
             return r;
         }
 
+        /// <summary>Extremos de la línea a–b recortados a la extensión del sólido del elemento proyectado sobre ella.</summary>
+        private static (XYZ, XYZ) RecortarAGeometria(Element e, XYZ a, XYZ b)
+        {
+            var u = (b - a).Normalize();
+            double L = a.DistanceTo(b), tmin = double.MaxValue, tmax = double.MinValue;
+            void Puntos(GeometryElement ge)
+            {
+                if (ge == null) return;
+                foreach (var go in ge)
+                {
+                    if (go is Solid so && so.Volume > 1e-9)
+                        foreach (Edge ed in so.Edges)
+                            foreach (var q in ed.Tessellate())
+                            {
+                                double t = (q - a).DotProduct(u);
+                                tmin = Math.Min(tmin, t); tmax = Math.Max(tmax, t);
+                            }
+                    else if (go is GeometryInstance gi) Puntos(gi.GetInstanceGeometry());
+                }
+            }
+            try { Puntos(e.get_Geometry(new Options { DetailLevel = ViewDetailLevel.Fine, IncludeNonVisibleObjects = false })); }
+            catch { return (a, b); }
+            if (tmin == double.MaxValue || tmax - tmin < 0.1 * L) return (a, b);   // sin sólido útil: la línea tal cual
+            double t0 = Math.Max(0, tmin), t1 = Math.Min(L, tmax);
+            return (a + u * t0, a + u * t1);
+        }
+
         public Informe ExportarModelo3D(ICollection<ElementId> seleccion, string ruta, string nombre)
         {
             double R(double v) => Math.Round(v, 4);
@@ -60,6 +87,7 @@ namespace Cad2Revit
             var muros = new List<object>();
             int omitidos = 0;
             var motivos = new Dictionary<string, int>();
+            var recortadas = new List<string>();
             void Omitir(Element el, string motivo)
             {
                 omitidos++;
@@ -120,6 +148,13 @@ namespace Cad2Revit
                     if (dims.TryGetValue("d", out var dd) && zj == (int)ZJustification.Top) bajar = dd / 2;
                     else if (dims.TryGetValue("d", out dd) && zj == (int)ZJustification.Bottom) bajar = -dd / 2;
                     XYZ a = lv.GetEndPoint(0), b = lv.GetEndPoint(1);
+                    // la línea de ubicación puede ser más larga que la viga dibujada (extensiones negativas, recortes
+                    // por uniones): se recorta a lo que ocupa su sólido a lo largo de la línea
+                    var (ra, rb) = RecortarAGeometria(fv, a, b);
+                    double recorte = Mt(ra.DistanceTo(a) + rb.DistanceTo(b));
+                    if (recorte > 0.02)
+                        recortadas.Add($"{fv.Id} ({Mt(lv.Length):0.00} → {Mt(ra.DistanceTo(rb)):0.00} m)");
+                    a = ra; b = rb;
                     var pa = P(a); var pb2 = P(b);
                     pa[2] = R(pa[2] - bajar); pb2[2] = R(pb2[2] - bajar);
                     var giro = (fv.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE)?.AsDouble() ?? 0) * 180 / Math.PI;
@@ -176,6 +211,9 @@ namespace Cad2Revit
             _inf.Contar("Muros", muros.Count);
             if (omitidos > 0) _inf.Advertencia($"{omitidos} elemento(s) seleccionados no entran al modelo 3D: " +
                 string.Join("; ", motivos.Select(kv => $"{kv.Value} {kv.Key}")));
+            if (recortadas.Count > 0)
+                _inf.Advertencia($"{recortadas.Count} viga(s) con la línea de ubicación más larga que la viga dibujada; se usó su largo real: " +
+                    string.Join(", ", recortadas.Take(8)) + (recortadas.Count > 8 ? "…" : ""));
             if (pilares.Count + vigas.Count + muros.Count == 0) _inf.Error("La selección no tiene pilares, vigas ni muros");
             _inf.Advertencia($"Archivo: {ruta}");
             return _inf;

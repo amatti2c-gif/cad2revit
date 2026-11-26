@@ -355,6 +355,29 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
         sec = _seccion3d(v, mod.secciones, mod.avisos, op.get("secciones"))
         barra(v["p0"], v["p1"], sec, rol, str(v["id"]), float(v.get("giro") or 0), v.get("cortes") or ())
 
+    # ---- voladizos: extremos de viga que no llegan a nada (la línea de Revit puede ser más larga que la viga) ----
+    grado_n: dict = {}
+    for _, a_, b_, _ in mod.barras:
+        grado_n[a_] = grado_n.get(a_, 0) + 1
+        grado_n[b_] = grado_n.get(b_, 0) + 1
+    largos = []
+    for v in vigas:
+        segs = [b for b in mod.barras if mod.origen.get(b[0]) == str(v["id"])]
+        for k in ("p0", "p1"):
+            n_ = claves.get(_clave(v[k]))
+            if n_ is None or grado_n.get(n_, 0) != 1 or n_ in mod.apoyos:
+                continue
+            seg = next((b for b in segs if n_ in b[1:3]), None)
+            if seg is not None:
+                L_ = math.dist(mod.nudos[seg[1]], mod.nudos[seg[2]])
+                if L_ > 1.5:
+                    largos.append((str(v["id"]), L_))
+    if largos:
+        mod.avisos.append(f"{len(largos)} viga(s) con un voladizo libre de más de 1,5 m (hasta {max(l for _, l in largos):.2f} m): "
+                          + ", ".join(i for i, _ in largos[:12]) + ("…" if len(largos) > 12 else "") +
+                          ". Si en Revit la viga es más corta o llega a un pilar, vuelve a exportar con el complemento al día "
+                          "(recorta la viga a su geometría) o incluye ese pilar")
+
     # ---- apoyos y uniones cambiados a mano ----
     mod.apoyos_defecto = dict(mod.apoyos)
     for clave, tipo in (op.get("apoyos_nudo") or {}).items():
