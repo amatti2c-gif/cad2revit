@@ -307,3 +307,32 @@ def test_nudo_de_convergencia():
     assert len(centro) == 1 and len(mod.nudos_convergencia) == 1 and mod.nudos_convergencia[0]["n"] == 6
     assert any("no terminan en el mismo punto" in a for a in mod.avisos)
     analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())
+
+
+def test_fundacion_en_anillo_como_una_sola():
+    """Los tramos de un cimiento en anillo se informan como UNA fundación: largo total, % de área en compresión de toda
+    la fundación y posiciones de los apoyos a lo largo del recorrido."""
+    import json
+    import math as m_
+    from sap.fundacion import ParametrosFundacion
+    from sap.fundacion3d import analizar_emparrillado
+    from sap.modelo3d import _desplazar, lineas_desde_revit
+    ang = [2 * m_.pi * k / 8 for k in range(8)]
+    eje = [(6 * m_.cos(a), 6 * m_.sin(a)) for a in ang]
+    pil = [{"id": f"P{i}", "seccion": "PILAR CIRCULAR D140mm", "p0": [x, y, 0.0], "p1": [x, y, 3], "dims": {"t": 0.003}} for i, (x, y) in enumerate(eje)]
+    vig = [{"id": f"V{i}", "seccion": "200x100x4", "tipo": "viga", "p0": [*eje[i], 3], "p1": [*eje[(i + 1) % 8], 3], "dims": {}} for i in range(8)]
+    mod = mallar3d({"pilares": pil, "vigas": vig, "muros": []}, apoyo_pilares="empotrado")
+    r = json.loads(json.dumps(analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas()),
+                              default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))
+    ox, oy = r["origen_xy"]
+    ext, inte = _desplazar(eje, -0.15), _desplazar(eje, 0.15)
+    fund = {"elementos": [{"id": "C", "clase": "losa", "tipo": "Cimiento", "a": [-6, 0], "b": [6, 0], "largo": 12.3, "ancho": 12.3,
+                           "z_inf": -0.3, "z_sup": 0.0, "contornos": [[[x, y, 0] for x, y in ext], [[x, y, 0] for x, y in inte]]}]}
+    ls, _ = lineas_desde_revit(r["apoyos"], fund, (ox, oy))
+    e = analizar_emparrillado(ls, r["combos_lrfd"], r["patrones"], ParametrosFundacion())
+    assert len(e["fundaciones"]) == 1
+    f = e["fundaciones"][0]
+    assert f["n_tramos"] == 8 and abs(f["L"] - sum(x["L"] for x in e["lineas"])) < 1e-9 and len(f["apoyos"]) == 8
+    xs = sorted(a["x"] for a in f["apoyos"])
+    assert xs[-1] - xs[0] > 0.7 * f["L"]                       # posiciones a lo largo de toda la fundación
+    assert 0 < f["resumen_suelo"]["pct_compresion_min"] <= 1

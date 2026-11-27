@@ -2697,8 +2697,9 @@ async function funEsquema3d() {
     const peor = l => Math.max(l.resultado.resumen_suelo.FU_presion_max || 0, ...[...l.resultado.viga, ...l.resultado.zapata, ...l.resultado.pedestal].map(x => x.razon || 0));
     const color = r => r <= 0.7 ? 0x1b6e20 : r <= 1 ? 0xe0a000 : 0xb00020;
     for (const t of v.tramos) {
-      const l = fun3.d.lineas.find(l_ => (l_.ids || []).includes(t.id));
-      if (l) t.color = color(peor(l));
+      const li = fun3.d.lineas.findIndex(l_ => (l_.ids || []).includes(t.id));
+      const f = li >= 0 ? (fun3.d.fund || []).find(f_ => f_.lineas.includes(li)) : null;
+      if (f) t.color = color(peor(f)); else if (li >= 0) t.color = color(peor(fun3.d.lineas[li]));
     }
   }
   panel.classList.remove("oculto");
@@ -2745,7 +2746,7 @@ async function funCambioRevit(el, valor) {
   const c = fun3.cambios[clave] ||= {};
   if (v == null || !(v > 0) || (orig != null && Math.abs(v - orig) < 1e-6)) delete c[k]; else c[k] = v;
   if (!Object.keys(c).length) delete fun3.cambios[clave];
-  const l = fun3.d?.lineas?.find(x => String(x.ids?.[0]) === clave);
+  const l = fun3.d?.fund?.find(x => String(x.grupo) === clave) || fun3.d?.lineas?.find(x => String(x.ids?.[0]) === clave);
   funGeoInputs(l ? (l.geometria_revit || l.geometria) : null, true, l ? (l.geometria_revit || l.geometria) : (orig != null ? { [k]: orig } : null), clave);
   funEsquema();
   // guardar en los ajustes del modelo 3D
@@ -2821,6 +2822,9 @@ async function funAnalizar3d() {
 }
 function funMostrar3d(d) {
   fun3.d = d;
+  // una fila por fundación (un cimiento en anillo con todos sus tramos es UNA fundación)
+  d.fund = d.fundaciones?.length ? d.fundaciones : d.lineas.map((l, i) => ({ nombre: l.nombre, grupo: l.grupo || String(i), lineas: [i],
+    revit: l.revit, geometria: l.geometria, geometria_revit: l.geometria_revit, cambios: l.cambios, resultado: l.resultado }));
   const f2 = x => x == null ? "—" : Number(x).toFixed(2), pc = x => x == null ? "—" : (100 * x).toFixed(0) + " %";
   const celda = (r, lim = 1, menor = false) => h("td", { class: r == null ? "" : ((menor ? r < lim : r > lim) ? "nocumple" : "cumple") }, f2(r));
   const maxR = (lista) => Math.max(0, ...lista.map(v => v.razon ?? 0));
@@ -2828,36 +2832,38 @@ function funMostrar3d(d) {
   $("#fun-lineas").replaceChildren(
     h("thead", {}, h("tr", {}, ...["Fundación", "L (m)", "FU presión", "Área en compresión mín.", "FS deslizamiento mín.", "Viga (máx. razón)",
       "Zapata (máx. razón)", "Pedestal (máx. razón)"].map(t => h("th", {}, t)))),
-    h("tbody", {}, ...d.lineas.map((l, i) => { const r = l.resultado, s = r.resumen_suelo;
+    h("tbody", {}, ...d.fund.map((l, i) => { const r = l.resultado, s = r.resumen_suelo;
       return h("tr", { class: "fila-clic", onclick: () => funElegirLinea(i) },
         h("td", {}, l.nombre), h("td", {}, f2(r.L)), celda(s.FU_presion_max),
         h("td", { class: s.pct_compresion_min >= 0.8 ? "cumple" : "nocumple" }, pc(s.pct_compresion_min)),
         celda(s.FS_desliz_min, s.fs_desliz_exigido ?? 1, true), celda(maxR(r.viga)), celda(maxR(r.zapata)), celda(maxR(r.pedestal))); })));
   const sel = $("#sel-linea-fun"), antes = sel.value;
-  sel.replaceChildren(...d.lineas.map((l, i) => h("option", { value: i }, l.nombre)));
-  sel.value = antes && antes < d.lineas.length ? antes : "0";
+  sel.replaceChildren(...d.fund.map((l, i) => h("option", { value: i }, l.nombre)));
+  sel.value = antes && antes < d.fund.length ? antes : "0";
   const cj = d.conjunto;
   $("#fun-nota-lineas").textContent = (cj ? `Emparrillado 3D: ${d.lineas.length} fundación(es), ${cj.nudos} nudos, ${cj.cruces} unión(es) entre fundaciones; ` +
     `deslizamiento del conjunto: FS mín. ${cj.FS_desliz_min != null ? cj.FS_desliz_min.toFixed(2) : "—"}. ` : "") +
     (d.geometria ? `Geometría de Revit: ${d.geometria.replace(/^fun-/, "")}. ` : "Geometría automática. ") +
     (d.avisos?.length ? d.avisos.join(". ") + ". " : "") + (d.nota || "") + (d.fecha ? ` · ${d.fecha.slice(0, 16).replace("T", " ")}` : "");
   funPlanta3d();
-  if (d.lineas.length) funElegirLinea(Number(sel.value) || 0);
+  if (d.fund.length) funElegirLinea(Number(sel.value) || 0);
   intentar(funEsquema3d);
 }
 function funElegirLinea(i) {
-  const d = fun3.d; if (!d || !d.lineas[i]) return;
+  const d = fun3.d; if (!d || !d.fund?.[i]) return;
   $("#sel-linea-fun").value = i;
-  const l = d.lineas[i];
+  const l = d.fund[i];
   const deRevit = !!(d.geometria && l.revit);
-  funGeoInputs(l.geometria || l.resultado.seccion, deRevit, deRevit ? (l.geometria_revit || l.geometria) : null, deRevit ? String(l.ids?.[0]) : null);
+  funGeoInputs(l.geometria || l.resultado.seccion, deRevit, deRevit ? (l.geometria_revit || l.geometria) : null, deRevit ? String(l.grupo) : null);
   funEsquema();
   funPlanta3d();
   funMostrar(l.resultado);
 }
 function funPlanta3d() {
   const d = fun3.d; if (!d) return;
-  const svg = $("#fun-planta"), elegida = Number($("#sel-linea-fun").value) || 0;
+  const svg = $("#fun-planta"), elegidaF = Number($("#sel-linea-fun").value) || 0;
+  const deFund = i => (d.fund || []).findIndex(f => f.lineas.includes(i));
+  const tramosElegidos = new Set(d.fund?.[elegidaF]?.lineas || [elegidaF]);
   const base = l => { const u = l.dir || (l.eje === "X" ? [1, 0] : [0, 1]); const A = l.A || (l.eje === "X" ? [0, l.coord] : [l.coord, 0]);
     return { u, A, P: t => [A[0] + u[0] * t, A[1] + u[1] * t] }; };
   const pts = d.lineas.flatMap(l => { const b = base(l); return [b.P(l.resultado.x0), b.P(l.resultado.x1)]; });
@@ -2867,21 +2873,21 @@ function funPlanta3d() {
   svg.setAttribute("viewBox", `${x0} ${-y1} ${W} ${H}`);
   const hijos = [];
   d.lineas.forEach((l, i) => {
-    const r = l.resultado, sel_ = i === elegida, b = Math.max(r.seccion.b_zapata, 3 * k), g = base(l);
+    const r = l.resultado, sel_ = tramosElegidos.has(i), b = Math.max(r.seccion.b_zapata, 3 * k), g = base(l);
     const nx = -g.u[1] * b / 2, ny = g.u[0] * b / 2, p0 = g.P(r.x0), p1 = g.P(r.x1);
     const esq = [[p0[0] + nx, p0[1] + ny], [p1[0] + nx, p1[1] + ny], [p1[0] - nx, p1[1] - ny], [p0[0] - nx, p0[1] - ny]];
     hijos.push(s("polygon", { points: esq.map(q => `${q[0]},${-q[1]}`).join(" "), fill: sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)",
       stroke: sel_ ? "#2d6cdf" : "#888", "stroke-width": k * 0.3, style: "cursor:pointer", "data-i": i }));
     const t = s("text", { x: esq[0][0], y: -(esq[0][1]) - k, "font-size": 2.4 * k, fill: "#333" });
-    t.textContent = l.nombre.split(":")[0];
-    hijos.push(t);
+    t.textContent = (d.fund?.[deFund(i)]?.nombre || l.nombre).split(":")[0].split(" (")[0].slice(0, 3);
+    if (!d.fund || d.fund[deFund(i)]?.lineas[0] === i) hijos.push(t);
     for (const a of r.apoyos) {
       const [px, py] = g.P(a.x);
       hijos.push(s("circle", { cx: px, cy: -py, r: 0.9 * k, fill: a.pilar ? "#1f4e9c" : "#b98a4a" }));
     }
   });
   svg.replaceChildren(...hijos);
-  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => funElegirLinea(Number(el.dataset.i))));
+  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => funElegirLinea(Math.max(deFund(Number(el.dataset.i)), 0))));
 }
 
 async function cargarFundacion() {

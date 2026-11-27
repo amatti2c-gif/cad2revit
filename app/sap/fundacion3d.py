@@ -304,7 +304,7 @@ def analizar_emparrillado(lineas: list[dict], combos_lrfd: dict, patrones: dict,
         viga, zapata, muro = disenar_seccion(pf, Ln, peor[i], apoyos)
         if peor[i]["T"][0] > 1e-6:
             viga.append({"verificacion": "Torsión de la viga de fundación (referencia; emparrillado 3D)", "Vu_tonf": None,
-                         "Mu_tonfm": peor[i]["T"][0], "combo": peor[i]["T"][1], "phiMn_tonfm": None, "razon": None,
+                         "Mu_tonfm": peor[i]["T"][0], "combo": peor[i]["T"][1], "phiMn_tonfm": None, "razon": None, "minimo": "—",
                          "notas": ["Tu máximo por el giro transversal y los cruces; verificar según ACI 318-19 cap. 9.5.4 si es relevante"]})
         ok = [s for s in srv[i] if s["estable"]]
         sec = e["sec"]
@@ -325,4 +325,81 @@ def analizar_emparrillado(lineas: list[dict], combos_lrfd: dict, patrones: dict,
             },
             "viga": viga, "zapata": zapata, "pedestal": muro,
         })
-    return {"lineas": salida, "conjunto": {"servicio": glob_srv, "FS_desliz_min": fs_glob, "nudos": nn, "cruces": len(uniones)}}
+    return {"lineas": salida, "fundaciones": agrupar(lineas, salida, pf_base, fs_glob),
+            "conjunto": {"servicio": glob_srv, "FS_desliz_min": fs_glob, "nudos": nn, "cruces": len(uniones)}}
+
+
+def agrupar(lineas: list[dict], salida: list[dict], pf_base: ParametrosFundacion, fs_glob) -> list[dict]:
+    """Resultados por FUNDACIÓN (un elemento de Revit, p. ej. un cimiento en anillo con todos sus tramos; o una línea
+    automática): presiones y % de área en compresión de la fundación completa, deslizamiento del conjunto y, en el
+    hormigón, la peor verificación de sus tramos. Mismo formato que una línea, con las x a lo largo de su recorrido."""
+    grupos: dict = {}
+    for i, l_ in enumerate(lineas):
+        grupos.setdefault(str(l_.get("grupo") or (l_.get("ids") or [f"L{i}"])[0]), []).append(i)
+    out = []
+    for g, idx in grupos.items():
+        idx.sort(key=lambda i: (lineas[i].get("orden", 0), i))
+        rs = [salida[i] for i in idx]
+        # recorrido continuo: cada tramo a continuación del anterior
+        x, q_off, apoyos, off = [], [], [], 0.0
+        for r in rs:
+            x += [off + (v - r["x0"]) for v in r["x"]]
+            apoyos += [{**a, "x": off + (a["x"] - r["x0"])} for a in r["apoyos"]]
+            off += r["L"]
+        L = off
+        servicio = []
+        for k in range(len(rs[0]["servicio"])):
+            cs = [r["servicio"][k] for r in rs]
+            nombre, ev = cs[0]["combo"], cs[0]["eventual"]
+            if not all(c["estable"] for c in cs):
+                servicio.append({"combo": nombre, "estable": False, "eventual": ev})
+                continue
+            qmax = max(c["q_max"] for c in cs)
+            q_adm = cs[0]["q_adm"]
+            servicio.append({"combo": nombre, "estable": True, "eventual": ev, "q_max": qmax, "q_adm": q_adm, "FU_presion": qmax / q_adm,
+                             "pct_compresion": sum(c["pct_compresion"] * r["L"] for c, r in zip(cs, rs)) / L,
+                             "N": sum(c["N"] for c in cs), "H": cs[0]["H"], "FS_deslizamiento": cs[0]["FS_deslizamiento"],
+                             "q": [v for c in cs for v in c["q"]],
+                             "asentamiento_max_mm": max(c["asentamiento_max_mm"] for c in cs)})
+
+        offs = {}
+        acum = 0.0
+        for n_t, r in zip(idx, rs):
+            offs[n_t] = acum - r["x0"]
+            acum += r["L"]
+
+        def peor(clave):
+            """La peor verificación de cada tipo entre los tramos (por nombre), indicando el tramo."""
+            import re as _re
+            mejor = {}
+            for n_t, r in zip(idx, rs):
+                for v in r[clave]:
+                    nom = v["verificacion"]
+                    if nom.startswith("Pedestal como muro: carga axial"):
+                        # posición a lo largo de toda la fundación (no la del tramo)
+                        nom2 = _re.sub(r"x = (-?\d+(?:\.\d+)?) m", lambda m_: f"x = {float(m_.group(1)) + offs[n_t]:.2f} m", nom)
+                        mejor[(nom2, n_t)] = {**v, "verificacion": nom2}
+                        continue
+                    if nom not in mejor or (v.get("razon") or 0) > (mejor[nom].get("razon") or 0):
+                        mejor[nom] = {**v, "notas": list(v.get("notas") or []) + ([f"tramo {lineas[n_t].get('orden') or n_t + 1}"] if len(rs) > 1 else [])}
+            return list(mejor.values())
+        ok = [s for s in servicio if s["estable"]]
+        r0 = rs[0]
+        out.append({
+            "grupo": g, "lineas": idx, "x": x, "L": L, "x0": 0.0, "x1": L, "EI": r0["EI"], "peso_propio_tonf_m": r0["peso_propio_tonf_m"],
+            "seccion": r0["seccion"], "apoyos": apoyos, "servicio": servicio,
+            "resumen_suelo": {
+                "pct_compresion_min": min((s["pct_compresion"] for s in ok), default=0.0),
+                "combo_pct": min(ok, key=lambda s: s["pct_compresion"])["combo"] if ok else "",
+                "FU_presion_max": max((s["FU_presion"] for s in ok), default=0.0),
+                "combo_presion": max(ok, key=lambda s: s["FU_presion"])["combo"] if ok else "",
+                "FS_desliz_min": fs_glob, "inestables": [s["combo"] for s in servicio if not s["estable"]],
+                "q_adm": r0["resumen_suelo"]["q_adm"], "q_adm_eventual": r0["resumen_suelo"]["q_adm_eventual"],
+                "fs_desliz_exigido": pf_base.fs_deslizamiento,
+                "nota_deslizamiento": r0["resumen_suelo"]["nota_deslizamiento"] + (
+                    f". Fundación de {len(rs)} tramos analizada como una sola pieza continua: presión máxima y área en "
+                    "compresión de toda la fundación; hormigón: la peor verificación de sus tramos" if len(rs) > 1 else ""),
+            },
+            "viga": peor("viga"), "zapata": peor("zapata"), "pedestal": peor("pedestal"), "n_tramos": len(rs),
+        })
+    return out

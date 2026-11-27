@@ -2363,24 +2363,25 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
     if pedido.geometria:
         fund = json.loads(_fund_revit(_proyecto(pid), pedido.geometria).read_text(encoding="utf-8"))
         lineas, avisos = lineas_desde_revit(res["apoyos"], fund, res.get("origen_xy"))
-        n_mod = 0
+        n_mod = set()
         for l_ in lineas:
             if not l_.get("revit"):
                 continue
             l_["geometria_revit"] = dict(l_["geometria"])
-            cam = {k: float(v) for k, v in (cambios_revit.get(str(l_["ids"][0])) or {}).items()
+            cam = {k: float(v) for k, v in (cambios_revit.get(str(l_.get("grupo") or l_["ids"][0])) or cambios_revit.get(str(l_["ids"][0])) or {}).items()
                    if k in ("b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad") and v not in (None, "") and float(v) > 0}
             if cam:
                 l_["geometria"] = {**l_["geometria"], **cam}
                 l_["cambios"] = cam
-                n_mod += 1
+                n_mod.add(str(l_.get("grupo") or l_["ids"][0]))
         if n_mod:
-            avisos.append(f"{n_mod} fundación(es) con datos cambiados en la app respecto de Revit (se conserva el valor de Revit)")
+            avisos.append(f"{len(n_mod)} fundación(es) con datos cambiados en la app respecto de Revit (se conserva el valor de Revit)")
     else:
         lineas = lineas_fundacion(res["apoyos"])
     clave = f"{pid}/{nombre}/fundacion3d"
     out = []
     conjunto = None
+    fundaciones = []
     try:
         if not lineas:
             raise ValueError("El modelo 3D no tiene apoyos")
@@ -2390,6 +2391,19 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
                                     avance=lambda pct, etapa, hasta=None: _AVANCE_ANALISIS.__setitem__(
                                         clave, {"pct": pct, "etapa": etapa, "hasta": hasta if hasta is not None else pct}))
         conjunto = emp["conjunto"]
+        fundaciones = []
+        for fg in emp["fundaciones"]:
+            ls_ = [lineas[i] for i in fg["lineas"]]
+            l0 = ls_[0]
+            if l0.get("revit"):
+                tipo = l0.get("tipo") or ""
+                nombre_f = (f"{'Zapata aislada' if l0.get('aislada') else 'Fundación'} {tipo} (Revit {fg['grupo']})" +
+                            (f": {fg['n_tramos']} tramos, " if fg["n_tramos"] > 1 else ": ") + f"L = {fg['L']:.2f} m, {len(fg['apoyos'])} apoyo(s)")
+            else:
+                nombre_f = l0["nombre"]
+            fundaciones.append({"nombre": nombre_f, "grupo": fg["grupo"], "lineas": fg["lineas"], "revit": bool(l0.get("revit")),
+                                "geometria": l0.get("geometria"), "geometria_revit": l0.get("geometria_revit"),
+                                "cambios": l0.get("cambios") or {}, "resultado": {k: v for k, v in fg.items() if k != "lineas"}})
         for l_, r in zip(lineas, emp["lineas"]):
             u = list(l_.get("dir") or (1.0, 0.0))
             A = l_.get("A") or ([0.0, l_["coord"]] if l_["eje"] == "X" else [l_["coord"], 0.0])
@@ -2397,13 +2411,14 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
                         "revit": bool(l_.get("revit")), "ids": l_.get("ids") or [], "A": A, "dir": u,
                         "geometria": l_.get("geometria") or {k: r["seccion"][k] for k in ("b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad")},
                         "geometria_revit": l_.get("geometria_revit"), "cambios": l_.get("cambios") or {},
+                        "grupo": str(l_.get("grupo") or (l_.get("ids") or [""])[0]),
                         "resultado": r})
     except ValueError as e:
         raise HTTPException(400, str(e))
     finally:
         _AVANCE_ANALISIS.pop(clave, None)
     d = {"lineas": out, "fecha": datetime.now(timezone.utc).isoformat(timespec="seconds"), "analisis_3d": res.get("fecha"),
-         "geometria": pedido.geometria, "avisos": avisos, "conjunto": conjunto,
+         "geometria": pedido.geometria, "avisos": avisos, "conjunto": conjunto, "fundaciones": fundaciones,
          "nota": "Emparrillado 3D: todas las fundaciones juntas, unidas en sus cruces, sobre suelo que solo trabaja en "
                  "compresión (resorte vertical ks·B y al giro transversal ks·B³/12 por metro); cargas: las 6 componentes de "
                  "reacción de cada apoyo del modelo 3D (fuerzas horizontales aplicadas a la altura del pedestal + zapata). La "

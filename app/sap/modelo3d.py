@@ -1301,9 +1301,11 @@ def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: flo
         if terreno is not None:
             geo["profundidad"] = max(terreno - z_inf, geo["h_zapata"])
         eje = "X" if abs(u[0]) >= abs(u[1]) else "Y"
+        # una fundación de Revit = un grupo: los tramos de un cimiento en anillo son UNA fundación
+        orden = int(str(h["id"]).rsplit("-", 1)[1]) if h.get("anillo") and "-" in str(h["id"]) else 0
         lineas.append({"u": u, "n": n, "A": A, "L": t1 - t0, "geometria": geo, "eje": eje,
                        "ids": [x["id"] for x in g] + [m["id"] for m in ped], "clase": h["clase"], "tipo": h.get("tipo", ""),
-                       "aislada": h["clase"] == "zapata", "apoyos": []})
+                       "aislada": h["clase"] == "zapata", "apoyos": [], "grupo": str(h.get("anillo") or h["id"]), "orden": orden})
     # apoyos sobre cada fundación (la más cercana)
     libres = []
     for a in apoyos:
@@ -1329,7 +1331,8 @@ def lineas_desde_revit(apoyos: list[dict], fund: dict, origen_xy, tol_apoyo: flo
         ex, ey = float(l_["u"][0]), float(l_["u"][1])
         out.append({"dir": (ex, ey), "eje": l_["eje"], "coord": 0.0, "aislada": l_["aislada"], "revit": True,
                     "x0": 0.0, "x1": l_["L"], "geometria": l_["geometria"], "ids": l_["ids"],
-                    "A": [float(l_["A"][0]), float(l_["A"][1])], "apoyos": l_["apoyos"],
+                    "A": [float(l_["A"][0]), float(l_["A"][1])], "apoyos": l_["apoyos"], "grupo": l_["grupo"],
+                    "orden": l_["orden"], "tipo": l_["tipo"],
                     "nombre_base": f"{'zapata aislada' if l_['aislada'] else 'fundación corrida'} {l_['tipo']} (Revit {l_['ids'][0]})"})
     out.sort(key=lambda l_: (-len(l_["apoyos"]), -l_["x1"]))
     if libres:
