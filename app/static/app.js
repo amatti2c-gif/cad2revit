@@ -2856,8 +2856,8 @@ function funElegirLinea(i) {
   const deRevit = !!(d.geometria && l.revit);
   funGeoInputs(l.geometria || l.resultado.seccion, deRevit, deRevit ? (l.geometria_revit || l.geometria) : null, deRevit ? String(l.grupo) : null);
   funEsquema();
-  funPlanta3d();
   funMostrar(l.resultado);
+  funPlanta3d();
 }
 function funPlanta3d() {
   const d = fun3.d; if (!d) return;
@@ -2868,26 +2868,90 @@ function funPlanta3d() {
     return { u, A, P: t => [A[0] + u[0] * t, A[1] + u[1] * t] }; };
   const pts = d.lineas.flatMap(l => { const b = base(l); return [b.P(l.resultado.x0), b.P(l.resultado.x1)]; });
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-  const x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1, y0 = Math.min(...ys) - 1.5, y1 = Math.max(...ys) + 3;
+  let x0 = Math.min(...xs) - 1, x1 = Math.max(...xs) + 1;
+  const y0 = Math.min(...ys) - 1.5, y1 = Math.max(...ys) + 3;
+  x1 += 0.25 * (x1 - x0) + 0.25 * (y1 - y0);         // espacio para la leyenda
   const W = x1 - x0, H = y1 - y0, k = Math.max(W, H) / 100;
   svg.setAttribute("viewBox", `${x0} ${-y1} ${W} ${H}`);
   const hijos = [];
+  // presiones de contacto de la combinación elegida en «Presiones de» (la de la fundación mostrada)
+  const combo = $("#fun-combo")?.selectedOptions?.[0]?.textContent || null;
+  const servDe = l => combo ? l.resultado.servicio.find(c => c.combo === combo && c.estable) : null;
+  const qsPos = d.lineas.flatMap(l => { const sv = servDe(l); return sv ? sv.q.filter(q => q > 1e-9) : []; });
+  const qLo = qsPos.length ? Math.min(...qsPos) : 0, qHi = qsPos.length ? Math.max(...qsPos) : 1;
+  const NB = 12;                                       // bandas, como el contour de SAP2000
+  const SAP = [[96, 96, 255], [64, 160, 255], [0, 210, 255], [0, 230, 200], [80, 220, 80], [170, 230, 40], [240, 240, 0],
+               [255, 200, 0], [255, 150, 0], [255, 90, 40], [240, 40, 90], [220, 80, 220]];   // mínimo (azul) → máximo (magenta)
+  const banda = q => Math.min(NB - 1, Math.max(0, Math.floor((q - qLo) / Math.max(qHi - qLo, 1e-9) * NB)));
+  const colorQ = q => `rgb(${SAP[banda(q)].join(",")})`;
+  const defs = s("defs");
+  const pat = s("pattern", { id: "fun-levanta", width: 2 * k, height: 2 * k, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" });
+  pat.append(s("rect", { width: 2 * k, height: 2 * k, fill: "#e6e6e6" }), s("line", { x1: 0, y1: 0, x2: 0, y2: 2 * k, stroke: "#999", "stroke-width": 0.5 * k }));
+  defs.append(pat);
+  hijos.push(defs);
+  let qMax = null, area = 0, areaComp = 0;
   d.lineas.forEach((l, i) => {
     const r = l.resultado, sel_ = tramosElegidos.has(i), b = Math.max(r.seccion.b_zapata, 3 * k), g = base(l);
     const nx = -g.u[1] * b / 2, ny = g.u[0] * b / 2, p0 = g.P(r.x0), p1 = g.P(r.x1);
     const esq = [[p0[0] + nx, p0[1] + ny], [p1[0] + nx, p1[1] + ny], [p1[0] - nx, p1[1] - ny], [p0[0] - nx, p0[1] - ny]];
-    hijos.push(s("polygon", { points: esq.map(q => `${q[0]},${-q[1]}`).join(" "), fill: sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)",
-      stroke: sel_ ? "#2d6cdf" : "#888", "stroke-width": k * 0.3, style: "cursor:pointer", "data-i": i }));
+    const sv = servDe(l);
+    if (sv) {
+      // franjas entre nudos con el color de su presión; gris achurado donde la fundación se levanta (sin compresión)
+      for (let n = 0; n < r.x.length - 1; n++) {
+        const qa = sv.q[n], qb = sv.q[n + 1], qm = (qa + qb) / 2, a = g.P(r.x[n]), c = g.P(r.x[n + 1]);
+        const largo = r.x[n + 1] - r.x[n];
+        area += largo; if (qa > 1e-9 && qb > 1e-9) areaComp += largo;
+        hijos.push(s("polygon", { points: [[a[0] + nx, a[1] + ny], [c[0] + nx, c[1] + ny], [c[0] - nx, c[1] - ny], [a[0] - nx, a[1] - ny]]
+          .map(q => `${q[0]},${-q[1]}`).join(" "), fill: qa > 1e-9 || qb > 1e-9 ? colorQ(qm) : "url(#fun-levanta)",
+          stroke: "#222", "stroke-width": 0.06 * k, "stroke-opacity": 0.55 }));
+        for (const [qq, xx] of [[qa, r.x[n]], [qb, r.x[n + 1]]])
+          if (qMax == null || qq > qMax.q) qMax = { q: qq, p: g.P(xx), q_adm: sv.q_adm };
+      }
+    }
+    hijos.push(s("polygon", { points: esq.map(q => `${q[0]},${-q[1]}`).join(" "), fill: sv ? "transparent" : (sel_ ? "rgba(45,108,223,.35)" : "rgba(150,150,150,.35)"),
+      stroke: sel_ ? "#2d6cdf" : "#888", "stroke-width": k * (sel_ ? 0.35 : 0.2), style: "cursor:pointer", "data-i": i }));
     const t = s("text", { x: esq[0][0], y: -(esq[0][1]) - k, "font-size": 2.4 * k, fill: "#333" });
     t.textContent = (d.fund?.[deFund(i)]?.nombre || l.nombre).split(":")[0].split(" (")[0].slice(0, 3);
-    if (!d.fund || d.fund[deFund(i)]?.lineas[0] === i) hijos.push(t);
+    if ((d.fund?.length || d.lineas.length) > 1 && (!d.fund || d.fund[deFund(i)]?.lineas[0] === i)) {
+      t.textContent = `F${(d.fund ? deFund(i) : i) + 1}`;
+      hijos.push(t);
+    }
     for (const a of r.apoyos) {
       const [px, py] = g.P(a.x);
       hijos.push(s("circle", { cx: px, cy: -py, r: 0.9 * k, fill: a.pilar ? "#1f4e9c" : "#b98a4a" }));
     }
   });
+  if (qsPos.length) {                                // leyenda de bandas a la derecha, como SAP2000
+    const lx = x1 - 0.13 * W, ly = y1 - 0.08 * H, alto = 0.8 * H / NB;
+    const tit = s("text", { x: lx, y: -(ly + 0.6 * alto), "font-size": 2.2 * k, fill: "#222", "font-weight": "bold" });
+    tit.textContent = "q (tonf/m²)";
+    hijos.push(tit);
+    for (let n = NB - 1, fila = 0; n >= 0; n--, fila++) {
+      const yv = ly - fila * alto;
+      hijos.push(s("rect", { x: lx, y: -yv, width: 2.2 * k, height: alto, fill: `rgb(${SAP[n].join(",")})`, stroke: "#555", "stroke-width": 0.05 * k }));
+      const t = s("text", { x: lx + 3 * k, y: -yv + 0.75 * alto, "font-size": 1.9 * k, fill: "#222" });
+      t.textContent = (qLo + (n + 1) * (qHi - qLo) / NB).toFixed(2);
+      hijos.push(t);
+    }
+    const t0 = s("text", { x: lx + 3 * k, y: -(ly - NB * alto) + 0.75 * alto + 0.2 * alto, "font-size": 1.9 * k, fill: "#222" });
+    t0.textContent = qLo.toFixed(2);
+    hijos.push(t0);
+  }
+  if (qMax) {                                         // punto de presión máxima
+    hijos.push(s("circle", { cx: qMax.p[0], cy: -qMax.p[1], r: 1.6 * k, fill: "none", stroke: "#000", "stroke-width": 0.4 * k }));
+    const t = s("text", { x: qMax.p[0] + 2 * k, y: -qMax.p[1] - 1.5 * k, "font-size": 2.4 * k, fill: "#000" });
+    t.textContent = `q máx. ${qMax.q.toFixed(2)} tonf/m²`;
+    hijos.push(t);
+  }
   svg.replaceChildren(...hijos);
-  svg.querySelectorAll("polygon").forEach(el => el.addEventListener("click", () => funElegirLinea(Math.max(deFund(Number(el.dataset.i)), 0))));
+  svg.querySelectorAll("polygon[data-i]").forEach(el => el.addEventListener("click", () => funElegirLinea(Math.max(deFund(Number(el.dataset.i)), 0))));
+  const ley = $("#fun-planta-leyenda");
+  if (ley) ley.replaceChildren(...(qMax ? [
+    h("strong", {}, `Presión de contacto en planta · ${combo}`), " ",
+    h("span", { class: "fun-escala" }), ` ${qLo.toFixed(2)} → ${qHi.toFixed(2)} tonf/m² en ${NB} bandas (q adm. ${qMax.q_adm.toFixed(2)}) · `,
+    h("span", { class: "fun-levanta" }), " sin compresión (se levanta) · ",
+    `zona en compresión ${(100 * areaComp / Math.max(area, 1e-9)).toFixed(0)} % del largo de las fundaciones · q máx. ${qMax.q.toFixed(2)} tonf/m²`]
+    : [h("span", { class: "tenue" }, "Elige una combinación en «Presiones de» para ver las presiones en planta")]));
 }
 
 async function cargarFundacion() {
@@ -3149,7 +3213,7 @@ $("#sel-linea-fun").addEventListener("change", () => funElegirLinea(Number($("#s
 try { if (localStorage.getItem("c2r-fun-origen") === "3d") funOrigen(true); } catch {}
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("input", funEsquema));
 $$('[data-sap^="fundacion."]').forEach(el => el.addEventListener("change", funEsquema));
-$("#fun-combo").addEventListener("change", funDibujar);
+$("#fun-combo").addEventListener("change", () => { funDibujar(); if (fun3.activo && fun3.d) funPlanta3d(); });
 $("#sel-eje-fun").addEventListener("change", ev => intentar(async () => { await abrirEjeSap(ev.target.value); await cargarFundacion(); }));
 $("#inp-lectura-fun").addEventListener("change", ev => intentar(async () => {
   const f = ev.target.files[0]; if (!f) return;

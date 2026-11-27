@@ -357,7 +357,11 @@ input.modificado { background: #fff4e5; border-color: #f0b46a; color: #a05a00; }
 .sap-form label:has(.revit-orig) { position: relative; padding-bottom: 12px; }
 .revit-orig { position: absolute; right: 2px; bottom: -2px; font-size: 11px; color: #1f4e9c; white-space: nowrap; }
 .revit-orig button.link { background: none; border: 0; color: #a05a00; cursor: pointer; font-size: 13px; padding: 0 2px; }
-#fun-planta { width: 100%; max-height: 260px; background: #fafbfc; border: 1px solid var(--borde, #ddd); border-radius: 6px; margin: 8px 0; }
+.fun-escala { display: inline-block; width: 110px; height: 10px; vertical-align: middle; border-radius: 2px;
+  background: linear-gradient(90deg, rgb(96,96,255), rgb(0,210,255), rgb(80,220,80), rgb(240,240,0), rgb(255,150,0), rgb(240,40,90), rgb(220,80,220)); }
+.fun-levanta { display: inline-block; width: 14px; height: 10px; vertical-align: middle; border: 1px solid #999;
+  background: repeating-linear-gradient(45deg, #e6e6e6 0 3px, #999 3px 4px); }
+#fun-planta { width: 100%; max-height: 520px; background: #fafbfc; border: 1px solid var(--borde, #ddd); border-radius: 6px; margin: 8px 0; }
 #tab-sap:not(.modo3d) .solo3d { display: none !important; }
 .m3d-visor { width: 100%; height: 520px; border: 1px solid var(--borde, #ddd); border-radius: 6px; background: #fafbfc; cursor: pointer; }
 @media (max-width: 700px) { .m3d-visor { height: 360px; } }
