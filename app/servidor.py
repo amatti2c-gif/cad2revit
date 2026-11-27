@@ -2197,6 +2197,7 @@ def vista_modelo3d(pid: str, nombre: str, aj: AjustesEje):
         "sin_apoyo": mod.sin_apoyo, "excluidos_auto": mod.excluidos_auto, "trib": cargas.trib, "origen_xy": list(mod.origen_xy),
         "liberaciones": {k: list(v) for k, v in mod.liberaciones.items()},
         "superficies": [{k: v for k, v in s_.items() if k in ("id", "tipo", "nombre", "tris")} for s_ in mod.superficies],
+        "nudos_convergencia": mod.nudos_convergencia,
         "envolvente": {k: v for k, v in cargas.envolvente.items() if k != "por_barra"},
         "cargas_casos": cargas_para_visor(mod, cargas),
         "conteo": {"nudos": len(mod.nudos), "barras": len(mod.barras), "shells": len(mod.areas)},

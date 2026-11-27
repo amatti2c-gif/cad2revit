@@ -27,8 +27,10 @@ VERSION_3D = 1
 MASA_OBJETIVO = 0.90
 MODOS_MAX = 400
 TOL = 0.003                     # m: puntos que caen sobre una barra (para partirla)
-TOL_NUDO = 0.005                # m: puntos a menos de esta distancia son el mismo nudo
+TOL_NUDO = 0.02                 # m: puntos a menos de esta distancia son el mismo nudo (evita tramos de pocos mm que
+                                # dejan la rigidez mal condicionada: uniones de Revit con 1 a 2 cm de desfase)
 TOL_UNION = 0.10                # m: barras que pasan a menos de esto se unen (excentricidades de modelación en Revit)
+R_CONVERGENCIA = 0.20           # m: 3 o más extremos de barras a menos de esto convergen a un mismo nudo
 
 
 @dataclass
@@ -53,7 +55,8 @@ class Modelo3D:
     sin_apoyo: list = field(default_factory=list)
     excluidos_auto: list = field(default_factory=list)
     dir_costaneras: list = field(default_factory=list)  # direcciones en planta (ux, uy) de las costaneras excluidas
-    superficies: list = field(default_factory=list)    # envolvente sin rigidez: {id, tipo techo|muro, tris, vanos?}
+    superficies: list = field(default_factory=list)
+    nudos_convergencia: list = field(default_factory=list)  # nudos donde se juntaron extremos que en Revit no coincidían    # envolvente sin rigidez: {id, tipo techo|muro, tris, vanos?}
     origen_xy: tuple = (0.0, 0.0)
 
 
@@ -218,6 +221,43 @@ def mallar3d(datos: dict, pm: ParametrosMuroMadera | None = None, *, malla: floa
                           f"{1000 * max(u[1] for u in unidos):.0f} mm en altura y {1000 * max(u[2] for u in unidos):.0f} mm en "
                           f"planta, p. ej. por la justificación de la viga): " + ", ".join(u[0] for u in unidos[:15]) +
                           ("…" if len(unidos) > 15 else ""))
+    # nudos de convergencia: 3 o más elementos que terminan cerca (≤ 20 cm) son un mismo nudo que en Revit no se modeló
+    # exacto (p. ej. vigas radiales que llegan al centro de una cubierta): sus extremos van a un punto común (la cabeza
+    # del pilar si hay uno ahí; si no, el promedio)
+    ext = [(v, k) for v in vigas for k in ("p0", "p1")]
+    cab = [(c, "p1") for c in pilares] + [(c, "p0") for c in pilares if c.get("colgante")]
+    usados_c = set()
+    nudos_conv = []
+    pts = [np.array(v[k], float) for v, k in ext]
+    for i in range(len(ext)):
+        if i in usados_c:
+            continue
+        cerca = [j for j in range(len(ext)) if j not in usados_c and np.linalg.norm(pts[j] - pts[i]) <= R_CONVERGENCIA]
+        if len({id(ext[j][0]) for j in cerca}) < 3:
+            continue
+        cen = np.mean([pts[j] for j in cerca], axis=0)
+        cerca = [j for j in range(len(ext)) if j not in usados_c and np.linalg.norm(pts[j] - cen) <= R_CONVERGENCIA]
+        if len({id(ext[j][0]) for j in cerca}) < 3:
+            continue
+        disp = max(np.linalg.norm(pts[j] - pts[k]) for j in cerca for k in cerca)
+        usados_c.update(cerca)
+        if disp <= TOL_NUDO:
+            continue                                      # ya es un solo nudo
+        pil = [c[k] for c, k in cab if np.linalg.norm(np.array(c[k], float) - cen) <= R_CONVERGENCIA]
+        q = tuple(float(x) for x in (min(pil, key=lambda p_: np.linalg.norm(np.array(p_) - cen)) if pil else cen))
+        for j in cerca:
+            v, k = ext[j]
+            v[k] = q
+        nudos_conv.append((q, len({id(ext[j][0]) for j in cerca}), disp,
+                           sorted({str(ext[j][0].get("grupo") or ext[j][0].get("id")) for j in cerca})))
+    if nudos_conv:
+        mod.avisos.append(
+            f"{len(nudos_conv)} nudo(s) donde llegan varias barras que en Revit no terminan en el mismo punto (problema de la "
+            f"modelación original): se unieron en un nudo común. " + "; ".join(
+                f"{n} barras a ≤ {disp * 100:.0f} cm entre sí en x {q[0]:.2f}, y {q[1]:.2f}, z {q[2]:.2f} m "
+                f"({', '.join(ids[:6])}{'…' if len(ids) > 6 else ''})" for q, n, disp, ids in nudos_conv[:8]) +
+            (" …" if len(nudos_conv) > 8 else "") + ". Conviene corregirlo en Revit")
+        mod.nudos_convergencia = [{"p": list(q), "n": n, "dispersion": disp, "ids": ids} for q, n, disp, ids in nudos_conv]
     # vigas que se cruzan o se tocan a menos de 0,10 m (extremos que no llegan justo, uniones excéntricas en Revit):
     # se unen en un nudo común; las cabezas de pilar no se mueven
     cabezas = [c["p1"] for c in pilares]

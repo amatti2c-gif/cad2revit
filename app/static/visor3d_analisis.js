@@ -150,6 +150,14 @@ export function mostrar(contenedor, d, onClick) {
     borde.position.copy(q);
     g.add(borde, m);
   });
+  // nudos donde se juntaron barras que en Revit no coincidían (problema de modelación): esfera naranja
+  (d.marcas || []).forEach(mk => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(tam / 110, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff7a00, transparent: true, opacity: 0.85, depthTest: false }));
+    m.renderOrder = 11;
+    m.position.copy(V(mk.p));
+    g.add(m);
+  });
   // esquema de cargas: flechas que llegan a la barra (intensidad en tonf/m) o al nudo (fuerza en tonf)
   if (d.flechas?.length) {
     const largoMax = tam / 10;

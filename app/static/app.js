@@ -3272,6 +3272,7 @@ function m3dDibujar() {
   }
   d.fantasmas = m3dFantasmas(ox, oy);
   d.superficies = $("#m3d-ver-techos").checked ? (v.superficies || []) : [];
+  d.marcas = (modo === "modelo" || modo.startsWith("carga:")) ? (v.nudos_convergencia || []) : [];
   d.clave = m3d.nombre;
   // rótulas de vigas (siempre visibles en el modelo) y puntos editables según el modo
   const lib = v.liberaciones || {};

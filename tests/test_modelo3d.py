@@ -290,3 +290,20 @@ def test_pilares_con_material_hormigon():
     origenes = {mod.origen[b[0]] for b in mod.barras}
     assert d["pilares"][0]["id"] in origenes and "HA" not in origenes
     assert any("sección de acero" in a for a in mod.avisos) and any("no se modelan" in a for a in mod.avisos)
+
+
+def test_nudo_de_convergencia():
+    """Vigas radiales que en Revit terminan cerca del centro pero no en el mismo punto: se unen en un nudo común."""
+    import math as m_
+    pil = [{"id": f"P{i}", "seccion": "200x100x4", "p0": [6 * m_.cos(a), 6 * m_.sin(a), 0], "p1": [6 * m_.cos(a), 6 * m_.sin(a), 3], "dims": {}}
+           for i, a in enumerate([2 * m_.pi * k / 6 for k in range(6)])]
+    vig = []
+    for i, a in enumerate([2 * m_.pi * k / 6 for k in range(6)]):
+        off = 0.05 * m_.cos(3 * a + 1)                                    # cada una termina 2–5 cm distinta del centro
+        vig.append({"id": f"R{i}", "seccion": "200x100x4", "tipo": "viga", "p0": [6 * m_.cos(a), 6 * m_.sin(a), 3],
+                    "p1": [off, -off, 4], "dims": {}})
+    mod = mallar3d({"pilares": pil, "vigas": vig, "muros": []})
+    centro = [n for n, p in mod.nudos.items() if p[2] > 3.9]
+    assert len(centro) == 1 and len(mod.nudos_convergencia) == 1 and mod.nudos_convergencia[0]["n"] == 6
+    assert any("no terminan en el mismo punto" in a for a in mod.avisos)
+    analizar3d(mod, cargas3d(mod, ParametrosCargas()), ParametrosCargas())
