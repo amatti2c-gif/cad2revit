@@ -353,6 +353,10 @@ button.peligro:disabled { opacity: .45; }
 
 #tab-sap.modo3d .solo2d { display: none !important; }
 input.desde-revit { background: #eef4ff; border-color: #a9c2ee; color: #1f4e9c; }
+input.modificado { background: #fff4e5; border-color: #f0b46a; color: #a05a00; }
+.sap-form label:has(.revit-orig) { position: relative; padding-bottom: 12px; }
+.revit-orig { position: absolute; right: 2px; bottom: -2px; font-size: 11px; color: #1f4e9c; white-space: nowrap; }
+.revit-orig button.link { background: none; border: 0; color: #a05a00; cursor: pointer; font-size: 13px; padding: 0 2px; }
 #fun-planta { width: 100%; max-height: 260px; background: #fafbfc; border: 1px solid var(--borde, #ddd); border-radius: 6px; margin: 8px 0; }
 #tab-sap:not(.modo3d) .solo3d { display: none !important; }
 .m3d-visor { width: 100%; height: 520px; border: 1px solid var(--borde, #ddd); border-radius: 6px; background: #fafbfc; cursor: pointer; }

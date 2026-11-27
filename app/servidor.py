@@ -2350,6 +2350,9 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
         raise HTTPException(400, "El análisis del modelo 3D es de una versión anterior: vuelve a analizarlo en la pestaña 6")
     par = dict(pedido.parametros or {})
     arm = par.pop("armaduras", None) or {}
+    # cambios del usuario a la geometría de Revit, por fundación (clave: id de Revit de su primer elemento); el valor de
+    # Revit se conserva aparte («geometria_revit»)
+    cambios_revit = (par.pop("cambios_revit", None) or {}).get(pedido.geometria or "", {})
     try:
         pf = ParametrosFundacion(**{k: v for k, v in par.items() if k in ParametrosFundacion.__dataclass_fields__ and v not in (None, "")},
                                  armaduras=ArmadurasFundacion(**{k: v for k, v in arm.items()
@@ -2360,6 +2363,19 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
     if pedido.geometria:
         fund = json.loads(_fund_revit(_proyecto(pid), pedido.geometria).read_text(encoding="utf-8"))
         lineas, avisos = lineas_desde_revit(res["apoyos"], fund, res.get("origen_xy"))
+        n_mod = 0
+        for l_ in lineas:
+            if not l_.get("revit"):
+                continue
+            l_["geometria_revit"] = dict(l_["geometria"])
+            cam = {k: float(v) for k, v in (cambios_revit.get(str(l_["ids"][0])) or {}).items()
+                   if k in ("b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad") and v not in (None, "") and float(v) > 0}
+            if cam:
+                l_["geometria"] = {**l_["geometria"], **cam}
+                l_["cambios"] = cam
+                n_mod += 1
+        if n_mod:
+            avisos.append(f"{n_mod} fundación(es) con datos cambiados en la app respecto de Revit (se conserva el valor de Revit)")
     else:
         lineas = lineas_fundacion(res["apoyos"])
     clave = f"{pid}/{nombre}/fundacion3d"
@@ -2380,6 +2396,7 @@ def fundacion_modelo3d(pid: str, nombre: str, pedido: PedidoFundacion):
             out.append({"nombre": l_["nombre"], "eje": l_["eje"], "coord": l_["coord"], "aislada": bool(l_.get("aislada")),
                         "revit": bool(l_.get("revit")), "ids": l_.get("ids") or [], "A": A, "dir": u,
                         "geometria": l_.get("geometria") or {k: r["seccion"][k] for k in ("b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad")},
+                        "geometria_revit": l_.get("geometria_revit"), "cambios": l_.get("cambios") or {},
                         "resultado": r})
     except ValueError as e:
         raise HTTPException(400, str(e))

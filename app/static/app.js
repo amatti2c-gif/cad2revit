@@ -2685,7 +2685,7 @@ $("#btn-sap-nube").addEventListener("click", () => intentar(sapNube));
 // ------------------------------------------------------------------ Fundaciones (pestaña 7)
 const fun = { res: null };
 
-const fun3 = { activo: false, nombre: null, d: null, geo: null };
+const fun3 = { activo: false, nombre: null, d: null, geo: null, cambios: {} };
 // panel «Geometría»: con fundaciones de Revit muestra los datos de la fundación elegida y no se edita (los da Revit)
 const FUN_GEO = ["b_pedestal", "h_pedestal", "b_zapata", "h_zapata", "profundidad"];
 async function funEsquema3d() {
@@ -2707,17 +2707,55 @@ async function funEsquema3d() {
   import("./visor_fundaciones.js").then(mod => mod.mostrar($("#fun-visor3d"), v))
     .catch(e => toast("No se pudo cargar el visor 3D (¿sin internet para three.js?): " + e.message, true));
 }
-function funGeoInputs(geo, desdeRevit) {
+// geo: geometría usada; orig: la de Revit (null = no viene de Revit); clave: fundación de Revit (para guardar cambios)
+function funGeoInputs(geo, desdeRevit, orig = null, clave = null) {
   for (const k of FUN_GEO) {
     const el = $(`[data-sap="fundacion.${k}"]`);
     if (!el) continue;
-    if (geo && geo[k] != null) el.value = +(geo[k] / Number(el.dataset.f || 1)).toPrecision(6);
-    el.readOnly = !!desdeRevit;
-    el.classList.toggle("desde-revit", !!desdeRevit);
-    el.title = desdeRevit ? "Dato de la fundación de Revit (cámbialo en Revit y vuelve a exportar)" : "";
+    const f = Number(el.dataset.f || 1);
+    let marca = el.parentElement.querySelector(".revit-orig");
+    if (!marca) { marca = h("span", { class: "revit-orig" }); el.after(marca); }
+    const o = orig && orig[k] != null ? orig[k] : null;
+    const cambio = clave ? fun3.cambios?.[clave]?.[k] : undefined;
+    const valor = cambio != null ? cambio : (geo && geo[k] != null ? geo[k] : null);
+    if (valor != null) el.value = +(valor / f).toPrecision(6);
+    el.readOnly = false;
+    el.dataset.linea = desdeRevit && clave ? clave : "";
+    el.dataset.orig = o != null ? String(o) : "";
+    const mod = desdeRevit && o != null && cambio != null && Math.abs(cambio - o) > 1e-6;
+    el.classList.toggle("desde-revit", !!desdeRevit && o != null && !mod);
+    el.classList.toggle("modificado", !!mod);
+    el.title = !desdeRevit || o == null ? "" : mod ? `Cambiado en la app; en Revit: ${(o / f).toFixed(1)} cm` : "Dato de la fundación de Revit (puedes cambiarlo aquí)";
+    marca.replaceChildren(...(!desdeRevit || o == null ? [] : [
+      `Revit: ${(o / f).toFixed(1).replace(/\.0$/, "")} cm`,
+      ...(mod ? [" ", h("button", { type: "button", class: "link", title: "Volver al valor de Revit",
+        onclick: () => intentar(() => funCambioRevit(el, null)) }, "↺")] : [])]));
   }
   const v = $(`[data-sap="fundacion.voladizo"]`);
-  if (v) { v.readOnly = !!desdeRevit; v.classList.toggle("desde-revit", !!desdeRevit); }
+  if (v) { v.readOnly = !!desdeRevit; v.classList.toggle("desde-revit", !!desdeRevit);
+    v.title = desdeRevit ? "Con fundaciones de Revit, el largo de cada fundación es el de Revit" : ""; }
+}
+// cambio de un dato de la fundación de Revit: se guarda por fundación (con el original de Revit aparte)
+async function funCambioRevit(el, valor) {
+  const clave = el.dataset.linea, k = el.dataset.sap.split(".").pop(), f = Number(el.dataset.f || 1);
+  if (!clave || !fun3.geo) return;
+  const orig = el.dataset.orig !== "" ? Number(el.dataset.orig) : null;
+  const v = valor === null ? null : Number(el.value) * f;
+  fun3.cambios ||= {};
+  const c = fun3.cambios[clave] ||= {};
+  if (v == null || !(v > 0) || (orig != null && Math.abs(v - orig) < 1e-6)) delete c[k]; else c[k] = v;
+  if (!Object.keys(c).length) delete fun3.cambios[clave];
+  const l = fun3.d?.lineas?.find(x => String(x.ids?.[0]) === clave);
+  funGeoInputs(l ? (l.geometria_revit || l.geometria) : null, true, l ? (l.geometria_revit || l.geometria) : (orig != null ? { [k]: orig } : null), clave);
+  funEsquema();
+  // guardar en los ajustes del modelo 3D
+  const R3 = resto => P(`/modelos3d/${encodeURIComponent(fun3.nombre)}${resto}`);
+  const aj = (await api("GET", R3(""))).ajustes || {};
+  const par = aj.parametros || {};
+  const fu = par.fundacion || {};
+  fu.cambios_revit = { ...(fu.cambios_revit || {}), [fun3.geo]: fun3.cambios };
+  await api("PUT", R3("/ajustes"), { parametros: { ...par, fundacion: fu }, opciones: aj.opciones || {} });
+  $("#fun-estado").textContent = "Dato cambiado y guardado: vuelve a analizar la fundación para ver su efecto";
 }
 function funOrigen(tres) {
   fun3.activo = tres;
@@ -2756,6 +2794,7 @@ async function cargarFundacion3d() {
   try {
     const aj = (await api("GET", P(`/modelos3d/${encodeURIComponent(fun3.nombre)}`))).ajustes || {};
     if (aj.parametros?.fundacion) sapPonerParametros({ fundacion: aj.parametros.fundacion });
+    fun3.cambios = (aj.parametros?.fundacion?.cambios_revit || {})[fun3.geo || ""] || {};
   } catch { /* sin ajustes */ }
   funEsquema();
   try { funMostrar3d(await api("GET", P(`/modelos3d/${encodeURIComponent(fun3.nombre)}/fundacion`))); } catch { /* aún sin análisis */ }
@@ -2765,7 +2804,8 @@ async function funAnalizar3d() {
   const nombre = fun3.nombre, R3 = resto => P(`/modelos3d/${encodeURIComponent(nombre)}${resto}`);
   const d0 = await api("GET", R3(""));
   const aj = d0.ajustes || {};
-  const par = { ...(aj.parametros || {}), fundacion: sapParametros().fundacion || {} };
+  const par = { ...(aj.parametros || {}), fundacion: { ...(sapParametros().fundacion || {}),
+    cambios_revit: { ...(aj.parametros?.fundacion?.cambios_revit || {}), ...(fun3.geo ? { [fun3.geo]: fun3.cambios || {} } : {}) } } };
   await api("PUT", R3("/ajustes"), { parametros: par, opciones: aj.opciones || {} });
   let vigente = false;
   try { vigente = (await api("GET", R3("/resultado"))).apoyos != null; } catch { /* sin análisis */ }
@@ -2809,7 +2849,8 @@ function funElegirLinea(i) {
   const d = fun3.d; if (!d || !d.lineas[i]) return;
   $("#sel-linea-fun").value = i;
   const l = d.lineas[i];
-  funGeoInputs(l.geometria || l.resultado.seccion, !!(d.geometria && l.revit));
+  const deRevit = !!(d.geometria && l.revit);
+  funGeoInputs(l.geometria || l.resultado.seccion, deRevit, deRevit ? (l.geometria_revit || l.geometria) : null, deRevit ? String(l.ids?.[0]) : null);
   funEsquema();
   funPlanta3d();
   funMostrar(l.resultado);
@@ -3084,8 +3125,11 @@ function funEsquema() {
 $("#btn-fundacion").addEventListener("click", () => intentar(() => fun3.activo ? funAnalizar3d() : funAnalizar()));
 $$('input[name="fun-origen"]').forEach(el => el.addEventListener("change", () => intentar(async () => { funOrigen(el.value === "3d"); await cargarFundacion(); })));
 $("#sel-m3d-fun").addEventListener("change", ev => intentar(async () => { fun3.nombre = ev.target.value || null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); await cargarFundacion3d(); }));
+FUN_GEO.forEach(k => $(`[data-sap="fundacion.${k}"]`)?.addEventListener("change", ev => {
+  if (ev.target.dataset.linea) intentar(() => funCambioRevit(ev.target));
+}));
 $("#sel-geo-fun").addEventListener("change", ev => { fun3.geo = ev.target.value || null; funGeoInputs(null, !!fun3.geo);
-  fun3.d = null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); intentar(funEsquema3d); });
+  fun3.d = null; $("#fun-lineas-panel").classList.add("oculto"); $("#fun-res").classList.add("oculto"); intentar(cargarFundacion3d); });
 $("#inp-fun-revit").addEventListener("change", ev => intentar(async () => {
   const f = ev.target.files[0];
   if (!f) return;
@@ -3122,7 +3166,10 @@ $("#btn-arm-revit").addEventListener("click", () => intentar(async () => {
 }));
 
 $("#sel-eje-sap").addEventListener("change", ev => ev.target.value && intentar(() => abrirEjeSap(ev.target.value)));
-$$("[data-sap]").forEach(el => el.addEventListener("change", () => { sapGaPlaceholder(); sapTablaElementos(); intentar(sapActualizar); }));
+$$("[data-sap]").forEach(el => el.addEventListener("change", () => {
+  if (el.dataset.sap.startsWith("fundacion.")) return;                 // los datos de fundación no cambian el eje
+  sapGaPlaceholder(); if (sap.eje) sapTablaElementos(); intentar(sapActualizar);
+}));
 $("#btn-sap-guardar").addEventListener("click", () => intentar(async () => {
   await api("PUT", P(`/sap/${encodeURIComponent(sap.nombre)}/ajustes`), sapAjustes());
   toast("Ajustes guardados");
@@ -3200,7 +3247,7 @@ async function abrirModelo3d(nombre) {
 }
 
 async function m3dActualizar() {
-  if (!m3d.nombre) return;
+  if (!m3d.nombre || !m3d.modelo) return;
   m3d.vista = await api("POST", M3("/vista"), m3dAjustes());
   const v = m3d.vista;
   $("#m3d-estado").textContent = `${m3d.modelo.nombre || m3d.nombre} · ${v.conteo.nudos} nudos, ${v.conteo.barras} barras, ${v.conteo.shells} láminas`;
@@ -3555,7 +3602,10 @@ $("#inp-m3d").addEventListener("change", ev => intentar(async () => {
   await cargarModelos3d(r.nombre);
 }));
 // los parámetros (paneles compartidos con el 2D) cambian también la vista del modelo 3D
-$$("[data-sap]").forEach(el => el.addEventListener("change", () => { if (m3d.activo && m3d.nombre) { m3d.vigente = false; intentar(m3dActualizar); } }));
+$$("[data-sap]").forEach(el => el.addEventListener("change", () => {
+  if (el.dataset.sap.startsWith("fundacion.")) return;                 // los datos de fundación no cambian el modelo 3D
+  if (m3d.activo && m3d.nombre && m3d.modelo) { m3d.vigente = false; intentar(m3dActualizar); }
+}));
 try { if (localStorage.getItem("c2r-sap-dim") === "3d") m3dModo(true, false); } catch {}
 
 
